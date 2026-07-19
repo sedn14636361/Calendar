@@ -87,7 +87,7 @@ def build_embeds(events):
     for start in range(0, len(all_days), DAYS_PER_MESSAGE):
         chunk = all_days[start:start + DAYS_PER_MESSAGE]
         page = start // DAYS_PER_MESSAGE + 1
-        embed = discord.Embed(title=f"📅 今後の予定 ({page})", color=0x4285F4)
+        embed = discord.Embed(color=0x4285F4)
         for name, value in chunk:
             embed.add_field(name=name, value=value, inline=False)
         embeds.append(embed)
