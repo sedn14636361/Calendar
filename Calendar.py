@@ -114,23 +114,24 @@ async def update_calendar():
             await msg.edit(embed=embed)
 
 
-# ===== ⑨ ボットの準備が整ったときに1回だけ動く処理 =====
-@client.event
-# ===== ⑨-A ダミーWebサーバー（Renderのポート検査とUptimeRobot対応用） ★追加 =====
+# ===== ⑨-A ダミーWebサーバー（ここに丸ごと置く） =====
 class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):                   # アクセスが来たときの応答内容
-        self.send_response(200)         # 「正常です」という返事
+    def do_GET(self):
+        self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"bot is alive")   # 表示される文字
-    def log_message(self, *args):       # アクセスログを出さない（ログが埋まるのを防ぐ）
+        self.wfile.write(b"bot is alive")
+    def log_message(self, *args):
         pass
 
 def run_web_server():
-    port = int(os.environ.get("PORT", 8080))   # Renderが指定するポート番号を受け取る
-    HTTPServer(("0.0.0.0", port), HealthHandler).serve_forever()  # ずっと待ち受ける
+    port = int(os.environ.get("PORT", 8080))
+    HTTPServer(("0.0.0.0", port), HealthHandler).serve_forever()
 
-# ボット本体とWebサーバーを同時に動かす（daemon=True でボット終了時に一緒に止まる）
 threading.Thread(target=run_web_server, daemon=True).start()
+
+
+# ===== ⑨ ボット準備完了時の処理（この2行はくっつける） =====
+@client.event
 async def on_ready():
     print(f"ログインしました: {client.user}")
     update_calendar.start()
