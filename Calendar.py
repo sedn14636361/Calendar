@@ -68,7 +68,7 @@ def build_embeds(events):
             line = f"{time_part} {e.get('summary', '(無題)')}"
         else:
             date_key = start_raw[:10]
-            line = f"（終日）{e.get('summary', '(無題)')}"
+            line = f"終日 {e.get('summary', '(無題)')}"
         events_by_date.setdefault(date_key, []).append(line)
 
     today = datetime.now(JST).date()
