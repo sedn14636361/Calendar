@@ -2,6 +2,8 @@
 import os                              # 環境変数（コード外から渡す値）を読むための道具 ★追加
 import json                           # JSON文字列を扱うための道具 ★追加
 import discord
+import threading                        # 2つの処理を同時に動かすための道具 ★追加
+from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー ★追加
 from discord.ext import tasks
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -114,6 +116,21 @@ async def update_calendar():
 
 # ===== ⑨ ボットの準備が整ったときに1回だけ動く処理 =====
 @client.event
+# ===== ⑨-A ダミーWebサーバー（Renderのポート検査とUptimeRobot対応用） ★追加 =====
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):                   # アクセスが来たときの応答内容
+        self.send_response(200)         # 「正常です」という返事
+        self.end_headers()
+        self.wfile.write(b"bot is alive")   # 表示される文字
+    def log_message(self, *args):       # アクセスログを出さない（ログが埋まるのを防ぐ）
+        pass
+
+def run_web_server():
+    port = int(os.environ.get("PORT", 8080))   # Renderが指定するポート番号を受け取る
+    HTTPServer(("0.0.0.0", port), HealthHandler).serve_forever()  # ずっと待ち受ける
+
+# ボット本体とWebサーバーを同時に動かす（daemon=True でボット終了時に一緒に止まる）
+threading.Thread(target=run_web_server, daemon=True).start()
 async def on_ready():
     print(f"ログインしました: {client.user}")
     update_calendar.start()
