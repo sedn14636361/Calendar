@@ -17,7 +17,7 @@ CHANNEL_ID = int(os.environ["CHANNEL_ID"])   # 環境変数は文字なので数
 CALENDAR_ID = os.environ["CALENDAR_ID"]
 
 DAYS_TO_SHOW = 90
-DAYS_PER_MESSAGE = 90
+DAYS_PER_MESSAGE = 25
 JST = timezone(timedelta(hours=9))     # 日本時間
 
 
