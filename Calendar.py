@@ -2,7 +2,8 @@
 import os                              # 環境変数（コード外から渡す値）を読むための道具 ★追加
 import json                           # JSON文字列を扱うための道具 ★追加
 import discord
-import threading                        # 2つの処理を同時に動かすための道具 ★追加
+import threading                      # 2つの処理を同時に動かすための道具 ★追加
+import re                              # 文字列のパターンを判定する道具 ★追加
 from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー ★追加
 from discord.ext import tasks
 from google.oauth2 import service_account
@@ -34,6 +35,7 @@ service = build("calendar", "v3", credentials=creds)
 
 # ===== ④ Discordへの接続準備 =====
 intents = discord.Intents.default()
+intents.message_content = True         # ★追加：メッセージ本文を読めるようにする
 client = discord.Client(intents=intents)
 
 
@@ -114,7 +116,112 @@ async def update_calendar():
         for msg, embed in zip(state["messages"], embeds):
             await msg.edit(embed=embed)
 
+# ===== ⑧-B 指定月の空き日程を調べる機能 ★追加 =====
 
+# 判定に使う時間帯（時単位）
+DAY_START, DAY_END = 10, 18            # 日中 10:00-18:00
+NIGHT_START, NIGHT_END = 21, 24        # 夜 21:00-24:00
+
+
+def fetch_month_events(year, month):
+    """指定した年月の予定をカレンダーから取得する"""
+    start = datetime(year, month, 1, tzinfo=JST)          # その月の1日 0:00
+    if month == 12:                                       # 12月なら翌年1月が終わり
+        end = datetime(year + 1, 1, 1, tzinfo=JST)
+    else:
+        end = datetime(year, month + 1, 1, tzinfo=JST)    # 翌月1日が終わり
+    result = service.events().list(
+        calendarId=CALENDAR_ID,
+        timeMin=start.isoformat(),
+        timeMax=end.isoformat(),
+        maxResults=2500,
+        singleEvents=True,
+        orderBy="startTime",
+    ).execute()
+    return result.get("items", []), start, end
+
+
+def find_free_days(year, month, slot_start, slot_end):
+    """指定時間帯に予定が無い日の一覧を返す"""
+    events, month_start, month_end = fetch_month_events(year, month)
+
+    busy_dates = set()                 # 予定で埋まっている日を記録する入れ物
+
+    for e in events:
+        # --- 終日予定は、その日全体を埋まり扱いにする ---
+        if "date" in e["start"]:
+            d = datetime.fromisoformat(e["start"]["date"]).date()
+            end_d = datetime.fromisoformat(e["end"]["date"]).date()
+            while d < end_d:           # 複数日にまたがる場合も全部埋める
+                busy_dates.add(d)
+                d += timedelta(days=1)
+            continue
+
+        # --- 時刻付き予定は、時間帯が重なるかを判定する ---
+        ev_start = datetime.fromisoformat(e["start"]["dateTime"]).astimezone(JST)
+        ev_end = datetime.fromisoformat(e["end"]["dateTime"]).astimezone(JST)
+
+        # 予定が日をまたぐ場合に備え、1日ずつ確認する
+        day = ev_start.date()
+        while day <= ev_end.date():
+            # その日の対象時間帯（例 21:00〜24:00）を作る
+            slot_s = datetime(day.year, day.month, day.day, slot_start, tzinfo=JST)
+            slot_e = datetime(day.year, day.month, day.day, 0, tzinfo=JST) \
+                     + timedelta(hours=slot_end)
+            # 予定と時間帯が少しでも重なっていれば「埋まっている」とみなす
+            if ev_start < slot_e and ev_end > slot_s:
+                busy_dates.add(day)
+            day += timedelta(days=1)
+
+    # --- 月の全日を並べ、埋まっていない日だけ残す ---
+    free_days = []
+    day = month_start.date()
+    while day < month_end.date():
+        if day not in busy_dates:
+            free_days.append(day)
+        day += timedelta(days=1)
+    return free_days
+
+
+def format_free_days(year, month, free_days, label):
+    """結果を見やすい文章に整える"""
+    weekdays = ["月", "火", "水", "木", "金", "土", "日"]
+    if not free_days:
+        return f"**{year}年{month}月**：{label}に空いている日はありません"
+    lines = [f"{d.month}/{d.day}（{weekdays[d.weekday()]}）" for d in free_days]
+    return f"**{year}年{month}月 / {label}が空いている日**\n" + "  ".join(lines)
+
+
+# ===== ⑧-C メッセージを受け取ったときの処理 ★追加 =====
+@client.event
+async def on_message(message):
+    if message.author.bot:             # ボット自身の投稿には反応しない
+        return
+
+    text = message.content.strip()     # 送られた文字（前後の空白を除去）
+
+    # 「/2026-09」または「/n2026-09」の形かを判定する
+    match = re.fullmatch(r"/(n?)(\d{4})-(\d{1,2})", text)
+    if not match:
+        return                         # 該当しなければ何もしない
+
+    is_night = match.group(1) == "n"   # 先頭に n があれば夜モード
+    year = int(match.group(2))
+    month = int(match.group(3))
+
+    if not 1 <= month <= 12:           # 月の値が変なら注意して終了
+        await message.channel.send("月は1〜12で指定してください")
+        return
+
+    # 夜か日中かで、調べる時間帯とラベルを切り替える
+    if is_night:
+        slot_start, slot_end, label = NIGHT_START, NIGHT_END, "夜（21:00-24:00）"
+    else:
+        slot_start, slot_end, label = DAY_START, DAY_END, "日中（10:00-18:00）"
+
+    free_days = find_free_days(year, month, slot_start, slot_end)
+    await message.channel.send(format_free_days(year, month, free_days, label))
+    
 # ===== ⑨-A ダミーWebサーバー（ここに丸ごと置く） =====
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
