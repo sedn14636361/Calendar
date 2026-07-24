@@ -185,12 +185,16 @@ def find_free_days(year, month, slot_start, slot_end):
 
 def format_free_days(year, month, free_days, label):
     """結果を見やすい文章に整える"""
-    weekdays = ["月", "火", "水", "木", "金", "土", "日"]
+    now = datetime.now(JST)                                    # 実行した時点の日時（日本時間）
+    stamp = now.strftime("%Y/%m/%d現在")                 # 「2026/07/24 15:30現在」の形
+    header = f"**{year}年{month}月 / {label}が空いている日**（{stamp}）"
+
     if not free_days:
-        return f"**{year}年{month}月**：{label}に空いている日はありません"
+        return f"{header}\n該当する日はありません"
+
     days = [f"{free_days[0].month}/{free_days[0].day}"]        # 最初だけ「9/1」の形
     days += [str(d.day) for d in free_days[1:]]                # 2件目以降は日にちだけ
-    return f"**{year}年{month}月 / {label}が空いている日**\n" + ", ".join(days)
+    return header + "\n" + ", ".join(days)
 
 
 # ===== ⑧-C メッセージを受け取ったときの処理 ★追加 =====
