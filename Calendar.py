@@ -4,6 +4,7 @@ import json                           # JSON文字列を扱うための道具 �
 import discord
 import threading                      # 2つの処理を同時に動かすための道具 ★追加
 import re                              # 文字列のパターンを判定する道具 ★追加
+import calendar as _calendar           # 月末日を求める道具
 from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー ★追加
 from discord.ext import tasks
 from google.oauth2 import service_account
@@ -123,65 +124,101 @@ DAY_START, DAY_END = 10, 18            # 日中 10:00-18:00
 NIGHT_START, NIGHT_END = 21, 24        # 夜 21:00-24:00
 
 
-def fetch_month_events(year, month):
-    """指定した年月の予定をカレンダーから取得する"""
-    start = datetime(year, month, 1, tzinfo=JST)          # その月の1日 0:00
-    if month == 12:                                       # 12月なら翌年1月が終わり
-        end = datetime(year + 1, 1, 1, tzinfo=JST)
-    else:
-        end = datetime(year, month + 1, 1, tzinfo=JST)    # 翌月1日が終わり
+def fetch_events_between(start_dt, end_dt):
+    """指定した日時範囲の予定を取得する"""
     result = service.events().list(
         calendarId=CALENDAR_ID,
-        timeMin=start.isoformat(),
-        timeMax=end.isoformat(),
+        timeMin=start_dt.isoformat(),
+        timeMax=end_dt.isoformat(),
         maxResults=2500,
         singleEvents=True,
         orderBy="startTime",
     ).execute()
-    return result.get("items", []), start, end
+    return result.get("items", [])
 
 
-def find_free_days(year, month, slot_start, slot_end):
-    """指定時間帯に予定が無い日の一覧を返す"""
-    events, month_start, month_end = fetch_month_events(year, month)
+def find_free_days(start_date, end_date, slot_start, slot_end):
+    """start_date〜end_date（両端含む）で、指定時間帯に予定が無い日を返す"""
+    # 範囲の開始0:00から、終了日の翌日0:00まで取得
+    range_start = datetime(start_date.year, start_date.month, start_date.day, tzinfo=JST)
+    range_end = datetime(end_date.year, end_date.month, end_date.day, tzinfo=JST) \
+                + timedelta(days=1)
+    events = fetch_events_between(range_start, range_end)
 
-    busy_dates = set()                 # 予定で埋まっている日を記録する入れ物
-
+    busy_dates = set()
     for e in events:
-        # --- 終日予定は、その日全体を埋まり扱いにする ---
-        if "date" in e["start"]:
+        if "date" in e["start"]:                    # 終日予定
             d = datetime.fromisoformat(e["start"]["date"]).date()
             end_d = datetime.fromisoformat(e["end"]["date"]).date()
-            while d < end_d:           # 複数日にまたがる場合も全部埋める
+            while d < end_d:
                 busy_dates.add(d)
                 d += timedelta(days=1)
             continue
 
-        # --- 時刻付き予定は、時間帯が重なるかを判定する ---
         ev_start = datetime.fromisoformat(e["start"]["dateTime"]).astimezone(JST)
         ev_end = datetime.fromisoformat(e["end"]["dateTime"]).astimezone(JST)
-
-        # 予定が日をまたぐ場合に備え、1日ずつ確認する
         day = ev_start.date()
         while day <= ev_end.date():
-            # その日の対象時間帯（例 21:00〜24:00）を作る
             slot_s = datetime(day.year, day.month, day.day, slot_start, tzinfo=JST)
             slot_e = datetime(day.year, day.month, day.day, 0, tzinfo=JST) \
                      + timedelta(hours=slot_end)
-            # 予定と時間帯が少しでも重なっていれば「埋まっている」とみなす
             if ev_start < slot_e and ev_end > slot_s:
                 busy_dates.add(day)
             day += timedelta(days=1)
 
-    # --- 月の全日を並べ、埋まっていない日だけ残す ---
+    # 範囲内の全日を並べ、埋まっていない日だけ残す
     free_days = []
-    day = month_start.date()
-    while day < month_end.date():
+    day = start_date
+    while day <= end_date:
         if day not in busy_dates:
             free_days.append(day)
         day += timedelta(days=1)
     return free_days
 
+def parse_one_point(s, is_end):
+    """'2026-9' や '2026-9.15' を日付に変換する。
+       月だけの指定なら、開始側は1日、終了側は月末にする"""
+    if "." in s:                        # 日にちまで指定あり（例 2026-9.15）
+        ym, day = s.split(".")
+        year, month = ym.split("-")
+        return datetime(int(year), int(month), int(day)).date()
+    else:                               # 月だけの指定（例 2026-9）
+        year, month = s.split("-")
+        year, month = int(year), int(month)
+        if is_end:                      # 範囲の終わりなら月末の日にする
+            last = _calendar.monthrange(year, month)[1]   # その月の末日（28〜31）
+            return datetime(year, month, last).date()
+        else:                           # 範囲の始まりなら1日にする
+            return datetime(year, month, 1).date()
+
+
+def parse_range(body):
+    """'2026-8:2026-9' や '2026-9' を (開始日, 終了日) に変換する"""
+    if ":" in body:                     # 範囲指定あり
+        left, right = body.split(":")
+        return parse_one_point(left, is_end=False), parse_one_point(right, is_end=True)
+    else:                               # 単一（月 or 日）
+        return parse_one_point(body, is_end=False), parse_one_point(body, is_end=True)
+
+def format_free_days_range(start_date, end_date, free_days, label):
+    now = datetime.now(JST)
+    stamp = now.strftime("%Y/%m/%d現在")
+    period = f"{start_date.year}/{start_date.month}/{start_date.day}〜" \
+             f"{end_date.year}/{end_date.month}/{end_date.day}"
+    header = f"**{period} / {label}が空いている日**（{stamp}）"
+
+    if not free_days:
+        return f"{header}\n該当する日はありません"
+
+    parts = []
+    prev_month = None
+    for d in free_days:
+        if d.month != prev_month:      # 月が変わったら「月/日」で表示
+            parts.append(f"{d.month}/{d.day}")
+            prev_month = d.month
+        else:                          # 同じ月なら日にちだけ
+            parts.append(str(d.day))
+    return header + "\n" + ", ".join(parts)
 
 def format_free_days(year, month, free_days, label):
     """結果を見やすい文章に整える"""
@@ -200,38 +237,46 @@ def format_free_days(year, month, free_days, label):
 # ===== ⑧-C メッセージを受け取ったときの処理 ★追加 =====
 @client.event
 async def on_message(message):
-    if message.author.bot:             # ボット自身の投稿には反応しない
+    if message.author.bot:
         return
 
-    text = message.content.strip()     # 送られた文字（前後の空白を除去）
+    text = message.content.strip()
 
-    # 「/2026-09」または「/n2026-09」の形かを判定する
-    match = re.fullmatch(r"/([na]?)(\d{4})-(\d{1,2})", text)   # n と a を許可
+    # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、という形かを判定
+    match = re.fullmatch(r"/([na]?)([\d\-\.:]+)", text)
     if not match:
         return
 
     mode = match.group(1)              # "" or "n" or "a"
-    year = int(match.group(2))
-    month = int(match.group(3))
+    body = match.group(2)              # 例 "2026-8:2026-9"
 
-    if not 1 <= month <= 12:
-        await message.channel.send("月は1〜12で指定してください")
+    # 日付への変換を試す（形式が変なら注意メッセージ）
+    try:
+        start_date, end_date = parse_range(body)
+    except (ValueError, IndexError):
+        await message.channel.send(
+            "書式が正しくありません。例：/2026-9 、/2026-8:2026-9 、/n2026-8.15:2026-9.30"
+        )
         return
 
-    if mode == "n":                    # 夜だけ
-        free_days = find_free_days(year, month, NIGHT_START, NIGHT_END)
+    if start_date > end_date:          # 開始と終了が逆なら注意
+        await message.channel.send("開始日が終了日より後になっています")
+        return
+
+    # モードごとに空き日を求める
+    if mode == "n":
+        free_days = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
         label = "夜（21:00-24:00）"
-    elif mode == "a":                  # 昼夜両方が空いている日
-        day_free = find_free_days(year, month, DAY_START, DAY_END)
-        night_free = find_free_days(year, month, NIGHT_START, NIGHT_END)
-        both = set(day_free) & set(night_free)     # 両方に含まれる日だけ残す
-        free_days = sorted(both)                   # 日付順に並べ直す
+    elif mode == "a":
+        day_free = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        night_free = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        free_days = sorted(set(day_free) & set(night_free))
         label = "昼夜とも（10-18時 & 21-24時）"
-    else:                              # 日中だけ
-        free_days = find_free_days(year, month, DAY_START, DAY_END)
+    else:
+        free_days = find_free_days(start_date, end_date, DAY_START, DAY_END)
         label = "日中（10:00-18:00）"
 
-    await message.channel.send(format_free_days(year, month, free_days, label))
+    await message.channel.send(format_free_days_range(start_date, end_date, free_days, label))
 
 # ===== ⑨-A ダミーWebサーバー（ここに丸ごと置く） =====
 class HealthHandler(BaseHTTPRequestHandler):
