@@ -210,15 +210,20 @@ def format_free_days_range(start_date, end_date, free_days, label):
     if not free_days:
         return f"{header}\n該当する日はありません"
 
-    parts = []
+    lines = []                         # 月ごとの1行を貯める
+    current = []                       # 今の月の日にちを貯める
     prev_month = None
     for d in free_days:
-        if d.month != prev_month:      # 月が変わったら「月/日」で表示
-            parts.append(f"{d.month}/{d.day}")
+        if d.month != prev_month:      # 月が変わったら
+            if current:                # 前の月の分があれば1行として確定
+                lines.append(", ".join(current))
+            current = [f"{d.month}/{d.day}"]   # 新しい月は「9/1」から始める
             prev_month = d.month
-        else:                          # 同じ月なら日にちだけ
-            parts.append(str(d.day))
-    return header + "\n" + ", ".join(parts)
+        else:                          # 同じ月なら日にちだけ足す
+            current.append(str(d.day))
+    lines.append(", ".join(current))   # 最後の月の分を確定
+
+    return header + "\n" + "\n".join(lines)
 
 def format_free_days(year, month, free_days, label):
     """結果を見やすい文章に整える"""
