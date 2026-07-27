@@ -206,27 +206,33 @@ async def on_message(message):
     text = message.content.strip()     # 送られた文字（前後の空白を除去）
 
     # 「/2026-09」または「/n2026-09」の形かを判定する
-    match = re.fullmatch(r"/(n?)(\d{4})-(\d{1,2})", text)
+    match = re.fullmatch(r"/([na]?)(\d{4})-(\d{1,2})", text)   # n と a を許可
     if not match:
-        return                         # 該当しなければ何もしない
+        return
 
-    is_night = match.group(1) == "n"   # 先頭に n があれば夜モード
+    mode = match.group(1)              # "" or "n" or "a"
     year = int(match.group(2))
     month = int(match.group(3))
 
-    if not 1 <= month <= 12:           # 月の値が変なら注意して終了
+    if not 1 <= month <= 12:
         await message.channel.send("月は1〜12で指定してください")
         return
 
-    # 夜か日中かで、調べる時間帯とラベルを切り替える
-    if is_night:
-        slot_start, slot_end, label = NIGHT_START, NIGHT_END, "夜（21:00-24:00）"
-    else:
-        slot_start, slot_end, label = DAY_START, DAY_END, "日中（10:00-18:00）"
+    if mode == "n":                    # 夜だけ
+        free_days = find_free_days(year, month, NIGHT_START, NIGHT_END)
+        label = "夜（21:00-24:00）"
+    elif mode == "a":                  # 昼夜両方が空いている日
+        day_free = find_free_days(year, month, DAY_START, DAY_END)
+        night_free = find_free_days(year, month, NIGHT_START, NIGHT_END)
+        both = set(day_free) & set(night_free)     # 両方に含まれる日だけ残す
+        free_days = sorted(both)                   # 日付順に並べ直す
+        label = "昼夜とも（10-18時 & 21-24時）"
+    else:                              # 日中だけ
+        free_days = find_free_days(year, month, DAY_START, DAY_END)
+        label = "日中（10:00-18:00）"
 
-    free_days = find_free_days(year, month, slot_start, slot_end)
     await message.channel.send(format_free_days(year, month, free_days, label))
-    
+
 # ===== ⑨-A ダミーWebサーバー（ここに丸ごと置く） =====
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
