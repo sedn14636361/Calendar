@@ -205,7 +205,8 @@ def format_free_days_range(start_date, end_date, free_days, label):
     stamp = now.strftime("%Y/%m/%d現在")
     period = f"{start_date.year}/{start_date.month}/{start_date.day}〜" \
              f"{end_date.year}/{end_date.month}/{end_date.day}"
-    header = f"**{period} / {label}が空いている日**（{stamp}）"
+        header = f"**{period} / {label}**（{stamp}）"
+
 
     if not free_days:
         return f"{header}\n該当する日はありません"
@@ -269,17 +270,18 @@ async def on_message(message):
         return
 
     # モードごとに空き日を求める
-    if mode == "n":
+        if mode == "n":
         free_days = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
-        label = "夜（21:00-24:00）"
+        label = "夜が空いている日"
     elif mode == "a":
         day_free = find_free_days(start_date, end_date, DAY_START, DAY_END)
         night_free = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
         free_days = sorted(set(day_free) & set(night_free))
-        label = "昼夜とも（10-18時 & 21-24時）"
+        label = "一日空いている日"
     else:
         free_days = find_free_days(start_date, end_date, DAY_START, DAY_END)
-        label = "日中（10:00-18:00）"
+        label = "昼が空いている日"
+
 
     await message.channel.send(format_free_days_range(start_date, end_date, free_days, label))
 
