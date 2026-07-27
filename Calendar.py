@@ -249,7 +249,8 @@ async def on_message(message):
     text = message.content.strip()
 
     # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、という形かを判定
-    match = re.fullmatch(r"/([na]?)([\d\-\.:]+)", text)
+    match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)", text)
+
     if not match:
         return
 
@@ -278,6 +279,11 @@ async def on_message(message):
         night_free = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
         free_days = sorted(set(day_free) & set(night_free))
         label = "一日空いている日"
+    elif mode == "u":                  # 昼か夜のどちらか（あるいは両方）が空いている日
+        day_free = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        night_free = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        free_days = sorted(set(day_free) | set(night_free))   # どちらかに含まれる日
+        label = "昼か夜が空いている日"
     else:
         free_days = find_free_days(start_date, end_date, DAY_START, DAY_END)
         label = "昼が空いている日"
