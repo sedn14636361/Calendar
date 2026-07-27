@@ -202,10 +202,10 @@ def parse_range(body):
 
 def format_free_days_range(start_date, end_date, free_days, label):
     now = datetime.now(JST)
-    stamp = now.strftime("%Y/%m/%d現在")
+    stamp = now.strftime("%m/%d現在")
     period = f"{start_date.year}/{start_date.month}/{start_date.day}〜" \
              f"{end_date.year}/{end_date.month}/{end_date.day}"
-    header = f"**{period} / {label}**（{stamp}）"
+    header = f"**{period}**\n{label}（{stamp}）"
 
 
     if not free_days:
@@ -229,8 +229,8 @@ def format_free_days_range(start_date, end_date, free_days, label):
 def format_free_days(year, month, free_days, label):
     """結果を見やすい文章に整える"""
     now = datetime.now(JST)                                    # 実行した時点の日時（日本時間）
-    stamp = now.strftime("%Y/%m/%d現在")                 # 「2026/07/24 15:30現在」の形
-    header = f"**{year}年{month}月 / {label}が空いている日**（{stamp}）"
+    stamp = now.strftime("%m/%d現在")                 # 「2026/07/24 15:30現在」の形
+    header = f"**{year}年{month}月**\n{label}が空いている日（{stamp}）"
 
     if not free_days:
         return f"{header}\n該当する日はありません"
@@ -261,7 +261,7 @@ async def on_message(message):
         start_date, end_date = parse_range(body)
     except (ValueError, IndexError):
         await message.channel.send(
-            "書式が正しくありません。例：/2026-9 、/2026-8:2026-9 、/n2026-8.15:2026-9.30"
+            "書式が正しくありません。例：/2026-9 、/a2026-8:2026-9 、/n2026-8.15:2026-9.30"
         )
         return
 
