@@ -5,6 +5,7 @@ import discord
 import threading                      # 2つの処理を同時に動かすための道具
 import re                              # 文字列のパターンを判定する道具
 import calendar as _calendar           # 月末日を求める道具
+import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー
 from discord.ext import tasks
 from google.oauth2 import service_account
@@ -107,13 +108,24 @@ async def update_calendar():
 
     embeds = build_embeds(events)
     channel = client.get_channel(CHANNEL_ID)
+    
     if not state["messages"]:
         for embed in embeds:
-            msg = await channel.send(embed=embed)
-            state["messages"].append(msg)
+            try:
+                msg = await channel.send(embed=embed)
+                state["messages"].append(msg)
+                await asyncio.sleep(1) # ★1秒待つ（スロットリング）
+            except discord.HTTPException as e:
+                print(f"送信エラー: {e}")
+                await asyncio.sleep(5) # エラーが出たら長めに待つ
     else:
         for msg, embed in zip(state["messages"], embeds):
-            await msg.edit(embed=embed)
+            try:
+                await msg.edit(embed=embed)
+                await asyncio.sleep(1) # ★1秒待つ（スロットリング）
+            except discord.HTTPException as e:
+                print(f"編集エラー: {e}")
+                await asyncio.sleep(5) # エラーが出たら長めに待つ
 
 # ===== ⑧-B 指定月の空き日程を調べる機能 ★追加 =====
 
