@@ -1,11 +1,11 @@
 # ===== ① 必要な道具（ライブラリ）を読み込む =====
-import os                              # 環境変数（コード外から渡す値）を読むための道具 ★追加
-import json                           # JSON文字列を扱うための道具 ★追加
+import os                              # 環境変数（コード外から渡す値）を読むための道具
+import json                           # JSON文字列を扱うための道具
 import discord
-import threading                      # 2つの処理を同時に動かすための道具 ★追加
-import re                              # 文字列のパターンを判定する道具 ★追加
+import threading                      # 2つの処理を同時に動かすための道具
+import re                              # 文字列のパターンを判定する道具
 import calendar as _calendar           # 月末日を求める道具
-from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー ★追加
+from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー
 from discord.ext import tasks
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -13,9 +13,8 @@ from datetime import datetime, timezone, timedelta
 
 
 # ===== ② 設定値（環境変数から読み込む） =====
-# os.environ[...] は「サーバー側で設定した値をここに読み込む」という意味 ★変更
 DISCORD_BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
-CHANNEL_ID = int(os.environ["CHANNEL_ID"])   # 環境変数は文字なので数字に変換する
+CHANNEL_ID = int(os.environ["CHANNEL_ID"])   
 CALENDAR_ID = os.environ["CALENDAR_ID"]
 
 DAYS_TO_SHOW = 90
@@ -26,9 +25,8 @@ JST = timezone(timedelta(hours=9))     # 日本時間
 # ===== ③ Googleカレンダーへの接続準備（鍵も環境変数から） =====
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 
-# 鍵JSONの「中身そのもの」を環境変数から受け取り、辞書に変換する ★変更
 service_account_info = json.loads(os.environ["SERVICE_ACCOUNT_JSON"])
-creds = service_account.Credentials.from_service_account_info(  # ファイルではなく中身から作る
+creds = service_account.Credentials.from_service_account_info(  
     service_account_info, scopes=SCOPES
 )
 service = build("calendar", "v3", credentials=creds)
@@ -36,7 +34,7 @@ service = build("calendar", "v3", credentials=creds)
 
 # ===== ④ Discordへの接続準備 =====
 intents = discord.Intents.default()
-intents.message_content = True         # ★追加：メッセージ本文を読めるようにする
+intents.message_content = True         # メッセージ本文を読めるようにする
 client = discord.Client(intents=intents)
 
 
@@ -254,7 +252,7 @@ async def on_message(message):
     if not match:
         return
 
-    mode = match.group(1)              # "" or "n" or "a"
+    mode = match.group(1)              # "" or "n" or "a" or "u"
     body = match.group(2)              # 例 "2026-8:2026-9"
 
     # 日付への変換を試す（形式が変なら注意メッセージ）
