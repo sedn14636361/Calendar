@@ -97,7 +97,7 @@ def build_embeds(events):
 
 
 # ===== ⑧ 定期的に実行される処理（5分ごと） =====
-@tasks.loop(minutes=5)
+@tasks.loop(minutes=60)
 async def update_calendar():
     events = fetch_events()
     today = datetime.now(JST).date().isoformat()      # 今日の日付（日本時間）
