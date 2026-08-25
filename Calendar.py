@@ -308,11 +308,11 @@ async def on_message(message):
         all_days = []
         d = start_date
         while d <= end_date:
-            if d not in free_set:      # 空き日でない日＝予定がある日
+            if d not in free_set:
                 all_days.append(d)
             d += timedelta(days=1)
         free_days = all_days
-        label = "夜に予定がある日" if mode == "n" else "昼に予定がある日"
+        label = "夜が空いてない日" if mode == "n" else "昼が空いてない日"
 
     await message.channel.send(format_free_days_range(start_date, end_date, free_days, label))
 
