@@ -96,12 +96,15 @@ def build_embeds(events):
     return embeds
 
 
-# ===== ⑧ 定期的に実行される処理（5分ごと） =====
-@tasks.loop(minutes=60)
+# ===== ⑧ 定期的に実行される処理（15分ごと） =====
+@tasks.loop(minutes=15)
 async def update_calendar():
     events = fetch_events()
     today = datetime.now(JST).date().isoformat()      # 今日の日付（日本時間）
-    signature = str(today) + str([(e.get("summary"), e["start"]) for e in events])
+    signature = str(today) + str([
+        (e.get("summary"), e.get("start"), e.get("end"), e.get("updated"))
+        for e in events
+    ])
     if signature == state["signature"]:
         return
     state["signature"] = signature
@@ -259,13 +262,14 @@ async def on_message(message):
     text = message.content.strip()
 
     # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、という形かを判定
-    match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)", text)
+    match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r?)", text)   # 末尾に r を許可
 
     if not match:
         return
 
     mode = match.group(1)              # "" or "n" or "a" or "u"
     body = match.group(2)              # 例 "2026-8:2026-9"
+    negate = match.group(3) == "r"     # 末尾に r があれば「反転」＝予定がある日
 
     # 日付への変換を試す（形式が変なら注意メッセージ）
     try:
@@ -297,6 +301,18 @@ async def on_message(message):
     else:
         free_days = find_free_days(start_date, end_date, DAY_START, DAY_END)
         label = "昼が空いている日"
+
+    # 末尾に r が付いていたら反転（昼・夜モードのみ対象。a と u には適用しない）
+    if negate and mode in ("", "n"):
+        free_set = set(free_days)
+        all_days = []
+        d = start_date
+        while d <= end_date:
+            if d not in free_set:      # 空き日でない日＝予定がある日
+                all_days.append(d)
+            d += timedelta(days=1)
+        free_days = all_days
+        label = "夜に予定がある日" if mode == "n" else "昼に予定がある日"
 
     await message.channel.send(format_free_days_range(start_date, end_date, free_days, label))
 
