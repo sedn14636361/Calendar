@@ -282,46 +282,32 @@ def _img_font(size):
     return ImageFont.load_default()    # どれも無ければ内蔵フォント
 
 
-def collect_month_slots(year, month):
-    """指定月の予定を取得し、日ごとの時間帯リストと終日集合を返す"""
-    start = datetime(year, month, 1, tzinfo=JST)
-    if month == 12:
-        end = datetime(year + 1, 1, 1, tzinfo=JST)
-    else:
-        end = datetime(year, month + 1, 1, tzinfo=JST)
-    events = fetch_events_between(start, end)
+def collect_month_busy(year, month):
+    """指定月について、昼が埋まっている日の集合・夜が埋まっている日の集合を返す。
+       判定は空き日程コマンド（find_free_days）と同じ基準を使う。"""
+    first = date(year, month, 1)
+    last_day = _calendar.monthrange(year, month)[1]
+    last = date(year, month, last_day)
 
-    slots_by_day = {}                  # {date: [(開始時, 終了時), ...]}（時=0-24の小数）
-    allday_by_day = set()              # {date, ...}
-    for e in events:
-        if "date" in e["start"]:                       # 終日予定
-            d = datetime.fromisoformat(e["start"]["date"]).date()
-            end_d = datetime.fromisoformat(e["end"]["date"]).date()
-            while d < end_d:
-                if d.year == year and d.month == month:
-                    allday_by_day.add(d)
-                d += timedelta(days=1)
-            continue
+    # find_free_days は「空いている日」を返すので、その補集合が「埋まっている日」
+    day_free = set(find_free_days(first, last, DAY_START, DAY_END))
+    night_free = set(find_free_days(first, last, NIGHT_START, NIGHT_END))
 
-        s = datetime.fromisoformat(e["start"]["dateTime"]).astimezone(JST).replace(tzinfo=None)
-        ee = datetime.fromisoformat(e["end"]["dateTime"]).astimezone(JST).replace(tzinfo=None)
-        cur = s
-        while cur.date() <= ee.date():                 # 日をまたぐ予定は日ごとに分割
-            day_start = datetime(cur.year, cur.month, cur.day, 0, 0)
-            day_end = day_start + timedelta(days=1)
-            seg_s = max(s, day_start)
-            seg_e = min(ee, day_end)
-            if seg_e > seg_s and cur.month == month and cur.year == year:
-                sh = (seg_s - day_start).total_seconds() / 3600.0
-                eh = (seg_e - day_start).total_seconds() / 3600.0
-                slots_by_day.setdefault(cur.date(), []).append((sh, eh))
-            cur = day_start + timedelta(days=1)
-    return slots_by_day, allday_by_day
+    day_busy = set()
+    night_busy = set()
+    d = first
+    while d <= last:
+        if d not in day_free:
+            day_busy.add(d)
+        if d not in night_free:
+            night_busy.add(d)
+        d += timedelta(days=1)
+    return day_busy, night_busy
 
 
 def render_month_image(year, month):
     """月間カレンダー画像を生成（確定CSSレイアウトをPillowで正確に再現）"""
-    slots_by_day, allday_by_day = collect_month_slots(year, month)
+    day_busy, night_busy = collect_month_busy(year, month)
 
     cal = _calendar.Calendar(firstweekday=6)   # 日曜始まり
     weeks = cal.monthdayscalendar(year, month)
@@ -411,18 +397,15 @@ def render_month_image(year, month):
             if daynum == 0:
                 continue
             d = date(year, month, daynum)
-            # 終日予定
-            if d in allday_by_day:
-                draw.rectangle([x0 + LINE, y0 + LINE, x1 - LINE, y1 - LINE],
-                               fill=(IMG_EVENT_COLOR[0], IMG_EVENT_COLOR[1], IMG_EVENT_COLOR[2], 90))
-            # 時刻付き予定（左右余白なし、上0時・下24時）
-            for (sh, eh) in slots_by_day.get(d, []):
-                ry0 = y0 + CELL * (sh / 24.0)
-                ry1 = y0 + CELL * (eh / 24.0)
-                if ry1 - ry0 < 3:
-                    ry1 = ry0 + 3
-                draw.rectangle([x0 + LINE, ry0, x1 - LINE, ry1],
-                               fill=(IMG_EVENT_COLOR[0], IMG_EVENT_COLOR[1], IMG_EVENT_COLOR[2], IMG_EVENT_ALPHA))
+            # 昼が埋まっていれば上半分、夜が埋まっていれば下半分を塗る
+            day_filled = d in day_busy
+            night_filled = d in night_busy
+            mid = y0 + CELL / 2
+            fill = (IMG_EVENT_COLOR[0], IMG_EVENT_COLOR[1], IMG_EVENT_COLOR[2], IMG_EVENT_ALPHA)
+            if day_filled:
+                draw.rectangle([x0 + LINE, y0 + LINE, x1 - LINE, mid], fill=fill)
+            if night_filled:
+                draw.rectangle([x0 + LINE, mid, x1 - LINE, y1 - LINE], fill=fill)
             # 日付数字
             col = IMG_SUN if c == 0 else (IMG_SAT if c == 6 else IMG_TEXT)
             draw.text((x0 + 6, y0 + 4), str(daynum), font=f_day, fill=col)
