@@ -6,11 +6,13 @@ import threading                      # 2つの処理を同時に動かすため
 import re                              # 文字列のパターンを判定する道具
 import calendar as _calendar           # 月末日を求める道具
 import asyncio
+import io                               # 画像をメモリ上で扱う道具
 from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー
 from discord.ext import tasks
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date
+from PIL import Image, ImageDraw, ImageFont  # 画像生成の道具（要 Pillow）
 
 
 # ===== ② 設定値（環境変数から読み込む） =====
@@ -96,8 +98,8 @@ def build_embeds(events):
     return embeds
 
 
-# ===== ⑧ 定期的に実行される処理（15分ごと） =====
-@tasks.loop(minutes=15)
+# ===== ⑧ 定期的に実行される処理（5分ごと） =====
+@tasks.loop(minutes=60)
 async def update_calendar():
     events = fetch_events()
     today = datetime.now(JST).date().isoformat()      # 今日の日付（日本時間）
@@ -253,6 +255,184 @@ def format_free_days(year, month, free_days, label):
     return header + "\n" + ", ".join(days)
 
 
+# ===== ⑧-D 月間カレンダー画像を生成する機能 ★追加 =====
+
+# サーバーに標準で入っている英字フォントを順に探す（無ければ内蔵フォント）
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "DejaVuSans.ttf",
+]
+IMG_BG = (250, 245, 230)               # 背景クリーム #faf5e6
+IMG_CELL_BG = (255, 253, 246)          # 日付マスの中 #fffdf6（背景より薄い）
+IMG_EVENT_COLOR = (120, 180, 235)      # 予定の塗り色 #78b4eb
+IMG_EVENT_ALPHA = 217                  # 塗りの不透明度（CSS 0.85）
+IMG_GRID = (60, 55, 45)                # 枠線 #3c372d
+IMG_TEXT = (60, 50, 42)                # 文字 #3c322a
+IMG_SUN = (210, 70, 55)                # 日曜=赤 #d24637
+IMG_SAT = (70, 112, 205)               # 土曜=青 #4670cd
+
+
+def _img_font(size):
+    for path in _FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(path, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()    # どれも無ければ内蔵フォント
+
+
+def collect_month_slots(year, month):
+    """指定月の予定を取得し、日ごとの時間帯リストと終日集合を返す"""
+    start = datetime(year, month, 1, tzinfo=JST)
+    if month == 12:
+        end = datetime(year + 1, 1, 1, tzinfo=JST)
+    else:
+        end = datetime(year, month + 1, 1, tzinfo=JST)
+    events = fetch_events_between(start, end)
+
+    slots_by_day = {}                  # {date: [(開始時, 終了時), ...]}（時=0-24の小数）
+    allday_by_day = set()              # {date, ...}
+    for e in events:
+        if "date" in e["start"]:                       # 終日予定
+            d = datetime.fromisoformat(e["start"]["date"]).date()
+            end_d = datetime.fromisoformat(e["end"]["date"]).date()
+            while d < end_d:
+                if d.year == year and d.month == month:
+                    allday_by_day.add(d)
+                d += timedelta(days=1)
+            continue
+
+        s = datetime.fromisoformat(e["start"]["dateTime"]).astimezone(JST).replace(tzinfo=None)
+        ee = datetime.fromisoformat(e["end"]["dateTime"]).astimezone(JST).replace(tzinfo=None)
+        cur = s
+        while cur.date() <= ee.date():                 # 日をまたぐ予定は日ごとに分割
+            day_start = datetime(cur.year, cur.month, cur.day, 0, 0)
+            day_end = day_start + timedelta(days=1)
+            seg_s = max(s, day_start)
+            seg_e = min(ee, day_end)
+            if seg_e > seg_s and cur.month == month and cur.year == year:
+                sh = (seg_s - day_start).total_seconds() / 3600.0
+                eh = (seg_e - day_start).total_seconds() / 3600.0
+                slots_by_day.setdefault(cur.date(), []).append((sh, eh))
+            cur = day_start + timedelta(days=1)
+    return slots_by_day, allday_by_day
+
+
+def render_month_image(year, month):
+    """月間カレンダー画像を生成（確定CSSレイアウトをPillowで正確に再現）"""
+    slots_by_day, allday_by_day = collect_month_slots(year, month)
+
+    cal = _calendar.Calendar(firstweekday=6)   # 日曜始まり
+    weeks = cal.monthdayscalendar(year, month)
+    rows = len(weeks)
+    cols = 7
+
+    # --- 確定した寸法（CSSの値と一致）---
+    CELL = 150                     # 正方形マスの一辺
+    LINE = 2                       # 枠線の太さ
+    PAD = 40                       # 左右下の余白
+    GAP_MONTH_WEEK = 56            # 上端↔月、月↔曜日バー
+    GAP_WEEK_GRID = 24             # 曜日バー↔カレンダー
+    BAR_H = 34                     # 曜日バーの高さ
+    MONTH_SIZE = 150               # 月数字のフォントサイズ
+    YEAR_SIZE = 40                 # 年のフォントサイズ
+    DAY_SIZE = 30                  # 日付数字のフォントサイズ
+
+    f_month = _img_font(MONTH_SIZE)
+    f_year = _img_font(YEAR_SIZE)
+    f_day = _img_font(DAY_SIZE)
+
+    grid_w = CELL * cols
+    grid_h = CELL * rows
+    W = grid_w + PAD * 2
+
+    # 高さ：上端余白 + 月ブロック + 月↔曜日 + 曜日バー + 曜日↔grid + grid + 下余白
+    month_block_h = MONTH_SIZE     # 月数字のぶんを高さとして確保
+    H = (GAP_MONTH_WEEK + month_block_h + GAP_MONTH_WEEK
+         + BAR_H + GAP_WEEK_GRID + grid_h + PAD)
+
+    img = Image.new("RGB", (W, H), IMG_BG)
+    draw = ImageDraw.Draw(img, "RGBA")
+
+    # ===== ヘッダー：月を中央、年をそのすぐ左 =====
+    # 月数字の描画位置（中央）。実寸を測って中央ぞろえする。
+    mb = draw.textbbox((0, 0), str(month), font=f_month)
+    mw = mb[2] - mb[0]
+    mh = mb[3] - mb[1]
+    month_top = GAP_MONTH_WEEK
+    month_x = (W - mw) / 2 - mb[0]
+    # ベースライン合わせ用に月の底を基準化
+    month_baseline = month_top + month_block_h
+    draw.text((month_x, month_baseline - mh - mb[1]), str(month), font=f_month, fill=IMG_TEXT)
+
+    # 年「YYYY -」を月の左に、月の下端寄りに添える
+    year_text = f"{year} -"
+    yb = draw.textbbox((0, 0), year_text, font=f_year)
+    yw = yb[2] - yb[0]
+    yh = yb[3] - yb[1]
+    gap_year_month = 20
+    year_x = month_x - yw - gap_year_month
+    # 年のベースラインを月の下端に近づける（見た目で下ぞろえ気味に）
+    draw.text((year_x, month_baseline - yh - yb[1] - 8), year_text, font=f_year, fill=IMG_TEXT)
+
+    # ===== 曜日バー =====
+    bar_top = month_top + month_block_h + GAP_MONTH_WEEK
+    grid_left = PAD
+    bar_left = grid_left
+    # 外枠
+    draw.rectangle([bar_left, bar_top, bar_left + grid_w, bar_top + BAR_H],
+                   outline=IMG_GRID, width=LINE)
+    seg = grid_w / cols
+    # 左端(日)赤・右端(土)青の薄塗り（CSS rgba 0.28 相当）
+    draw.rectangle([bar_left + LINE, bar_top + LINE,
+                    bar_left + seg, bar_top + BAR_H - LINE],
+                   fill=(IMG_SUN[0], IMG_SUN[1], IMG_SUN[2], 72))
+    draw.rectangle([bar_left + grid_w - seg, bar_top + LINE,
+                    bar_left + grid_w - LINE, bar_top + BAR_H - LINE],
+                   fill=(IMG_SAT[0], IMG_SAT[1], IMG_SAT[2], 72))
+    # 縦の区切り線
+    for c in range(1, cols):
+        xx = bar_left + seg * c
+        draw.line([xx, bar_top, xx, bar_top + BAR_H], fill=IMG_GRID, width=LINE)
+
+    # ===== 日付グリッド =====
+    grid_top = bar_top + BAR_H + GAP_WEEK_GRID
+    for r, week in enumerate(weeks):
+        for c, daynum in enumerate(week):
+            x0 = grid_left + c * CELL
+            y0 = grid_top + r * CELL
+            x1, y1 = x0 + CELL, y0 + CELL
+            # 日付ありマスは中を薄ベージュに塗る（枠より内側）
+            if daynum != 0:
+                draw.rectangle([x0, y0, x1, y1], fill=IMG_CELL_BG)
+            # 枠線
+            draw.rectangle([x0, y0, x1, y1], outline=IMG_GRID, width=LINE)
+            if daynum == 0:
+                continue
+            d = date(year, month, daynum)
+            # 終日予定
+            if d in allday_by_day:
+                draw.rectangle([x0 + LINE, y0 + LINE, x1 - LINE, y1 - LINE],
+                               fill=(IMG_EVENT_COLOR[0], IMG_EVENT_COLOR[1], IMG_EVENT_COLOR[2], 90))
+            # 時刻付き予定（左右余白なし、上0時・下24時）
+            for (sh, eh) in slots_by_day.get(d, []):
+                ry0 = y0 + CELL * (sh / 24.0)
+                ry1 = y0 + CELL * (eh / 24.0)
+                if ry1 - ry0 < 3:
+                    ry1 = ry0 + 3
+                draw.rectangle([x0 + LINE, ry0, x1 - LINE, ry1],
+                               fill=(IMG_EVENT_COLOR[0], IMG_EVENT_COLOR[1], IMG_EVENT_COLOR[2], IMG_EVENT_ALPHA))
+            # 日付数字
+            col = IMG_SUN if c == 0 else (IMG_SAT if c == 6 else IMG_TEXT)
+            draw.text((x0 + 6, y0 + 4), str(daynum), font=f_day, fill=col)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
+
+
 # ===== ⑧-C メッセージを受け取ったときの処理 ★追加 =====
 @client.event
 async def on_message(message):
@@ -260,6 +440,24 @@ async def on_message(message):
         return
 
     text = message.content.strip()
+
+    # --- /c2026-9 : 月間カレンダー画像を出力 ---
+    cmatch = re.fullmatch(r"/c(\d{4})-(\d{1,2})", text)
+    if cmatch:
+        year = int(cmatch.group(1))
+        month = int(cmatch.group(2))
+        if not 1 <= month <= 12:
+            await message.channel.send("月は1〜12で指定してください")
+            return
+        try:
+            # 画像生成は重い処理なので、別スレッドで実行してボットを固めない
+            buf = await asyncio.to_thread(render_month_image, year, month)
+            file = discord.File(buf, filename=f"calendar_{year}_{month:02d}.png")
+            await message.channel.send(f"📅 {year}年{month}月", file=file)
+        except Exception as e:
+            print(f"画像生成エラー: {e}")
+            await message.channel.send("画像の生成に失敗しました")
+        return
 
     # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、という形かを判定
     match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r?)", text)   # 末尾に r を許可
@@ -308,11 +506,11 @@ async def on_message(message):
         all_days = []
         d = start_date
         while d <= end_date:
-            if d not in free_set:
+            if d not in free_set:      # 空き日でない日＝予定がある日
                 all_days.append(d)
             d += timedelta(days=1)
         free_days = all_days
-        label = "夜が空いてない日" if mode == "n" else "昼が空いてない日"
+        label = "夜に予定がある日" if mode == "n" else "昼に予定がある日"
 
     await message.channel.send(format_free_days_range(start_date, end_date, free_days, label))
 
