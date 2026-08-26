@@ -353,7 +353,7 @@ def render_month_image(year, month):
     draw.text((month_x, month_baseline - mh - mb[1]), str(month), font=f_month, fill=IMG_TEXT)
 
     # 年「YYYY -」を月の左に、月の下端寄りに添える
-    year_text = f"{year} -"
+    year_text = f"{year} "
     yb = draw.textbbox((0, 0), year_text, font=f_year)
     yw = yb[2] - yb[0]
     yh = yb[3] - yb[1]
