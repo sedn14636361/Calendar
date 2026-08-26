@@ -136,7 +136,7 @@ async def update_calendar():
 
 # 判定に使う時間帯（時単位）
 DAY_START, DAY_END = 10, 18            # 日中 10:00-18:00
-NIGHT_START, NIGHT_END = 21, 24        # 夜 21:00-24:00
+NIGHT_START, NIGHT_END = 18, 24        # 夜 21:00-24:00
 
 
 def fetch_events_between(start_dt, end_dt):
