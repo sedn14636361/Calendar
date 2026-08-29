@@ -461,7 +461,7 @@ async def on_message(message):
     body = match.group(2)              # 例 "2026-8:2026-9"
     suffix = match.group(3) or ""      # "" or "r" or "d"
     negate = suffix == "r"             # 末尾 r ＝反転（予定がある日）
-    densuke = suffix == "d" and mode == ""  # 末尾 d ＝伝助形式（昼＝無印のみ）
+    densuke = suffix == "d"            # 末尾 d ＝伝助形式（全モードで使える／r とは排他）
 
     # 日付への変換を試す（形式が変なら注意メッセージ）
     try:
