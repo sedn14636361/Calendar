@@ -136,7 +136,7 @@ async def update_calendar():
 
 # 判定に使う時間帯（時単位）
 DAY_START, DAY_END = 10, 18            # 日中 10:00-18:00
-NIGHT_START, NIGHT_END = 18, 24        # 夜 21:00-24:00
+NIGHT_START, NIGHT_END = 18, 24        # 夜 18:00-24:00
 
 
 def fetch_events_between(start_dt, end_dt):
@@ -240,6 +240,15 @@ def format_free_days_range(start_date, end_date, free_days, label):
     lines.append(", ".join(current))   # 最後の月の分を確定
 
     return header + "\n" + "\n".join(lines)
+
+
+def format_free_days_densuke(free_days):
+    """伝助用：1日1行・曜日付きで出力する。例）9/9(水)"""
+    if not free_days:
+        return "該当する日はありません"
+    weekdays = ["月", "火", "水", "木", "金", "土", "日"]
+    lines = [f"{d.month}/{d.day}({weekdays[d.weekday()]})" for d in free_days]
+    return "\n".join(lines)
 
 def format_free_days(year, month, free_days, label):
     """結果を見やすい文章に整える"""
@@ -353,7 +362,7 @@ def render_month_image(year, month):
     draw.text((month_x, month_baseline - mh - mb[1]), str(month), font=f_month, fill=IMG_TEXT)
 
     # 年「YYYY -」を月の左に、月の下端寄りに添える
-    year_text = f"{year} "
+    year_text = f"{year}"
     yb = draw.textbbox((0, 0), year_text, font=f_year)
     yw = yb[2] - yb[0]
     yh = yb[3] - yb[1]
@@ -442,15 +451,17 @@ async def on_message(message):
             await message.channel.send("画像の生成に失敗しました")
         return
 
-    # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、という形かを判定
-    match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r?)", text)   # 末尾に r を許可
+    # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、末尾に r または d
+    match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r|d)?", text)
 
     if not match:
         return
 
     mode = match.group(1)              # "" or "n" or "a" or "u"
     body = match.group(2)              # 例 "2026-8:2026-9"
-    negate = match.group(3) == "r"     # 末尾に r があれば「反転」＝予定がある日
+    suffix = match.group(3) or ""      # "" or "r" or "d"
+    negate = suffix == "r"             # 末尾 r ＝反転（予定がある日）
+    densuke = suffix == "d" and mode == ""  # 末尾 d ＝伝助形式（昼＝無印のみ）
 
     # 日付への変換を試す（形式が変なら注意メッセージ）
     try:
@@ -495,7 +506,10 @@ async def on_message(message):
         free_days = all_days
         label = "夜に予定がある日" if mode == "n" else "昼に予定がある日"
 
-    await message.channel.send(format_free_days_range(start_date, end_date, free_days, label))
+    if densuke:
+        await message.channel.send(format_free_days_densuke(free_days))
+    else:
+        await message.channel.send(format_free_days_range(start_date, end_date, free_days, label))
 
 # ===== ⑨-A ダミーWebサーバー（ここに丸ごと置く） =====
 class HealthHandler(BaseHTTPRequestHandler):
