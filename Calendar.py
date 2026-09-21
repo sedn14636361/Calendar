@@ -513,6 +513,16 @@ async def on_message(message):
         await message.channel.send("開始日が終了日より後になっています")
         return
 
+    # 範囲は最大12か月まで（超長期の指定によるAPI過負荷・レート制限を防ぐ）
+    # 開始日の12か月後を上限日として比較する
+    limit_year = start_date.year + 1
+    limit_month = start_date.month
+    limit_day = min(start_date.day, _calendar.monthrange(limit_year, limit_month)[1])
+    limit_date = date(limit_year, limit_month, limit_day)
+    if end_date > limit_date:
+        await message.channel.send("指定できる範囲は最大12か月までです")
+        return
+
     # モードごとに空き日を求める
     if mode == "n":
         free_days = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
