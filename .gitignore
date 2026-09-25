@@ -1,3 +1,8 @@
 service_account.json
 __pycache__/
 *.pyc
+
+# セットアップウィザードが出力する設定ファイル（秘密情報を含む）
+calendar-bot-env.txt
+*-env.txt
+.env

@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>セットアップウィザード</title>
+<style>
+:root{
+  --bg:#faf5e6; --panel:#fffdf6; --ink:#3c322a; --muted:#7a6f63;
+  --line:#ddd2bd; --line-strong:#3c372d;
+  --accent:#4285f4; --ok:#2e7d52; --ng:#c0392b; --warn:#b07d1a; --skip:#8b8378;
+  --ok-bg:#e8f5ee; --ng-bg:#fdecea; --warn-bg:#fdf6e3; --skip-bg:#f2f0ec;
+  --radius:10px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#1c1a17; --panel:#26231f; --ink:#ece5d8; --muted:#a59b8c;
+    --line:#3d382f; --line-strong:#5c5446;
+    --accent:#7aa8f8; --ok:#6fcf97; --ng:#f07a6a; --warn:#e0b458; --skip:#9a9186;
+    --ok-bg:#1e3328; --ng-bg:#3a221f; --warn-bg:#352c18; --skip-bg:#2b2824;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#1c1a17; --panel:#26231f; --ink:#ece5d8; --muted:#a59b8c;
+  --line:#3d382f; --line-strong:#5c5446;
+  --accent:#7aa8f8; --ok:#6fcf97; --ng:#f07a6a; --warn:#e0b458; --skip:#9a9186;
+  --ok-bg:#1e3328; --ng-bg:#3a221f; --warn-bg:#352c18; --skip-bg:#2b2824;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:system-ui,-apple-system,"Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+  line-height:1.75; font-size:15px;
+}
+.wrap{max-width:860px; margin:0 auto; padding:32px 16px 80px}
+header{margin-bottom:8px}
+h1{font-size:1.5rem; margin:0 0 4px; letter-spacing:.01em}
+.sub{color:var(--muted); font-size:.9rem; margin:0}
+
+/* 秘密情報の扱いについての注意。最初に目に入る位置に置く */
+.privacy{
+  margin:20px 0 28px; padding:14px 16px; background:var(--panel);
+  border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:var(--radius); font-size:.88rem;
+}
+.privacy b{display:block; margin-bottom:4px}
+.privacy ul{margin:6px 0 0; padding-left:1.2em; color:var(--muted)}
+
+/* 進捗 */
+.steps{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:24px}
+.chip{
+  font-size:.78rem; padding:4px 10px; border-radius:999px;
+  border:1px solid var(--line); background:var(--panel); color:var(--muted);
+  cursor:pointer; white-space:nowrap;
+}
+.chip[aria-current="true"]{border-color:var(--accent); color:var(--accent); font-weight:600}
+.chip.done{border-color:var(--ok); color:var(--ok)}
+.chip.fail{border-color:var(--ng); color:var(--ng)}
+
+/* カード */
+.card{
+  background:var(--panel); border:1px solid var(--line);
+  border-radius:var(--radius); padding:22px 22px 24px; margin-bottom:18px;
+}
+.card h2{font-size:1.12rem; margin:0 0 2px}
+.card .why{color:var(--muted); font-size:.87rem; margin:0 0 16px}
+ol.todo{margin:0 0 16px; padding-left:1.4em}
+ol.todo li{margin-bottom:6px}
+code{
+  background:var(--bg); border:1px solid var(--line); border-radius:4px;
+  padding:1px 5px; font-size:.86em; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+
+/* スクリーンショット枠。未配置でも成立させる */
+figure{margin:0 0 16px}
+figure img{
+  display:block; max-width:100%; border:1px solid var(--line);
+  border-radius:6px; background:var(--bg);
+}
+figcaption{font-size:.8rem; color:var(--muted); margin-top:5px}
+.shot-missing{
+  border:1px dashed var(--line); border-radius:6px; padding:14px;
+  font-size:.82rem; color:var(--muted); background:var(--bg);
+}
+
+/* 入力 */
+label{display:block; font-size:.86rem; font-weight:600; margin:14px 0 5px}
+.hint{font-weight:400; color:var(--muted); font-size:.82rem}
+input[type=text],input[type=password],textarea{
+  width:100%; padding:9px 11px; font-size:.92rem; color:var(--ink);
+  background:var(--bg); border:1px solid var(--line); border-radius:6px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+textarea{min-height:110px; resize:vertical; line-height:1.5}
+input:focus,textarea:focus{outline:2px solid var(--accent); outline-offset:1px}
+.reveal{
+  background:none; border:0; color:var(--accent); font-size:.8rem;
+  cursor:pointer; padding:2px 0; margin-top:4px;
+}
+
+/* ボタン */
+.row{display:flex; flex-wrap:wrap; gap:9px; align-items:center; margin-top:18px}
+button{
+  font:inherit; font-size:.88rem; padding:8px 16px; border-radius:6px;
+  border:1px solid var(--line-strong); background:var(--panel); color:var(--ink);
+  cursor:pointer;
+}
+button.primary{background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600}
+button:disabled{opacity:.5; cursor:default}
+button.ghost{border-color:var(--line); color:var(--muted)}
+.spacer{flex:1}
+
+/* 検証結果 */
+.results{margin-top:16px; display:grid; gap:9px}
+.res{border:1px solid var(--line); border-left-width:3px; border-radius:6px; padding:11px 13px; font-size:.88rem}
+.res.ok{border-left-color:var(--ok); background:var(--ok-bg)}
+.res.ng{border-left-color:var(--ng); background:var(--ng-bg)}
+.res.unknown{border-left-color:var(--warn); background:var(--warn-bg)}
+.res.skip{border-left-color:var(--skip); background:var(--skip-bg)}
+.res .t{font-weight:600}
+.res.ok .t{color:var(--ok)} .res.ng .t{color:var(--ng)}
+.res.unknown .t{color:var(--warn)} .res.skip .t{color:var(--skip)}
+.res .d{white-space:pre-wrap; color:var(--muted); margin-top:3px; font-size:.86rem}
+.res .fixes{margin:8px 0 0; padding-left:1.15em}
+.res .fixes li{margin-bottom:5px}
+.res .raw{
+  margin-top:8px; padding:8px 10px; background:var(--bg); border:1px solid var(--line);
+  border-radius:4px; white-space:pre-wrap; font-size:.8rem;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--muted);
+}
+.res .step{font-size:.78rem; color:var(--muted); display:block}
+
+.note{font-size:.84rem; color:var(--muted); margin-top:12px}
+.warnbox{
+  background:var(--warn-bg); border:1px solid var(--line);
+  border-left:3px solid var(--warn); border-radius:6px;
+  padding:11px 13px; font-size:.86rem; margin-top:14px;
+}
+pre.out{
+  background:var(--bg); border:1px solid var(--line); border-radius:6px;
+  padding:13px; overflow:auto; font-size:.8rem; max-height:280px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace; white-space:pre-wrap;
+  word-break:break-all;
+}
+.hidden{display:none !important}
+footer{text-align:center; color:var(--muted); font-size:.8rem; margin-top:32px}
+.theme{position:fixed; top:12px; right:12px}
+.theme button{padding:5px 10px; font-size:.78rem}
+@media (max-width:600px){
+  .wrap{padding:20px 16px 60px}
+  .theme{position:static; text-align:right; margin-bottom:8px}
+}
+</style>
+</head>
+<body>
+<div class="theme"><button id="themeBtn" type="button">表示切替</button></div>
+<div class="wrap">
+
+<header>
+  <h1>セットアップウィザード</h1>
+  <p class="sub">カレンダー空き日程ボット — 手順ごとに、その値が本当に使えるかを確かめながら進めます</p>
+</header>
+
+<div class="privacy">
+  <b>入力した値の扱い</b>
+  ここで入力する値には、Discordのトークンやサービスアカウントの秘密鍵が含まれます。
+  <ul>
+    <li>値はこのPCの外に出ません。検証は同じPC上のプロセスが行います</li>
+    <li>ファイルにもログにも保存されません。検証のたびに受け取って捨てています</li>
+    <li>ブラウザにも保存しません。<b>ページを再読み込みすると入力は消えます</b></li>
+    <li>最後に設定ファイルを保存する操作だけは、あなたが選んだときに実行されます</li>
+  </ul>
+</div>
+
+<nav class="steps" id="chips"></nav>
+<main id="panels"></main>
+
+<footer>問題が起きたら <code>GUIDE.md</code> の「第III部 エラー対処」を参照してください</footer>
+</div>
+
+<script>
+"use strict";
+const KEY = "__SETUP_KEY__";
+
+/* 入力値はこのオブジェクトだけに持つ。localStorage には入れない。
+   秘密情報を永続化すると、同じオリジンを使う別のローカルアプリから
+   読める可能性があり、消し忘れも起きるため。 */
+const V = {
+  DISCORD_BOT_TOKEN: "", CHANNEL_ID: "",
+  CALENDAR_ID: "", SERVICE_ACCOUNT_JSON: "",
+};
+/* 進捗（どのステップを見ているか）だけは sessionStorage に置く。
+   タブを閉じれば消える。秘密情報は入れない。 */
+const PROGRESS_KEY = "calbot_wizard_step";
+
+let current = 0;
+const status = {};          /* ステップごとの結果: "done" | "fail" */
+
+async function api(path, body){
+  const r = await fetch(path, {
+    method:"POST",
+    headers:{"Content-Type":"application/json","X-Setup-Key":KEY},
+    body: JSON.stringify(body || {}),
+  });
+  if(!r.ok){
+    let msg = "HTTP " + r.status;
+    try{ const j = await r.json(); if(j.error) msg = j.error; }catch(e){}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+/* ===== 検証結果の描画 ===== */
+function resultEl(res, stepLabel){
+  const d = document.createElement("div");
+  d.className = "res " + (res.status || "skip");
+  const label = stepLabel ? `<span class="step">${esc(stepLabel)}</span>` : "";
+  const mark = {ok:"OK", ng:"要対応", unknown:"判定不能", skip:"未検証"}[res.status] || "";
+  let h = `${label}<span class="t">${mark}　${esc(res.title || "")}</span>`;
+  if(res.detail) h += `<div class="d">${esc(res.detail)}</div>`;
+  if(res.fixes && res.fixes.length){
+    if(res.fixes.length > 1){
+      h += `<div class="d">下の2つのどちらかですが、応答からは判別できません。両方を確認してください。</div>`;
+    }
+    h += "<ul class='fixes'>" + res.fixes.map(f => `<li>${esc(f)}</li>`).join("") + "</ul>";
+  }
+  if(res.raw) h += `<div class="raw">${esc(res.raw)}</div>`;
+  d.innerHTML = h;
+  return d;
+}
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function show(where, items){
+  const box = document.getElementById(where);
+  box.innerHTML = "";
+  items.forEach(([res, label]) => box.appendChild(resultEl(res, label)));
+}
+function worst(list){
+  if(list.some(r => r.status === "ng")) return "fail";
+  if(list.some(r => r.status === "unknown")) return "fail";
+  if(list.every(r => r.status === "ok")) return "done";
+  return null;
+}
+
+/* ===== スクリーンショット枠。画像が無ければ説明に差し替える ===== */
+function shot(name, caption){
+  return `<figure>
+    <img src="/shots/${name}" alt="${esc(caption)}"
+         onerror="this.outerHTML='&lt;div class=\\'shot-missing\\'&gt;画像未設定: <code>setup/shots/${name}</code>&lt;/div&gt;'">
+    <figcaption>${esc(caption)}</figcaption>
+  </figure>`;
+}
+
+/* ===== ステップ定義 ===== */
+const STEPS = [
+  {
+    id:"start", chip:"0. 準備",
+    title:"はじめに",
+    why:"このウィザードが動く環境かどうかを先に確かめます。",
+    body:`
+      <div id="envInfo" class="res skip"><span class="t">確認中…</span></div>
+      <div class="note">
+        すべての項目を検証するには <code>discord.py</code> と
+        <code>google-api-python-client</code> が必要です。足りない場合は
+        <code>pip install -r requirements.txt</code> を実行してください。
+        無くても形式チェックだけで進めることはできます。
+      </div>
+      <div id="envFound"></div>`,
+    onEnter: async () => {
+      const info = document.getElementById("envInfo");
+      try{
+        const p = await api("/api/ping");
+        const miss = [];
+        if(!p.has_discord) miss.push("discord.py");
+        if(!p.has_google) miss.push("google-api-python-client / google-auth");
+        info.className = "res " + (miss.length ? "unknown" : "ok");
+        info.innerHTML = `<span class="t">${miss.length ? "一部のライブラリがありません" : "準備できています"}</span>`
+          + `<div class="d">Python ${esc(p.python)}`
+          + (miss.length ? `\n未インストール: ${esc(miss.join(", "))}\nこのまま進むと、該当箇所は「未検証」と表示されます。` : "\n必要なライブラリは揃っています。")
+          + `</div>`;
+
+        const e = await api("/api/env", {load:false});
+        const set = Object.keys(e.found).filter(k => e.found[k]);
+        const box = document.getElementById("envFound");
+        if(set.length){
+          box.innerHTML = `<div class="warnbox">
+            このPCの環境変数に既に値が設定されています（${esc(set.join(", "))}）。
+            読み込んで検証に使えます。<b>読み込んでも保存はしません。</b>
+            <div class="row"><button type="button" id="loadEnv">環境変数から読み込む</button></div>
+          </div>`;
+          document.getElementById("loadEnv").onclick = async () => {
+            const r = await api("/api/env", {load:true});
+            Object.keys(V).forEach(k => { if(r.values[k]) V[k] = r.values[k]; });
+            document.getElementById("loadEnv").textContent = "読み込みました";
+            document.getElementById("loadEnv").disabled = true;
+          };
+        }
+      }catch(err){
+        info.className = "res ng";
+        info.innerHTML = `<span class="t">確認に失敗しました</span><div class="d">${esc(err.message)}</div>`;
+      }
+    },
+  },
+  {
+    id:"token", chip:"1. トークン",
+    title:"Discordボットを作り、トークンを取得する",
+    why:"ボットがDiscordにログインするための鍵です。",
+    body:`
+      <ol class="todo">
+        <li><code>https://discord.com/developers/applications</code> を開き「New Application」で作成</li>
+        <li>左メニュー「Bot」→「Reset Token」でトークンを表示してコピー</li>
+      </ol>
+      ${shot("01-new-application.png","Developer Portal の New Application")}
+      ${shot("02-reset-token.png","Bot タブの Reset Token（トークン部分は隠しています）")}
+      <label>DISCORD_BOT_TOKEN
+        <span class="hint">前後に余計な空白や改行が入らないよう貼り付けてください</span></label>
+      <input type="password" id="in_token" autocomplete="off" spellcheck="false">
+      <button class="reveal" type="button" data-for="in_token">表示する</button>
+      <div class="results" id="r_token"></div>`,
+    verify: async () => {
+      V.DISCORD_BOT_TOKEN = document.getElementById("in_token").value;
+      const {results} = await api("/api/check/discord",
+        {discord_bot_token: V.DISCORD_BOT_TOKEN, with_channel:false});
+      show("r_token", [[results.token, "トークン"]]);
+      return worst([results.token]);
+    },
+  },
+  {
+    id:"intent", chip:"2. INTENT",
+    title:"MESSAGE CONTENT INTENT を有効にする",
+    why:"この設定が無いと、ボットはコマンドの本文を読めず何にも反応しません。最も多いつまずきです。",
+    body:`
+      <ol class="todo">
+        <li>同じ「Bot」タブの Privileged Gateway Intents を探す</li>
+        <li><b>MESSAGE CONTENT INTENT</b> を ON にして保存</li>
+      </ol>
+      ${shot("03-message-content-intent.png","MESSAGE CONTENT INTENT を ON にした状態")}
+      <div class="note">設定を保存してから下のボタンを押してください。反映まで数秒かかる場合があります。</div>
+      <div class="results" id="r_intent"></div>`,
+    verify: async () => {
+      const {results} = await api("/api/check/discord",
+        {discord_bot_token: V.DISCORD_BOT_TOKEN, with_channel:false});
+      show("r_intent", [[results.intent, "MESSAGE CONTENT INTENT"]]);
+      return worst([results.intent]);
+    },
+  },
+  {
+    id:"channel", chip:"3. チャンネル",
+    title:"ボットをサーバーに招待し、表示先チャンネルを決める",
+    why:"予定を自動表示するチャンネルを指定します。",
+    body:`
+      <ol class="todo">
+        <li>「OAuth2」→「URL Generator」で SCOPES に <code>bot</code>、
+            BOT PERMISSIONS に <code>Send Messages</code> をチェック</li>
+        <li>生成されたURLをブラウザで開き、自分のサーバーを選んで招待</li>
+        <li>Discordアプリの設定 →「詳細設定」→「開発者モード」を ON</li>
+        <li>表示したいチャンネルを右クリック →「チャンネルIDをコピー」</li>
+      </ol>
+      ${shot("04-oauth2-url-generator.png","bot と Send Messages を選んだ状態")}
+      ${shot("05-invite-server-select.png","招待URLを開いたときのサーバー選択画面")}
+      ${shot("06-developer-mode.png","開発者モードを ON にする")}
+      ${shot("07-copy-channel-id.png","チャンネルを右クリック →「チャンネルIDをコピー」")}
+      <label>CHANNEL_ID <span class="hint">17〜19桁の数字</span></label>
+      <input type="text" id="in_channel" autocomplete="off" spellcheck="false" inputmode="numeric">
+      <div class="results" id="r_channel"></div>
+      <div class="warnbox">
+        送信できるかどうかは、読み取りだけでは判定できません。確実に確かめるには
+        <b>テストメッセージを実際に送る</b>必要があります。送るとチャンネルに一瞬表示され、
+        直後に削除します（削除に失敗した場合は残ります）。
+        <div class="row">
+          <button type="button" id="sendTest">テスト送信して確かめる</button>
+        </div>
+      </div>`,
+    verify: async () => {
+      V.CHANNEL_ID = document.getElementById("in_channel").value;
+      const {results} = await api("/api/check/discord",
+        {discord_bot_token: V.DISCORD_BOT_TOKEN, channel_id: V.CHANNEL_ID, with_channel:true});
+      show("r_channel", [[results.channel, "表示先チャンネル"]]);
+      return worst([results.channel]);
+    },
+    onEnter: () => {
+      document.getElementById("sendTest").onclick = async (ev) => {
+        const b = ev.target; b.disabled = true; b.textContent = "送信中…";
+        V.CHANNEL_ID = document.getElementById("in_channel").value;
+        try{
+          const {results} = await api("/api/check/discord", {
+            discord_bot_token: V.DISCORD_BOT_TOKEN, channel_id: V.CHANNEL_ID,
+            with_channel:true, send_test:true});
+          show("r_channel", [[results.channel, "表示先チャンネル（テスト送信）"]]);
+          setChip(3, worst([results.channel]));
+        }catch(err){
+          show("r_channel", [[{status:"ng", title:"検証に失敗しました", detail:err.message}, ""]]);
+        }
+        b.disabled = false; b.textContent = "テスト送信して確かめる";
+      };
+    },
+  },
+  {
+    id:"key", chip:"4. 鍵JSON",
+    title:"Googleのサービスアカウントと鍵を作る",
+    why:"ボット専用のGoogleアカウントで、カレンダーを読み取り専用で参照します。",
+    body:`
+      <ol class="todo">
+        <li>Google Cloud Console でプロジェクトを新規作成</li>
+        <li>「APIとサービス」→「ライブラリ」→ <b>Google Calendar API</b> を有効化</li>
+        <li>「認証情報」→「認証情報を作成」→「サービスアカウント」を作成</li>
+        <li>作成したものをクリック →「キー」タブ →「鍵を追加」→「新しい鍵を作成」→ <b>JSON</b></li>
+        <li>ダウンロードしたファイルを開き、<code>{</code> から <code>}</code> まで全部をコピー</li>
+      </ol>
+      ${shot("08-gcp-new-project.png","Google Cloud Console のプロジェクト作成")}
+      ${shot("09-enable-calendar-api.png","Google Calendar API を有効化")}
+      ${shot("10-create-service-account.png","認証情報の作成でサービスアカウントを選ぶ")}
+      ${shot("11-add-json-key.png","「キー」タブから JSON 形式の鍵を追加")}
+      <label>SERVICE_ACCOUNT_JSON
+        <span class="hint">末尾の <code>}</code> まで含めて貼ってください。途中で切れているのが最頻出の失敗です</span></label>
+      <textarea id="in_sa" autocomplete="off" spellcheck="false"
+        placeholder='{"type":"service_account", ... }'></textarea>
+      <div class="results" id="r_sa"></div>
+      <div id="emailBox"></div>`,
+    verify: async () => {
+      V.SERVICE_ACCOUNT_JSON = document.getElementById("in_sa").value;
+      const r = await api("/api/check/service-account",
+        {service_account_json: V.SERVICE_ACCOUNT_JSON});
+      show("r_sa", [[r.result, "鍵JSON"]]);
+      const box = document.getElementById("emailBox");
+      if(r.client_email){
+        box.innerHTML = `<div class="warnbox">
+          次のステップで使う値です。カレンダーの共有先に指定します。
+          <pre class="out" id="emailOut">${esc(r.client_email)}</pre>
+          <div class="row"><button type="button" id="copyEmail">この値をコピー</button></div>
+        </div>`;
+        document.getElementById("copyEmail").onclick = () =>
+          copy(r.client_email, document.getElementById("copyEmail"));
+      }else{
+        box.innerHTML = "";
+      }
+      return worst([r.result]);
+    },
+  },
+  {
+    id:"calendar", chip:"5. カレンダー",
+    title:"カレンダーを共有し、カレンダーIDを指定する",
+    why:"共有を忘れると、エラーは出ないのに予定が一切見えません。不具合の主因です。",
+    body:`
+      <ol class="todo">
+        <li>読みたいカレンダーの「設定と共有」を開く</li>
+        <li>「特定のユーザーやグループと共有」に、前のステップの
+            <code>client_email</code> を追加（権限は「予定の表示」でOK）</li>
+        <li>同じ画面の「カレンダーの統合」にある<b>カレンダーID</b>をコピー</li>
+        <li>複数のカレンダーを使う場合は、<b>1つずつ同じ共有作業</b>を行ってから、
+            IDを「,」または改行で区切って並べる</li>
+      </ol>
+      ${shot("12-share-calendar.png","client_email を共有相手に追加した状態")}
+      ${shot("13-calendar-id.png","「カレンダーの統合」にあるカレンダーID")}
+      <label>CALENDAR_ID <span class="hint">「,」または改行で複数指定できます</span></label>
+      <textarea id="in_cal" autocomplete="off" spellcheck="false"
+        placeholder="aaa@group.calendar.google.com&#10;bbb@group.calendar.google.com"></textarea>
+      <div class="note">
+        検証が通ると<b>カレンダー名</b>が表示されます。意図したカレンダーかどうか、
+        名前で必ず確認してください。名前が違えば別のカレンダーを指しています。
+      </div>
+      <div class="results" id="r_cal"></div>`,
+    verify: async () => {
+      V.CALENDAR_ID = document.getElementById("in_cal").value;
+      const {results} = await api("/api/check/calendars",
+        {service_account_json: V.SERVICE_ACCOUNT_JSON, calendar_id: V.CALENDAR_ID});
+      show("r_cal", results.map(r => [r, r.calendar_id || "カレンダー"]));
+      return worst(results);
+    },
+  },
+  {
+    id:"final", chip:"6. 総合検証",
+    title:"すべてを通しで確かめる",
+    why:"各ステップの検証は、その時点の結果でしかありません。途中でトークンを再発行したり、別のカレンダーを共有し直すと前の結果は無効になります。デプロイ直前の状態をここで一度に確かめます。",
+    body:`
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:400">
+          <input type="checkbox" id="finalSendTest" style="width:auto">
+          テスト送信も行う（チャンネルに一瞬メッセージが表示されます）
+        </label>
+      </div>
+      <div class="results" id="r_all"></div>
+      <div id="finalSummary"></div>`,
+    verify: async () => {
+      const box = document.getElementById("r_all");
+      box.innerHTML = `<div class="res skip"><span class="t">検証中…</span></div>`;
+      const report = await api("/api/check/all", Object.assign({}, V,
+        {send_test: document.getElementById("finalSendTest").checked}));
+      show("r_all", report.items.map(i => [i, i.step]));
+      const s = document.getElementById("finalSummary");
+      if(report.passed){
+        s.innerHTML = `<div class="res ok"><span class="t">すべて確認できました</span>
+          <div class="d">次のステップで、Renderに貼る値を出力します。</div></div>`;
+      }else{
+        const parts = [];
+        if(report.ng) parts.push(`${report.ng}件の要対応`);
+        if(report.unknown) parts.push(`${report.unknown}件の判定不能`);
+        s.innerHTML = `<div class="res ng"><span class="t">${esc(parts.join("と"))}があります</span>
+          <div class="d">上から順に直してください。該当するステップに戻って修正し、もう一度ここで確かめてください。</div></div>`;
+      }
+      return report.passed ? "done" : "fail";
+    },
+  },
+  {
+    id:"output", chip:"7. 出力",
+    title:"設定値を書き出す",
+    why:"Render の Environment Variables に貼る値です。",
+    body:`
+      <div class="row">
+        <button type="button" class="primary" id="genBtn">設定値を作成する</button>
+      </div>
+      <div id="outBox" class="hidden">
+        <pre class="out" id="outText"></pre>
+        <div class="row">
+          <button type="button" id="copyOut">クリップボードにコピー</button>
+          <button type="button" id="dlOut">テキストファイルとして保存</button>
+        </div>
+        <div class="warnbox">
+          <b>保存したファイルは秘密情報を含みます。</b>
+          Render に貼り終えたら削除してください。リポジトリの中には置かないでください
+          （<code>.gitignore</code> で除外していますが、別の場所に保存するのが安全です）。
+        </div>
+        <div class="note">
+          Render 側の設定値：<br>
+          Build Command <code>pip install -r requirements.txt</code><br>
+          Start Command <code>python Calendar.py</code><br>
+          Instance Type <code>Free</code>
+        </div>
+        ${shot("16-render-build-start.png","Render の Build / Start Command と Instance Type")}
+        ${shot("17-render-env-vars.png","Environment Variables に4つ追加した状態（値は隠しています）")}
+        ${shot("18-render-logs-success.png","Logs に「ログインしました」が出た状態")}
+      </div>`,
+    onEnter: () => {
+      document.getElementById("genBtn").onclick = async (ev) => {
+        ev.target.disabled = true;
+        try{
+          const r = await api("/api/render-env", V);
+          document.getElementById("outText").textContent = r.text;
+          document.getElementById("outBox").classList.remove("hidden");
+          document.getElementById("copyOut").onclick = (e) => copy(r.text, e.target);
+          document.getElementById("dlOut").onclick = () => download(r.text);
+          setChip(7, "done");
+        }catch(err){
+          alert("作成に失敗しました: " + err.message);
+        }
+        ev.target.disabled = false;
+      };
+    },
+  },
+];
+
+/* ===== コピーと保存 ===== */
+async function copy(text, btn){
+  try{
+    await navigator.clipboard.writeText(text);
+    const old = btn.textContent; btn.textContent = "コピーしました";
+    setTimeout(() => { btn.textContent = old; }, 1600);
+  }catch(e){
+    alert("コピーできませんでした。手で選択してコピーしてください。");
+  }
+}
+/* ファイルはブラウザ側で組み立てて保存する。サーバーはファイルを作らない */
+function download(text){
+  const blob = new Blob([text], {type:"text/plain;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "calendar-bot-env.txt";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+/* ===== 画面の組み立て ===== */
+function setChip(i, state){
+  if(state) status[i] = state;
+  renderChips();
+}
+function renderChips(){
+  const box = document.getElementById("chips");
+  box.innerHTML = "";
+  STEPS.forEach((s, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (status[i] === "done" ? " done" : status[i] === "fail" ? " fail" : "");
+    if(i === current) b.setAttribute("aria-current", "true");
+    b.textContent = s.chip + (status[i] === "done" ? " ✓" : status[i] === "fail" ? " !" : "");
+    b.onclick = () => go(i);
+    box.appendChild(b);
+  });
+}
+
+function go(i){
+  current = Math.max(0, Math.min(STEPS.length - 1, i));
+  try{ sessionStorage.setItem(PROGRESS_KEY, String(current)); }catch(e){}
+  const s = STEPS[current];
+  const p = document.getElementById("panels");
+  p.innerHTML = `<section class="card">
+      <h2>${esc(s.title)}</h2>
+      <p class="why">${esc(s.why)}</p>
+      ${s.body}
+      <div class="row">
+        <button type="button" class="ghost" id="prevBtn"${current === 0 ? " disabled" : ""}>戻る</button>
+        ${s.verify ? `<button type="button" class="primary" id="vBtn">この内容で検証する</button>` : ""}
+        <span class="spacer"></span>
+        <button type="button" id="nextBtn"${current === STEPS.length - 1 ? " disabled" : ""}>次へ</button>
+      </div>
+    </section>`;
+
+  /* 入力欄に、いまメモリ上にある値を戻す（ページ再読み込み時は空） */
+  setVal("in_token", V.DISCORD_BOT_TOKEN);
+  setVal("in_channel", V.CHANNEL_ID);
+  setVal("in_sa", V.SERVICE_ACCOUNT_JSON);
+  setVal("in_cal", V.CALENDAR_ID);
+
+  document.querySelectorAll(".reveal").forEach(b => {
+    b.onclick = () => {
+      const el = document.getElementById(b.dataset.for);
+      const hidden = el.type === "password";
+      el.type = hidden ? "text" : "password";
+      b.textContent = hidden ? "隠す" : "表示する";
+    };
+  });
+
+  document.getElementById("prevBtn").onclick = () => go(current - 1);
+  document.getElementById("nextBtn").onclick = () => go(current + 1);
+  const vb = document.getElementById("vBtn");
+  if(vb){
+    vb.onclick = async () => {
+      vb.disabled = true; const old = vb.textContent; vb.textContent = "検証中…";
+      try{
+        setChip(current, await s.verify());
+      }catch(err){
+        const target = document.querySelector(".card .results:last-of-type")
+          || document.querySelector(".card .results");
+        if(target){
+          target.innerHTML = "";
+          target.appendChild(resultEl(
+            {status:"ng", title:"検証を実行できませんでした", detail:err.message}, ""));
+        }
+        setChip(current, "fail");
+      }
+      vb.disabled = false; vb.textContent = old;
+    };
+  }
+  if(s.onEnter) s.onEnter();
+  renderChips();
+  window.scrollTo({top:0, behavior:"smooth"});
+}
+
+function setVal(id, value){
+  const el = document.getElementById(id);
+  if(el && value) el.value = value;
+}
+
+/* 表示テーマ。ここは秘密情報でないので localStorage に置いてよい */
+const themeBtn = document.getElementById("themeBtn");
+try{
+  const saved = localStorage.getItem("calbot_wizard_theme");
+  if(saved) document.documentElement.setAttribute("data-theme", saved);
+}catch(e){}
+themeBtn.onclick = () => {
+  const now = document.documentElement.getAttribute("data-theme");
+  const next = now === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try{ localStorage.setItem("calbot_wizard_theme", next); }catch(e){}
+};
+
+let startAt = 0;
+try{ startAt = parseInt(sessionStorage.getItem(PROGRESS_KEY) || "0", 10) || 0; }catch(e){}
+go(startAt);
+</script>
+</body>
+</html>
