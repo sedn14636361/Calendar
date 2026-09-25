@@ -75,17 +75,6 @@ code{
 }
 a{color:var(--accent)}
 
-figure{margin:0 0 16px}
-figure img{
-  display:block; max-width:100%; border:1px solid var(--line);
-  border-radius:6px; background:var(--bg);
-}
-figcaption{font-size:.8rem; color:var(--muted); margin-top:5px}
-.shot-missing{
-  border:1px dashed var(--line); border-radius:6px; padding:14px;
-  font-size:.82rem; color:var(--muted); background:var(--bg);
-}
-
 label{display:block; font-size:.86rem; font-weight:600; margin:14px 0 5px}
 .hint{font-weight:400; color:var(--muted); font-size:.82rem}
 input[type=text],input[type=password],textarea{
@@ -457,17 +446,6 @@ function worst(list){
   return null;
 }
 
-/* 画像は相対パスで参照する。このファイルはリポジトリ直下にあり、
-   画像は setup/shots/ に置く。ファイルを直接開いた場合も、
-   setup_wizard.py 経由で開いた場合も、同じ指定で解決できる。 */
-function shot(name, caption){
-  return `<figure>
-    <img src="setup/shots/${name}" alt="${esc(caption)}"
-         onerror="this.outerHTML='&lt;div class=\\'shot-missing\\'&gt;画像未設定: <code>setup/shots/${name}</code>&lt;/div&gt;'">
-    <figcaption>${esc(caption)}</figcaption>
-  </figure>`;
-}
-
 /* ===== ステップ ===== */
 const STEPS = [
   {
@@ -531,8 +509,6 @@ const STEPS = [
         <li><a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer">Discord Developer Portal</a> を開き「New Application」で作成</li>
         <li>左メニュー「Bot」→「Reset Token」でトークンを表示してコピー</li>
       </ol>
-      ${shot("01-new-application.png","Developer Portal の New Application")}
-      ${shot("02-reset-token.png","Bot タブの Reset Token（トークン部分は隠しています）")}
       <label>DISCORD_BOT_TOKEN
         <span class="hint">前後に余計な空白や改行が入らないよう貼り付けてください</span></label>
       <input type="password" id="in_token" autocomplete="off" spellcheck="false">
@@ -562,7 +538,6 @@ const STEPS = [
         <li>同じ「Bot」タブの Privileged Gateway Intents を探す</li>
         <li><b>MESSAGE CONTENT INTENT</b> を ON にして保存</li>
       </ol>
-      ${shot("03-message-content-intent.png","MESSAGE CONTENT INTENT を ON にした状態")}
       <div class="results" id="r_intent"></div>`,
     verify: async () => {
       if(!LIVE){
@@ -592,13 +567,8 @@ const STEPS = [
         <li>Discordアプリの設定 →「詳細設定」→「開発者モード」を ON</li>
         <li>表示したいチャンネルを右クリック →「チャンネルIDをコピー」</li>
       </ol>
-      ${shot("04-oauth2-url-generator.png","bot と Send Messages を選んだ状態")}
       <div class="note">左メニューの「インストール」にも、出来合いの招待リンクがあります。
         権限を細かく選ばないなら、こちらをコピーして開く方が手軽です。</div>
-      ${shot("04b-install-link.png","「インストール」画面の招待リンク（コピーボタン）")}
-      ${shot("05-invite-server-select.png","招待URLを開いたときのサーバー選択画面")}
-      ${shot("06-developer-mode.png","開発者モードを ON にする")}
-      ${shot("07-copy-channel-id.png","チャンネルを右クリック →「チャンネルIDをコピー」")}
       <label>CHANNEL_ID <span class="hint">17〜19桁の数字</span></label>
       <input type="text" id="in_channel" autocomplete="off" spellcheck="false" inputmode="numeric">
       <div class="results" id="r_channel"></div>
@@ -656,12 +626,6 @@ const STEPS = [
         <li>作成したものをクリック →「キー」タブ →「鍵を追加」→「新しい鍵を作成」→ <b>JSON</b> を選んで作成</li>
         <li>ダウンロードされたファイルを開き、<code>{</code> から <code>}</code> まで全部をコピー</li>
       </ol>
-      ${shot("08-gcp-new-project.png","プロジェクトを選択 →「新しいプロジェクト」")}
-      ${shot("08b-gcp-project-form.png","プロジェクト名を入力して作成（名前は何でも構いません）")}
-      ${shot("09a-search-calendar-api.png","上部の検索欄で「google calendar」を検索")}
-      ${shot("09-enable-calendar-api.png","Google Calendar API の「有効にする」を押す")}
-      ${shot("10-create-service-account.png","「認証情報を作成」→「サービス アカウント」を選ぶ")}
-      ${shot("11-add-json-key.png","「キー」タブ →「鍵を追加」→ JSON を選択して作成")}
       <label>SERVICE_ACCOUNT_JSON
         <span class="hint">末尾の <code>}</code> まで含めて貼ってください。途中で切れているのが最頻出の失敗です</span></label>
       <textarea id="in_sa" autocomplete="off" spellcheck="false"
@@ -701,9 +665,6 @@ const STEPS = [
         <li>複数のカレンダーを使う場合は、<b>1つずつ同じ共有作業</b>を行ってから、
             IDを「,」または改行で区切って並べる</li>
       </ol>
-      ${shot("11b-service-account-email.png","client_email はサービスアカウントの詳細画面でも確認できます")}
-      ${shot("12-share-calendar.png","client_email を共有相手に追加した状態")}
-      ${shot("13-calendar-id.png","「カレンダーの統合」にあるカレンダーID")}
       <label>CALENDAR_ID <span class="hint">「,」または改行で複数指定できます</span></label>
       <textarea id="in_cal" autocomplete="off" spellcheck="false"
         placeholder="aaa@group.calendar.google.com&#10;bbb@group.calendar.google.com"></textarea>
@@ -828,15 +789,11 @@ const STEPS = [
           Start Command <code>python Calendar.py</code><br>
           Instance Type <code>Free</code>
         </div>
-        ${shot("14-render-new-web-service.png","「New +」→「Web Service」を選ぶ")}
-        ${shot("16-render-build-start.png","Build / Start Command を入力し、Instance Type は Free")}
-        ${shot("17-render-env-vars.png","Environment Variables に4つ追加した状態（値は Render が伏字にします）")}
         <div class="note">
           起動すると、サービスの画面に <code>◯◯◯.onrender.com</code> のURLが表示されます。
           次のステップで使うので控えておいてください。<br>
           Logs に <code>ログインしました: ...</code> と出ていれば起動成功です。
         </div>
-        ${shot("18-render-service-url.png","サービス画面に出る公開URL（ここでは伏せています）")}
       </div>`,
     onEnter: () => {
       document.getElementById("genBtn").onclick = () => {
@@ -860,7 +817,6 @@ const STEPS = [
         <li>Monitor interval を <b>5 minutes</b> にする</li>
         <li>「Create monitor」を押す</li>
       </ol>
-      ${shot("20-uptimerobot-monitor.png","Add single monitor の設定（通知先は伏せています）")}
       <div class="warnbox">
         Render のサービスを作り直すとURLが変わります。
         そのときは <b>UptimeRobot 側のURLも更新</b>してください。忘れると監視が空振りし、

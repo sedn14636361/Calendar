@@ -6,3 +6,6 @@ __pycache__/
 calendar-bot-env.txt
 *-env.txt
 .env
+
+# ランチャーが作る作業場所
+.venv/

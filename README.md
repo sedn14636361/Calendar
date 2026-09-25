@@ -40,7 +40,7 @@ Googleカレンダーと連携し、Discord上で **予定の自動表示**・**
 
 ## 必要なもの
 
-- Python 3
+- Python 3.10 以上（ランチャーが確認し、無ければ入手先を案内します）
 - Discordアカウントと、ボットを導入するサーバー
 - Googleアカウントと、読み取り対象のカレンダー
 - 常時稼働させる環境（Render など。無料枠で運用可能）
@@ -59,14 +59,32 @@ Googleカレンダーと連携し、Discord上で **予定の自動表示**・**
   チャンネルIDがDiscordのIDとして辻褒が合うか、トークンに空白が混入していないか）
 - 最後に Render に貼る環境変数を生成し、ファイルに保存できます
 
-### 実際に使えるかまで確かめる：`setup_wizard.py` を実行
+### 実際に使えるかまで確かめる：ランチャーをダブルクリック
+
+| お使いの環境 | ダブルクリックするファイル |
+|---|---|
+| Windows | `start_wizard.bat` |
+| macOS / Linux | `start_wizard.command` |
+
+**Python を使ったことがなくても構いません。** ターミナルやコマンドプロンプトを開く必要はなく、
+必要なライブラリの導入から起動までを自動で行います。
+
+- Python が入っていなければ、入手先を案内して終了します（勝手には入れません）
+- ライブラリは `.venv` という専用の場所に入れます。**パソコンに元から入っている Python には触れません**
+- 2回目以降は数秒で起動します
+
+> **macOS で「開発元を確認できない」と出た場合**は、
+> `start_wizard.command` を**右クリック→「開く」**を選び、確認画面でもう一度「開く」を押してください。
+> 初回だけの操作です。
+
+コマンドで起動する場合は次のとおりです（Python 3.10 以上）。
 
 ```bash
 pip install -r requirements.txt
 python3 setup_wizard.py
 ```
 
-同じ画面が開き、加えて**実際にDiscordとGoogleに接続して確かめます**。
+どちらでも同じ画面が開き、加えて**実際にDiscordとGoogleに接続して確かめます**。
 トークンが通るか、MESSAGE CONTENT INTENT がONか、チャンネルが見えるか、
 **カレンダーが共有できているか**まで分かります。
 
@@ -80,6 +98,13 @@ HTMLを直接開いただけではこれらを確かめられません。ブラ�
 
 ```bash
 python3 setup_checks.py
+```
+
+ランチャーで導入した場合は、`.venv` の中の Python を使います。
+
+```bash
+.venv/bin/python setup_checks.py          # macOS / Linux
+.venv\Scripts\python.exe setup_checks.py   # Windows
 ```
 
 ### 手動で設定する
