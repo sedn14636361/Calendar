@@ -93,7 +93,7 @@ def _origin_ok(handler, port):
 SECURITY_HEADERS = {
     # 外部リソースを一切読み込ませない。ウィザードは自己完結している
     "Content-Security-Policy": (
-        "default-src 'none'; style-src 'unsafe-inline'; "
+        "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
         "script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; "
         "base-uri 'none'; frame-ancestors 'none'"),
     "X-Content-Type-Options": "nosniff",
