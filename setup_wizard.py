@@ -17,8 +17,8 @@
   2. サーバーは状態を持たない。リクエストごとに値を受け取り、検証し、捨てる。
      プロセス内に秘密情報が溜まらないので、漏れる面がそれだけ小さい。
   3. 環境変数から値を読み込む場合も、読むだけで保存しない。
-  4. 設定ファイルの書き出しはブラウザ側のダウンロードで行う。この
-     プロセスはファイルを作らないので、消し忘れがリポジトリに混入しない。
+  4. 設定ファイルはブラウザ内で組み立てて保存する。このプロセスは
+     設定値を受け取りもしないし、ファイルも作らない。
   5. 待ち受けは 127.0.0.1 のみ。同じネットワークの他のマシンからは触れない。
   6. 起動ごとにランダムな鍵を発行し、全リクエストで照合する。同じPC上の
      無関係なページやプロセスからAPIを叩かれても弾く。
@@ -274,12 +274,6 @@ class Handler(BaseHTTPRequestHandler):
             report = asyncio.run(setup_checks.check_all(
                 env, send_test=bool(data.get("send_test"))))
             return self._json(200, report)
-
-        if path == "/api/render-env":
-            # 出力用のテキストを組み立てて返すだけ。ファイルは作らない。
-            # 保存するかどうかはブラウザ側で利用者が決める
-            env = {n: data.get(n, "") for n in ENV_NAMES}
-            return self._json(200, {"text": setup_checks.render_env_text(env)})
 
         if path == "/api/quit":
             self._json(200, {"ok": True})

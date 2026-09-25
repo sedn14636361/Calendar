@@ -528,35 +528,7 @@ async def check_all(env, send_test=False):
     }
 
 
-# ===== ⑤ 出力用のテキスト =====
-
-def render_env_text(env):
-    """Render の環境変数に貼る値を、コピーしやすい形にまとめる"""
-    lines = [
-        "# カレンダー空き日程ボット 環境変数",
-        "# Render の Environment Variables に、Key と Value を1つずつ追加してください。",
-        "# このファイルは秘密情報を含みます。共有せず、リポジトリにも入れないでください。",
-        "",
-    ]
-    for name in ["DISCORD_BOT_TOKEN", "CHANNEL_ID", "CALENDAR_ID"]:
-        lines.append(f"{name}={(env.get(name) or '').strip()}")
-    sa = (env.get("SERVICE_ACCOUNT_JSON") or "").strip()
-    try:
-        sa = json.dumps(json.loads(sa), ensure_ascii=False, separators=(",", ":"))
-    except Exception:
-        pass                       # 壊れていてもそのまま出す（利用者が直せるように）
-    lines += [
-        f"SERVICE_ACCOUNT_JSON={sa}",
-        "",
-        "# --- ローカルで動作確認するとき（1行として実行）---",
-        "# DISCORD_BOT_TOKEN=\"...\" CHANNEL_ID=\"...\" CALENDAR_ID=\"...\" \\",
-        "#   SERVICE_ACCOUNT_JSON=\"$(cat service_account.json)\" \\",
-        "#   SSL_CERT_FILE=$(python3 -m certifi) python3 Calendar.py",
-    ]
-    return "\n".join(lines) + "\n"
-
-
-# ===== ⑥ このファイル単体で実行したとき（デプロイ後の調査用）=====
+# ===== ⑤ このファイル単体で実行したとき（デプロイ後の調査用）=====
 
 def _print_item(item):
     mark = {"ok": "OK  ", "ng": "NG  ", "unknown": "??  ", "skip": "--  "}[item["status"]]
