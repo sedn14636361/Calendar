@@ -700,6 +700,7 @@ const STEPS = [
         <li>複数のカレンダーを使う場合は、<b>1つずつ同じ共有作業</b>を行ってから、
             IDを「,」または改行で区切って並べる</li>
       </ol>
+      ${shot("11b-service-account-email.png","client_email はサービスアカウントの詳細画面でも確認できます")}
       ${shot("12-share-calendar.png","client_email を共有相手に追加した状態")}
       ${shot("13-calendar-id.png","「カレンダーの統合」にあるカレンダーID")}
       <label>CALENDAR_ID <span class="hint">「,」または改行で複数指定できます</span></label>
@@ -820,12 +821,14 @@ const STEPS = [
           （<code>.gitignore</code> で除外していますが、別の場所に保存するのが安全です）。
         </div>
         <div class="note">
-          Render 側の設定値：<br>
+          Render では、「New +」→「Web Service」でリポジトリを選び、
+          次の3つを設定します。<br>
           Build Command <code>pip install -r requirements.txt</code><br>
           Start Command <code>python Calendar.py</code><br>
           Instance Type <code>Free</code>
         </div>
-        ${shot("16-render-build-start.png","Render の Build / Start Command と Instance Type")}
+        ${shot("14-render-new-web-service.png","「New +」→「Web Service」を選ぶ")}
+        ${shot("16-render-build-start.png","Build / Start Command を入力し、Instance Type は Free")}
         ${shot("17-render-env-vars.png","Environment Variables に4つ追加した状態（値は隠しています）")}
         ${shot("18-render-logs-success.png","Logs に「ログインしました」が出た状態")}
       </div>`,

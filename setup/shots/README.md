@@ -56,17 +56,18 @@
 | ✓ `09a-search-calendar-api.png` | 検索欄で「google calendar」を探した状態 |
 | ✓ `09-enable-calendar-api.png` | ★ Google Calendar API の「有効にする」ボタン |
 | ✓ `10-create-service-account.png` | 「認証情報を作成」→「サービス アカウント」を選ぶ画面 |
+| ✓ `11b-service-account-email.png` | サービスアカウントの詳細画面（`client_email` の場所） |
 | ✓ `11-add-json-key.png` | ★ サービスアカウントの「キー」タブ →「鍵を追加」→ JSON を選択 |
-| `12-share-calendar.png` | ★ カレンダーの「設定と共有」に `client_email` を追加した状態 |
-| `13-calendar-id.png` | ★ 同じ画面の「カレンダーの統合」にあるカレンダーID |
+| ✓ `12-share-calendar.png` | ★ カレンダーの「設定と共有」に `client_email` を追加した状態 |
+| ✓ `13-calendar-id.png` | ★ 同じ画面の「カレンダーの統合」にあるカレンダーID |
 
 ### Render
 
 | ファイル名 | 内容 |
 |---|---|
-| `14-render-new-web-service.png` | 「New +」→「Web Service」を選ぶ画面 |
+| ✓ `14-render-new-web-service.png` | 「New +」→「Web Service」を選ぶ画面 |
 | `15-render-connect-repo.png` | リポジトリ接続画面 |
-| `16-render-build-start.png` | ★ Build Command / Start Command / Instance Type=Free の設定 |
+| ✓ `16-render-build-start.png` | ★ Build Command / Start Command / Instance Type=Free の設定 |
 | `17-render-env-vars.png` | ⚠️ Environment Variables に4つ追加した状態 |
 | `18-render-logs-success.png` | Logs に `ログインしました: ...` が出た状態 |
 | `19-github-app-access.png` | GitHub App の Repository access 設定（Private運用する場合のみ） |
