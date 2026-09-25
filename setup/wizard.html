@@ -34,20 +34,23 @@ body{
   line-height:1.75; font-size:15px;
 }
 .wrap{max-width:860px; margin:0 auto; padding:32px 16px 80px}
-header{margin-bottom:8px}
 h1{font-size:1.5rem; margin:0 0 4px; letter-spacing:.01em}
 .sub{color:var(--muted); font-size:.9rem; margin:0}
 
-/* 秘密情報の扱いについての注意。最初に目に入る位置に置く */
-.privacy{
-  margin:20px 0 28px; padding:14px 16px; background:var(--panel);
+.banner{
+  margin:20px 0 14px; padding:14px 16px; background:var(--panel);
   border:1px solid var(--line); border-left:3px solid var(--accent);
   border-radius:var(--radius); font-size:.88rem;
 }
-.privacy b{display:block; margin-bottom:4px}
-.privacy ul{margin:6px 0 0; padding-left:1.2em; color:var(--muted)}
+.banner.limited{border-left-color:var(--warn)}
+.banner b{display:block; margin-bottom:4px}
+.banner ul{margin:6px 0 0; padding-left:1.2em; color:var(--muted)}
+.banner code{white-space:nowrap}
+.upgrade{
+  margin-top:10px; padding:10px 12px; background:var(--bg);
+  border:1px solid var(--line); border-radius:6px; font-size:.85rem;
+}
 
-/* 進捗 */
 .steps{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:24px}
 .chip{
   font-size:.78rem; padding:4px 10px; border-radius:999px;
@@ -58,7 +61,6 @@ h1{font-size:1.5rem; margin:0 0 4px; letter-spacing:.01em}
 .chip.done{border-color:var(--ok); color:var(--ok)}
 .chip.fail{border-color:var(--ng); color:var(--ng)}
 
-/* カード */
 .card{
   background:var(--panel); border:1px solid var(--line);
   border-radius:var(--radius); padding:22px 22px 24px; margin-bottom:18px;
@@ -71,8 +73,8 @@ code{
   background:var(--bg); border:1px solid var(--line); border-radius:4px;
   padding:1px 5px; font-size:.86em; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
 }
+a{color:var(--accent)}
 
-/* スクリーンショット枠。未配置でも成立させる */
 figure{margin:0 0 16px}
 figure img{
   display:block; max-width:100%; border:1px solid var(--line);
@@ -84,7 +86,6 @@ figcaption{font-size:.8rem; color:var(--muted); margin-top:5px}
   font-size:.82rem; color:var(--muted); background:var(--bg);
 }
 
-/* 入力 */
 label{display:block; font-size:.86rem; font-weight:600; margin:14px 0 5px}
 .hint{font-weight:400; color:var(--muted); font-size:.82rem}
 input[type=text],input[type=password],textarea{
@@ -99,7 +100,6 @@ input:focus,textarea:focus{outline:2px solid var(--accent); outline-offset:1px}
   cursor:pointer; padding:2px 0; margin-top:4px;
 }
 
-/* ボタン */
 .row{display:flex; flex-wrap:wrap; gap:9px; align-items:center; margin-top:18px}
 button{
   font:inherit; font-size:.88rem; padding:8px 16px; border-radius:6px;
@@ -111,7 +111,6 @@ button:disabled{opacity:.5; cursor:default}
 button.ghost{border-color:var(--line); color:var(--muted)}
 .spacer{flex:1}
 
-/* 検証結果 */
 .results{margin-top:16px; display:grid; gap:9px}
 .res{border:1px solid var(--line); border-left-width:3px; border-radius:6px; padding:11px 13px; font-size:.88rem}
 .res.ok{border-left-color:var(--ok); background:var(--ok-bg)}
@@ -159,15 +158,16 @@ footer{text-align:center; color:var(--muted); font-size:.8rem; margin-top:32px}
 
 <header>
   <h1>セットアップウィザード</h1>
-  <p class="sub">カレンダー空き日程ボット — 手順ごとに、その値が本当に使えるかを確かめながら進めます</p>
+  <p class="sub">カレンダー空き日程ボット — 手順を追いながら、入力した値を確かめて進めます</p>
 </header>
 
-<div class="privacy">
+<div class="banner" id="modeBanner"></div>
+
+<div class="banner">
   <b>入力した値の扱い</b>
   ここで入力する値には、Discordのトークンやサービスアカウントの秘密鍵が含まれます。
   <ul>
-    <li>値はこのPCの外に出ません。検証は同じPC上のプロセスが行います</li>
-    <li>ファイルにもログにも保存されません。検証のたびに受け取って捨てています</li>
+    <li>値はこのブラウザの外に出ません。外部に送信する処理はありません</li>
     <li>ブラウザにも保存しません。<b>ページを再読み込みすると入力は消えます</b></li>
     <li>最後に設定ファイルを保存する操作だけは、あなたが選んだときに実行されます</li>
   </ul>
@@ -181,22 +181,234 @@ footer{text-align:center; color:var(--muted); font-size:.8rem; margin-top:32px}
 
 <script>
 "use strict";
-const KEY = "__SETUP_KEY__";
 
-/* 入力値はこのオブジェクトだけに持つ。localStorage には入れない。
-   秘密情報を永続化すると、同じオリジンを使う別のローカルアプリから
-   読める可能性があり、消し忘れも起きるため。 */
+/* ===========================================================
+   動作モード
+
+   このファイルは2通りの使い方ができる。
+
+   (A) HTMLを直接開く … 何もインストールせずに使える。
+       手順の案内と、入力値の「形が正しいか」の検査、設定ファイルの
+       出力ができる。ただし実際にDiscordやGoogleに接続することは
+       できない。ブラウザから Discord API を呼ぶと CORS で拒否される
+       ためで、これは回避できない。
+
+   (B) python3 setup_wizard.py で開く … 同じ画面に加えて、
+       実際に接続して確かめられる。トークンが通るか、INTENTがONか、
+       カレンダーが読めるか。判定はボット本体と同じライブラリが行う。
+
+   サーバー経由で開かれた場合だけ、下の KEY が実際の値に置き換わる。
+   置き換わっていなければ (A) と判断する。
+   =========================================================== */
+const KEY = "__SETUP_KEY__";
+const LIVE = !KEY.startsWith("__SETUP");
+
 const V = {
   DISCORD_BOT_TOKEN: "", CHANNEL_ID: "",
   CALENDAR_ID: "", SERVICE_ACCOUNT_JSON: "",
 };
-/* 進捗（どのステップを見ているか）だけは sessionStorage に置く。
-   タブを閉じれば消える。秘密情報は入れない。 */
 const PROGRESS_KEY = "calbot_wizard_step";
 
 let current = 0;
-const status = {};          /* ステップごとの結果: "done" | "fail" */
+const status = {};
 
+/* ===== 結果の形。サーバー側 setup_checks.py と同じ構造にそろえる ===== */
+const R = {
+  ok:(t,d)=>({status:"ok",title:t,detail:d||"",fixes:[]}),
+  ng:(t,d,f)=>({status:"ng",title:t,detail:d||"",fixes:f||[]}),
+  warn:(t,d,f)=>({status:"unknown",title:t,detail:d||"",fixes:f||[]}),
+  skip:(t,d)=>({status:"skip",title:t,detail:d||"",fixes:[]}),
+};
+const GUIDE = "GUIDE.md";
+
+/* ===========================================================
+   HTML単体でもできる検査
+   =========================================================== */
+
+/* Discord の ID（snowflake）から作成日時を復元する。
+   式と基準時刻は discord.py の実装から取った。
+   ((id >> 22) + 1420070400000) ミリ秒 = 作成時刻 */
+const DISCORD_EPOCH = 1420070400000n;
+function snowflakeDate(text){
+  if(!/^\d+$/.test(text)) return null;
+  try{
+    const ms = Number((BigInt(text) >> 22n) + DISCORD_EPOCH);
+    const d = new Date(ms);
+    if(isNaN(d.getTime())) return null;
+    return d;
+  }catch(e){ return null; }
+}
+function plausibleSnowflake(d){
+  if(!d) return false;
+  const min = new Date("2015-01-01T00:00:00Z").getTime();
+  const max = Date.now() + 86400000;
+  return d.getTime() >= min && d.getTime() <= max;
+}
+function ymd(d){
+  return d.getFullYear() + "/" + (d.getMonth()+1) + "/" + d.getDate();
+}
+
+const LOCAL = {
+  /* --- 鍵JSON --- */
+  serviceAccount(text){
+    text = (text||"").trim();
+    if(!text) return R.ng("SERVICE_ACCOUNT_JSON が空です", "",
+      [`鍵ファイルを開き、\`{\` から \`}\` まで全部を選択してコピーしてください（${GUIDE} 4-2）`]);
+
+    let info;
+    try{
+      info = JSON.parse(text);
+    }catch(e){
+      /* 中身は表示しない。private_key の断片が漏れるため */
+      if(!text.endsWith("}")){
+        return R.ng("鍵JSONが途中で切れています",
+          `末尾が \`}\` で終わっていません（全体は${text.length}文字）`,
+          [`鍵ファイルの中身を、先頭の \`{\` から末尾の \`}\` まで全選択でコピーし直してください（${GUIDE} 4-2）`]);
+      }
+      return R.ng("鍵JSONの形式が壊れています", String(e.message || e),
+        ["鍵ファイルを編集せず、そのままコピーし直してください",
+         "ダウンロードした .json ファイル以外のものを貼っていないか確認してください"]);
+    }
+    if(typeof info !== "object" || info === null || Array.isArray(info)){
+      return R.ng("鍵JSONがオブジェクト形式ではありません", "",
+        ["サービスアカウントの鍵ファイル（JSON）の中身を貼ってください"]);
+    }
+    const need = ["type","project_id","private_key","client_email","token_uri"];
+    const missing = need.filter(k => !info[k]);
+    if(missing.length){
+      return R.ng("鍵JSONに必要な項目がありません", "足りない項目: " + missing.join(", "),
+        [`「サービスアカウント」の鍵（JSON）を作り直してください（${GUIDE} 4-2）。OAuthクライアントIDの鍵など、別種の鍵を貼っている可能性があります`]);
+    }
+    if(info.type !== "service_account"){
+      return R.ng("サービスアカウントの鍵ではありません",
+        `type が "service_account" ではなく "${info.type}" です`,
+        [`認証情報の作成で「サービスアカウント」を選んで鍵を発行してください（${GUIDE} 4-2）`]);
+    }
+    const email = String(info.client_email);
+    if(!/\.iam\.gserviceaccount\.com$/.test(email)){
+      return R.warn("client_email がサービスアカウントの形式ではありません",
+        `値: ${email}\n通常は \`....iam.gserviceaccount.com\` で終わります。`,
+        ["別種の鍵を貼っている可能性があります。サービスアカウントの鍵か確認してください"]);
+    }
+    return R.ok("鍵JSONは形式として正常です",
+      `client_email: ${email}\n↑ この値を、読みたいカレンダーの「設定と共有」に追加します（${GUIDE} 4-3）`);
+  },
+
+  /* --- トークン ---
+     形だけで分かる問題を潰す。実際に通るかどうかは接続しないと分からない。 */
+  token(text){
+    const t = text || "";
+    if(!t) return R.ng("トークンが空です", "",
+      [`Developer Portal → Bot →「Reset Token」で表示された値を貼ってください（${GUIDE} 3-1）`]);
+    if(t !== t.trim()) return R.ng("前後に空白または改行が混入しています", "",
+      ["余計な文字を含めずに貼り直してください"]);
+    if(/\s/.test(t)) return R.ng("トークンの途中に空白または改行が混入しています", "",
+      ["改行を挟まずに、1行としてコピーし直してください"]);
+    if(/^bot\s/i.test(t)) return R.ng("先頭に `Bot ` が付いています", "",
+      ["トークン本体だけを貼ってください"]);
+
+    /* トークンの先頭部分はボットのユーザーIDをbase64にしたもの。
+       復元できれば「形としては辻褄が合う」と言える。
+       復元できなくても誤りとは限らないので、その場合は断定しない。 */
+    const seg = t.split(".")[0];
+    let decoded = null;
+    try{
+      let b = seg.replace(/-/g,"+").replace(/_/g,"/");
+      while(b.length % 4) b += "=";
+      decoded = atob(b);
+    }catch(e){ decoded = null; }
+
+    if(decoded && /^\d{15,21}$/.test(decoded)){
+      const d = snowflakeDate(decoded);
+      if(plausibleSnowflake(d)){
+        return R.ok("トークンの形に問題はありません",
+          `ボットのID: ${decoded}（作成: ${ymd(d)}）\n`
+          + (LIVE ? "" : "※ 実際にログインできるかは、このモードでは確認できません"));
+      }
+    }
+    return R.warn("形からは判断できませんでした",
+      "明らかな誤り（空白の混入など）は見つかりませんでしたが、"
+      + "この値が実際に使えるかどうかは接続しないと分かりません。\n"
+      + (LIVE ? "" : "実際に確かめるには、下の「実接続で確かめる」の手順を使ってください。"),
+      ["値をもう一度 Developer Portal と照合してください"]);
+  },
+
+  /* --- チャンネルID --- */
+  channelId(text){
+    const t = (text||"").trim();
+    if(!t) return R.ng("チャンネルIDが空です", "",
+      [`開発者モードをONにし、チャンネルを右クリック→「チャンネルIDをコピー」で取得してください（${GUIDE} 3-3）`]);
+    if(/^https?:/i.test(t)) return R.ng("URLが貼られています", `入力値: ${t}`,
+      [`URLではなく、右クリック→「チャンネルIDをコピー」で得られる数字を貼ってください（${GUIDE} 3-3）`]);
+    if(!/^\d+$/.test(t)) return R.ng("チャンネルIDが数字ではありません", `入力値: ${t}`,
+      [`チャンネル名ではなく、右クリック→「チャンネルIDをコピー」で得られる数字だけを貼ってください（${GUIDE} 3-3）`]);
+    if(t.length < 15 || t.length > 21) return R.ng("チャンネルIDの桁数が想定外です",
+      `${t.length}桁です（通常は17〜19桁）`,
+      [`右クリック→「チャンネルIDをコピー」で取得した値をそのまま貼ってください（${GUIDE} 3-3）`]);
+
+    /* 数字の並びがDiscordのIDとして辻褄が合うかを見る。
+       桁数だけの検査より強く、打ち間違いや別の数字の貼り付けを拾える。 */
+    const d = snowflakeDate(t);
+    if(!plausibleSnowflake(d)){
+      return R.ng("DiscordのIDとして辻褄が合いません",
+        d ? `この数字が示す作成日時は ${ymd(d)} で、ありえない値です。` : "",
+        [`別の数字を貼っていないか確認してください`,
+         `右クリック→「チャンネルIDをコピー」で取り直してください（${GUIDE} 3-3）`]);
+    }
+    return R.ok("チャンネルIDの形に問題はありません",
+      `作成: ${ymd(d)}\n`
+      + (LIVE ? "" : "※ このチャンネルが実在し、ボットから見えるかは、このモードでは確認できません"));
+  },
+
+  /* --- カレンダーID --- */
+  calendars(text){
+    const ids = splitCalendarIds(text);
+    if(!ids.length) return [{calendar_id:"", ...R.ng("カレンダーIDが入力されていません", "",
+      [`カレンダーの「設定と共有」→「カレンダーの統合」にあるIDを貼ってください（${GUIDE} 4-3）`])}];
+    return ids.map(id => {
+      if(/^https?:/i.test(id)) return {calendar_id:id, ...R.ng("URLが貼られています", "",
+        ["カレンダーIDは `xxx@group.calendar.google.com` のような形式です"])};
+      if(id !== "primary" && !id.includes("@")) return {calendar_id:id,
+        ...R.warn("カレンダーIDの形式として珍しい値です",
+          "通常は `xxx@group.calendar.google.com` のようにメールアドレスの形をしています。",
+          [`「カレンダーの統合」にあるカレンダーIDを確認してください（${GUIDE} 4-3）`])};
+      return {calendar_id:id, ...R.ok("形式に問題はありません",
+        LIVE ? "" : "※ このカレンダーが読めるか（共有できているか）は、このモードでは確認できません")};
+    });
+  },
+};
+
+function splitCalendarIds(text){
+  const out = [];
+  String(text||"").split(/[,\n]/).forEach(s => {
+    s = s.trim();
+    if(s && out.indexOf(s) < 0) out.push(s);
+  });
+  return out;
+}
+
+/* ===== 設定ファイルの組み立て。ブラウザ内で作る ===== */
+function buildEnvText(){
+  const lines = [
+    "# カレンダー空き日程ボット 環境変数",
+    "# Render の Environment Variables に、Key と Value を1つずつ追加してください。",
+    "# このファイルは秘密情報を含みます。共有せず、リポジトリにも入れないでください。",
+    "",
+  ];
+  ["DISCORD_BOT_TOKEN","CHANNEL_ID","CALENDAR_ID"].forEach(n => {
+    lines.push(n + "=" + (V[n] || "").trim());
+  });
+  let sa = (V.SERVICE_ACCOUNT_JSON || "").trim();
+  try{ sa = JSON.stringify(JSON.parse(sa)); }catch(e){}   /* 壊れていてもそのまま出す */
+  lines.push("SERVICE_ACCOUNT_JSON=" + sa, "",
+    "# --- ローカルで動作確認するとき（1行として実行）---",
+    '# DISCORD_BOT_TOKEN="..." CHANNEL_ID="..." CALENDAR_ID="..." \\',
+    '#   SERVICE_ACCOUNT_JSON="$(cat service_account.json)" \\',
+    "#   SSL_CERT_FILE=$(python3 -m certifi) python3 Calendar.py");
+  return lines.join("\n") + "\n";
+}
+
+/* ===== サーバーへの問い合わせ（LIVE のときだけ） ===== */
 async function api(path, body){
   const r = await fetch(path, {
     method:"POST",
@@ -211,7 +423,11 @@ async function api(path, body){
   return r.json();
 }
 
-/* ===== 検証結果の描画 ===== */
+/* ===== 描画 ===== */
+function esc(s){
+  return String(s).replace(/[&<>"']/g, c =>
+    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
 function resultEl(res, stepLabel){
   const d = document.createElement("div");
   d.className = "res " + (res.status || "skip");
@@ -229,78 +445,79 @@ function resultEl(res, stepLabel){
   d.innerHTML = h;
   return d;
 }
-function esc(s){
-  return String(s).replace(/[&<>"']/g, c =>
-    ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-}
 function show(where, items){
   const box = document.getElementById(where);
+  if(!box) return;
   box.innerHTML = "";
   items.forEach(([res, label]) => box.appendChild(resultEl(res, label)));
 }
 function worst(list){
-  if(list.some(r => r.status === "ng")) return "fail";
-  if(list.some(r => r.status === "unknown")) return "fail";
+  if(list.some(r => r.status === "ng" || r.status === "unknown")) return "fail";
   if(list.every(r => r.status === "ok")) return "done";
   return null;
 }
 
-/* ===== スクリーンショット枠。画像が無ければ説明に差し替える ===== */
+/* 画像は相対パスで参照する。ファイルを直接開いた場合も、
+   サーバー経由の場合も、同じ指定で解決できる。 */
 function shot(name, caption){
   return `<figure>
-    <img src="/shots/${name}" alt="${esc(caption)}"
+    <img src="shots/${name}" alt="${esc(caption)}"
          onerror="this.outerHTML='&lt;div class=\\'shot-missing\\'&gt;画像未設定: <code>setup/shots/${name}</code>&lt;/div&gt;'">
     <figcaption>${esc(caption)}</figcaption>
   </figure>`;
 }
 
-/* ===== ステップ定義 ===== */
+/* ===== ステップ ===== */
 const STEPS = [
   {
-    id:"start", chip:"0. 準備",
-    title:"はじめに",
-    why:"このウィザードが動く環境かどうかを先に確かめます。",
+    id:"start", chip:"0. 準備", title:"はじめに",
+    why:"これから行う作業と、このウィザードで確かめられる範囲を示します。",
     body:`
-      <div id="envInfo" class="res skip"><span class="t">確認中…</span></div>
-      <div class="note">
-        すべての項目を検証するには <code>discord.py</code> と
-        <code>google-api-python-client</code> が必要です。足りない場合は
-        <code>pip install -r requirements.txt</code> を実行してください。
-        無くても形式チェックだけで進めることはできます。
-      </div>
-      <div id="envFound"></div>`,
+      <ol class="todo">
+        <li>Discordでボットを作り、トークンを取得する</li>
+        <li>ボットがメッセージ本文を読めるように設定する</li>
+        <li>ボットをサーバーに招待し、表示先チャンネルを決める</li>
+        <li>Googleでサービスアカウントを作り、鍵を発行する</li>
+        <li>カレンダーをそのサービスアカウントに共有する</li>
+        <li>出力された設定値を Render に貼る</li>
+      </ol>
+      <div id="envInfo"></div>`,
     onEnter: async () => {
-      const info = document.getElementById("envInfo");
+      const box = document.getElementById("envInfo");
+      if(!LIVE){
+        box.innerHTML = "";
+        return;
+      }
+      box.innerHTML = `<div class="res skip"><span class="t">確認中…</span></div>`;
       try{
         const p = await api("/api/ping");
         const miss = [];
         if(!p.has_discord) miss.push("discord.py");
         if(!p.has_google) miss.push("google-api-python-client / google-auth");
-        info.className = "res " + (miss.length ? "unknown" : "ok");
-        info.innerHTML = `<span class="t">${miss.length ? "一部のライブラリがありません" : "準備できています"}</span>`
-          + `<div class="d">Python ${esc(p.python)}`
-          + (miss.length ? `\n未インストール: ${esc(miss.join(", "))}\nこのまま進むと、該当箇所は「未検証」と表示されます。` : "\n必要なライブラリは揃っています。")
-          + `</div>`;
+        show("envInfo", [[miss.length
+          ? R.warn("一部のライブラリがありません",
+              `Python ${p.python}\n未インストール: ${miss.join(", ")}\n`
+              + "該当箇所は「未検証」と表示されます。"
+              + "すべて検証するには pip install -r requirements.txt を実行してください。")
+          : R.ok("実接続で検証できます", `Python ${p.python}`), ""]]);
 
         const e = await api("/api/env", {load:false});
         const set = Object.keys(e.found).filter(k => e.found[k]);
-        const box = document.getElementById("envFound");
         if(set.length){
-          box.innerHTML = `<div class="warnbox">
-            このPCの環境変数に既に値が設定されています（${esc(set.join(", "))}）。
+          const d = document.createElement("div");
+          d.className = "warnbox";
+          d.innerHTML = `このPCの環境変数に既に値が設定されています（${esc(set.join(", "))}）。
             読み込んで検証に使えます。<b>読み込んでも保存はしません。</b>
-            <div class="row"><button type="button" id="loadEnv">環境変数から読み込む</button></div>
-          </div>`;
-          document.getElementById("loadEnv").onclick = async () => {
+            <div class="row"><button type="button" id="loadEnv">環境変数から読み込む</button></div>`;
+          box.appendChild(d);
+          document.getElementById("loadEnv").onclick = async (ev) => {
             const r = await api("/api/env", {load:true});
             Object.keys(V).forEach(k => { if(r.values[k]) V[k] = r.values[k]; });
-            document.getElementById("loadEnv").textContent = "読み込みました";
-            document.getElementById("loadEnv").disabled = true;
+            ev.target.textContent = "読み込みました"; ev.target.disabled = true;
           };
         }
       }catch(err){
-        info.className = "res ng";
-        info.innerHTML = `<span class="t">確認に失敗しました</span><div class="d">${esc(err.message)}</div>`;
+        show("envInfo", [[R.ng("確認に失敗しました", err.message), ""]]);
       }
     },
   },
@@ -310,7 +527,7 @@ const STEPS = [
     why:"ボットがDiscordにログインするための鍵です。",
     body:`
       <ol class="todo">
-        <li><code>https://discord.com/developers/applications</code> を開き「New Application」で作成</li>
+        <li><a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer">Discord Developer Portal</a> を開き「New Application」で作成</li>
         <li>左メニュー「Bot」→「Reset Token」でトークンを表示してコピー</li>
       </ol>
       ${shot("01-new-application.png","Developer Portal の New Application")}
@@ -322,6 +539,13 @@ const STEPS = [
       <div class="results" id="r_token"></div>`,
     verify: async () => {
       V.DISCORD_BOT_TOKEN = document.getElementById("in_token").value;
+      if(!LIVE){
+        const res = LOCAL.token(V.DISCORD_BOT_TOKEN);
+        show("r_token", [[res, "トークン（形式）"]]);
+        return worst([res]);
+      }
+      const local = LOCAL.token(V.DISCORD_BOT_TOKEN);
+      if(local.status === "ng"){ show("r_token", [[local, "トークン（形式）"]]); return "fail"; }
       const {results} = await api("/api/check/discord",
         {discord_bot_token: V.DISCORD_BOT_TOKEN, with_channel:false});
       show("r_token", [[results.token, "トークン"]]);
@@ -338,13 +562,21 @@ const STEPS = [
         <li><b>MESSAGE CONTENT INTENT</b> を ON にして保存</li>
       </ol>
       ${shot("03-message-content-intent.png","MESSAGE CONTENT INTENT を ON にした状態")}
-      <div class="note">設定を保存してから下のボタンを押してください。反映まで数秒かかる場合があります。</div>
       <div class="results" id="r_intent"></div>`,
     verify: async () => {
+      if(!LIVE){
+        show("r_intent", [[R.skip("この設定は画面でしか確認できません",
+          "ONになっているかは、実接続で検証するか、Developer Portal の画面でご自身で確認してください。\n"
+          + "この項目の確認漏れは「コマンドに反応しない」の最大の原因です。"), "MESSAGE CONTENT INTENT"]]);
+        return null;
+      }
       const {results} = await api("/api/check/discord",
         {discord_bot_token: V.DISCORD_BOT_TOKEN, with_channel:false});
       show("r_intent", [[results.intent, "MESSAGE CONTENT INTENT"]]);
       return worst([results.intent]);
+    },
+    onEnter: () => {
+      if(!LIVE) document.getElementById("vBtn").textContent = "確認したので次へ進む";
     },
   },
   {
@@ -360,28 +592,39 @@ const STEPS = [
         <li>表示したいチャンネルを右クリック →「チャンネルIDをコピー」</li>
       </ol>
       ${shot("04-oauth2-url-generator.png","bot と Send Messages を選んだ状態")}
+      <div class="note">左メニューの「インストール」にも、出来合いの招待リンクがあります。
+        権限を細かく選ばないなら、こちらをコピーして開く方が手軽です。</div>
+      ${shot("04b-install-link.png","「インストール」画面の招待リンク（コピーボタン）")}
       ${shot("05-invite-server-select.png","招待URLを開いたときのサーバー選択画面")}
       ${shot("06-developer-mode.png","開発者モードを ON にする")}
       ${shot("07-copy-channel-id.png","チャンネルを右クリック →「チャンネルIDをコピー」")}
       <label>CHANNEL_ID <span class="hint">17〜19桁の数字</span></label>
       <input type="text" id="in_channel" autocomplete="off" spellcheck="false" inputmode="numeric">
       <div class="results" id="r_channel"></div>
-      <div class="warnbox">
-        送信できるかどうかは、読み取りだけでは判定できません。確実に確かめるには
-        <b>テストメッセージを実際に送る</b>必要があります。送るとチャンネルに一瞬表示され、
-        直後に削除します（削除に失敗した場合は残ります）。
-        <div class="row">
-          <button type="button" id="sendTest">テスト送信して確かめる</button>
-        </div>
-      </div>`,
+      <div id="sendTestBox"></div>`,
     verify: async () => {
       V.CHANNEL_ID = document.getElementById("in_channel").value;
+      if(!LIVE){
+        const res = LOCAL.channelId(V.CHANNEL_ID);
+        show("r_channel", [[res, "チャンネルID（形式）"]]);
+        return worst([res]);
+      }
+      const local = LOCAL.channelId(V.CHANNEL_ID);
+      if(local.status === "ng"){ show("r_channel", [[local, "チャンネルID（形式）"]]); return "fail"; }
       const {results} = await api("/api/check/discord",
         {discord_bot_token: V.DISCORD_BOT_TOKEN, channel_id: V.CHANNEL_ID, with_channel:true});
       show("r_channel", [[results.channel, "表示先チャンネル"]]);
       return worst([results.channel]);
     },
     onEnter: () => {
+      const box = document.getElementById("sendTestBox");
+      if(!LIVE){ box.innerHTML = ""; return; }
+      box.innerHTML = `<div class="warnbox">
+        送信できるかどうかは、読み取りだけでは判定できません。確実に確かめるには
+        <b>テストメッセージを実際に送る</b>必要があります。送るとチャンネルに一瞬表示され、
+        直後に削除します（削除に失敗した場合は残ります）。
+        <div class="row"><button type="button" id="sendTest">テスト送信して確かめる</button></div>
+      </div>`;
       document.getElementById("sendTest").onclick = async (ev) => {
         const b = ev.target; b.disabled = true; b.textContent = "送信中…";
         V.CHANNEL_ID = document.getElementById("in_channel").value;
@@ -392,7 +635,7 @@ const STEPS = [
           show("r_channel", [[results.channel, "表示先チャンネル（テスト送信）"]]);
           setChip(3, worst([results.channel]));
         }catch(err){
-          show("r_channel", [[{status:"ng", title:"検証に失敗しました", detail:err.message}, ""]]);
+          show("r_channel", [[R.ng("検証に失敗しました", err.message), ""]]);
         }
         b.disabled = false; b.textContent = "テスト送信して確かめる";
       };
@@ -404,16 +647,20 @@ const STEPS = [
     why:"ボット専用のGoogleアカウントで、カレンダーを読み取り専用で参照します。",
     body:`
       <ol class="todo">
-        <li>Google Cloud Console でプロジェクトを新規作成</li>
-        <li>「APIとサービス」→「ライブラリ」→ <b>Google Calendar API</b> を有効化</li>
-        <li>「認証情報」→「認証情報を作成」→「サービスアカウント」を作成</li>
-        <li>作成したものをクリック →「キー」タブ →「鍵を追加」→「新しい鍵を作成」→ <b>JSON</b></li>
-        <li>ダウンロードしたファイルを開き、<code>{</code> から <code>}</code> まで全部をコピー</li>
+        <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> を開き、上部のプロジェクト名を押して「新しいプロジェクト」</li>
+        <li>プロジェクト名を入れて「作成」（名前は何でも構いません）</li>
+        <li>上部の検索欄で「google calendar」を検索し、<b>Google Calendar API</b> を選ぶ</li>
+        <li>「有効にする」を押す</li>
+        <li>有効化後の画面で「認証情報を作成」→「サービス アカウント」を選んで作成</li>
+        <li>作成したものをクリック →「キー」タブ →「鍵を追加」→「新しい鍵を作成」→ <b>JSON</b> を選んで作成</li>
+        <li>ダウンロードされたファイルを開き、<code>{</code> から <code>}</code> まで全部をコピー</li>
       </ol>
-      ${shot("08-gcp-new-project.png","Google Cloud Console のプロジェクト作成")}
-      ${shot("09-enable-calendar-api.png","Google Calendar API を有効化")}
-      ${shot("10-create-service-account.png","認証情報の作成でサービスアカウントを選ぶ")}
-      ${shot("11-add-json-key.png","「キー」タブから JSON 形式の鍵を追加")}
+      ${shot("08-gcp-new-project.png","プロジェクトを選択 →「新しいプロジェクト」")}
+      ${shot("08b-gcp-project-form.png","プロジェクト名を入力して作成（名前は何でも構いません）")}
+      ${shot("09a-search-calendar-api.png","上部の検索欄で「google calendar」を検索")}
+      ${shot("09-enable-calendar-api.png","Google Calendar API の「有効にする」を押す")}
+      ${shot("10-create-service-account.png","「認証情報を作成」→「サービス アカウント」を選ぶ")}
+      ${shot("11-add-json-key.png","「キー」タブ →「鍵を追加」→ JSON を選択して作成")}
       <label>SERVICE_ACCOUNT_JSON
         <span class="hint">末尾の <code>}</code> まで含めて貼ってください。途中で切れているのが最頻出の失敗です</span></label>
       <textarea id="in_sa" autocomplete="off" spellcheck="false"
@@ -422,22 +669,22 @@ const STEPS = [
       <div id="emailBox"></div>`,
     verify: async () => {
       V.SERVICE_ACCOUNT_JSON = document.getElementById("in_sa").value;
-      const r = await api("/api/check/service-account",
-        {service_account_json: V.SERVICE_ACCOUNT_JSON});
-      show("r_sa", [[r.result, "鍵JSON"]]);
+      const res = LOCAL.serviceAccount(V.SERVICE_ACCOUNT_JSON);
+      show("r_sa", [[res, "鍵JSON"]]);
+      let email = "";
+      try{ email = JSON.parse(V.SERVICE_ACCOUNT_JSON.trim()).client_email || ""; }catch(e){}
       const box = document.getElementById("emailBox");
-      if(r.client_email){
+      if(email){
         box.innerHTML = `<div class="warnbox">
           次のステップで使う値です。カレンダーの共有先に指定します。
-          <pre class="out" id="emailOut">${esc(r.client_email)}</pre>
+          <pre class="out">${esc(email)}</pre>
           <div class="row"><button type="button" id="copyEmail">この値をコピー</button></div>
         </div>`;
-        document.getElementById("copyEmail").onclick = () =>
-          copy(r.client_email, document.getElementById("copyEmail"));
+        document.getElementById("copyEmail").onclick = (e) => copy(email, e.target);
       }else{
         box.innerHTML = "";
       }
-      return worst([r.result]);
+      return worst([res]);
     },
   },
   {
@@ -453,42 +700,83 @@ const STEPS = [
         <li>複数のカレンダーを使う場合は、<b>1つずつ同じ共有作業</b>を行ってから、
             IDを「,」または改行で区切って並べる</li>
       </ol>
+      ${shot("11b-service-account-email.png","client_email はサービスアカウントの詳細画面でも確認できます")}
       ${shot("12-share-calendar.png","client_email を共有相手に追加した状態")}
       ${shot("13-calendar-id.png","「カレンダーの統合」にあるカレンダーID")}
       <label>CALENDAR_ID <span class="hint">「,」または改行で複数指定できます</span></label>
       <textarea id="in_cal" autocomplete="off" spellcheck="false"
         placeholder="aaa@group.calendar.google.com&#10;bbb@group.calendar.google.com"></textarea>
-      <div class="note">
-        検証が通ると<b>カレンダー名</b>が表示されます。意図したカレンダーかどうか、
-        名前で必ず確認してください。名前が違えば別のカレンダーを指しています。
-      </div>
+      <div id="calNote" class="note"></div>
       <div class="results" id="r_cal"></div>`,
     verify: async () => {
       V.CALENDAR_ID = document.getElementById("in_cal").value;
+      if(!LIVE){
+        const results = LOCAL.calendars(V.CALENDAR_ID);
+        show("r_cal", results.map(r => [r, r.calendar_id || "カレンダー"]));
+        return worst(results);
+      }
       const {results} = await api("/api/check/calendars",
         {service_account_json: V.SERVICE_ACCOUNT_JSON, calendar_id: V.CALENDAR_ID});
       show("r_cal", results.map(r => [r, r.calendar_id || "カレンダー"]));
       return worst(results);
     },
+    onEnter: () => {
+      document.getElementById("calNote").innerHTML = LIVE
+        ? "検証が通ると<b>カレンダー名</b>が表示されます。意図したカレンダーかどうか、名前で必ず確認してください。"
+        : "共有ができているかどうかは、このモードでは確認できません。"
+          + "共有漏れは「エラーが出ないのに予定が見えない」原因の筆頭なので、"
+          + "手順2を行ったか特に注意してください。";
+    },
   },
   {
-    id:"final", chip:"6. 総合検証",
-    title:"すべてを通しで確かめる",
-    why:"各ステップの検証は、その時点の結果でしかありません。途中でトークンを再発行したり、別のカレンダーを共有し直すと前の結果は無効になります。デプロイ直前の状態をここで一度に確かめます。",
+    id:"final", chip:"6. 総合確認", title:"すべてを通しで確かめる",
+    why:"各ステップの確認は、その時点の結果でしかありません。途中でトークンを再発行したり、別のカレンダーを共有し直すと前の結果は無効になります。デプロイ直前の状態をここで一度に確かめます。",
     body:`
-      <div class="row">
-        <label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:400">
-          <input type="checkbox" id="finalSendTest" style="width:auto">
-          テスト送信も行う（チャンネルに一瞬メッセージが表示されます）
-        </label>
-      </div>
+      <div id="finalOpts"></div>
       <div class="results" id="r_all"></div>
       <div id="finalSummary"></div>`,
     verify: async () => {
       const box = document.getElementById("r_all");
-      box.innerHTML = `<div class="res skip"><span class="t">検証中…</span></div>`;
+      box.innerHTML = `<div class="res skip"><span class="t">確認中…</span></div>`;
+
+      if(!LIVE){
+        const items = [];
+        const names = ["DISCORD_BOT_TOKEN","CHANNEL_ID","CALENDAR_ID","SERVICE_ACCOUNT_JSON"];
+        const missing = names.filter(n => !(V[n] || "").trim());
+        items.push([missing.length
+          ? R.ng("設定されていない値があります", "足りない値: " + missing.join(", "),
+              [`ウィザードの該当ステップに戻って入力してください（一覧は ${GUIDE} 6章）`])
+          : R.ok("4つすべて揃っています"), "環境変数"]);
+        items.push([LOCAL.token(V.DISCORD_BOT_TOKEN), "Discordトークン（形式）"]);
+        items.push([LOCAL.channelId(V.CHANNEL_ID), "チャンネルID（形式）"]);
+        items.push([LOCAL.serviceAccount(V.SERVICE_ACCOUNT_JSON), "鍵JSON（形式）"]);
+        LOCAL.calendars(V.CALENDAR_ID).forEach(r =>
+          items.push([r, `カレンダー ${r.calendar_id || ""}（形式）`]));
+        items.push([R.skip("MESSAGE CONTENT INTENT は未確認",
+          "この設定の状態は、実接続でしか確かめられません。"), "MESSAGE CONTENT INTENT"]);
+        show("r_all", items);
+
+        const bad = items.filter(([r]) => r.status === "ng").length;
+        const warn = items.filter(([r]) => r.status === "unknown").length;
+        const s = document.getElementById("finalSummary");
+        if(bad || warn){
+          const parts = [];
+          if(bad) parts.push(`${bad}件の要対応`);
+          if(warn) parts.push(`${warn}件の判定不能`);
+          s.innerHTML = `<div class="res ng"><span class="t">${esc(parts.join("と"))}があります</span>
+            <div class="d">該当するステップに戻って修正し、もう一度ここで確かめてください。</div></div>`;
+          return "fail";
+        }
+        s.innerHTML = `<div class="res unknown"><span class="t">形式はすべて問題ありません</span>
+          <div class="d">ただし、これらの値が実際に使えるかどうかは確認できていません。\n`
+          + `トークンが通るか、INTENTがONか、チャンネルが見えるか、カレンダーが共有できているか。\n`
+          + `これらを確かめるには、下の「実接続で確かめる」の手順を使ってください。\n`
+          + `確かめずに進んでも構いませんが、うまく動かない場合はここが原因になります。</div></div>`;
+        return "done";
+      }
+
       const report = await api("/api/check/all", Object.assign({}, V,
-        {send_test: document.getElementById("finalSendTest").checked}));
+        {send_test: (document.getElementById("finalSendTest") || {}).checked}));
       show("r_all", report.items.map(i => [i, i.step]));
       const s = document.getElementById("finalSummary");
       if(report.passed){
@@ -503,10 +791,19 @@ const STEPS = [
       }
       return report.passed ? "done" : "fail";
     },
+    onEnter: () => {
+      const box = document.getElementById("finalOpts");
+      box.innerHTML = LIVE
+        ? `<div class="row"><label style="display:flex;align-items:center;gap:6px;margin:0;font-weight:400">
+             <input type="checkbox" id="finalSendTest" style="width:auto">
+             テスト送信も行う（チャンネルに一瞬メッセージが表示されます）
+           </label></div>`
+        : `<div class="warnbox">このモードで確かめられるのは<b>値の形</b>までです。
+             実際に使えるかどうかは、下の手順で確認できます。</div>`;
+    },
   },
   {
-    id:"output", chip:"7. 出力",
-    title:"設定値を書き出す",
+    id:"output", chip:"7. 出力", title:"設定値を書き出す",
     why:"Render の Environment Variables に貼る値です。",
     body:`
       <div class="row">
@@ -524,55 +821,90 @@ const STEPS = [
           （<code>.gitignore</code> で除外していますが、別の場所に保存するのが安全です）。
         </div>
         <div class="note">
-          Render 側の設定値：<br>
+          Render では、「New +」→「Web Service」でリポジトリを選び、
+          次の3つを設定します。<br>
           Build Command <code>pip install -r requirements.txt</code><br>
           Start Command <code>python Calendar.py</code><br>
           Instance Type <code>Free</code>
         </div>
-        ${shot("16-render-build-start.png","Render の Build / Start Command と Instance Type")}
-        ${shot("17-render-env-vars.png","Environment Variables に4つ追加した状態（値は隠しています）")}
-        ${shot("18-render-logs-success.png","Logs に「ログインしました」が出た状態")}
+        ${shot("14-render-new-web-service.png","「New +」→「Web Service」を選ぶ")}
+        ${shot("16-render-build-start.png","Build / Start Command を入力し、Instance Type は Free")}
+        ${shot("17-render-env-vars.png","Environment Variables に4つ追加した状態（値は Render が伏字にします）")}
+        <div class="note">
+          起動すると、サービスの画面に <code>◯◯◯.onrender.com</code> のURLが表示されます。
+          次のステップで使うので控えておいてください。<br>
+          Logs に <code>ログインしました: ...</code> と出ていれば起動成功です。
+        </div>
+        ${shot("18-render-service-url.png","サービス画面に出る公開URL（ここでは伏せています）")}
       </div>`,
     onEnter: () => {
-      document.getElementById("genBtn").onclick = async (ev) => {
-        ev.target.disabled = true;
-        try{
-          const r = await api("/api/render-env", V);
-          document.getElementById("outText").textContent = r.text;
-          document.getElementById("outBox").classList.remove("hidden");
-          document.getElementById("copyOut").onclick = (e) => copy(r.text, e.target);
-          document.getElementById("dlOut").onclick = () => download(r.text);
-          setChip(7, "done");
-        }catch(err){
-          alert("作成に失敗しました: " + err.message);
-        }
-        ev.target.disabled = false;
+      document.getElementById("genBtn").onclick = () => {
+        const text = buildEnvText();
+        document.getElementById("outText").textContent = text;
+        document.getElementById("outBox").classList.remove("hidden");
+        document.getElementById("copyOut").onclick = (e) => copy(text, e.target);
+        document.getElementById("dlOut").onclick = () => download(text);
+        setChip(7, "done");
       };
     },
+  },
+  {
+    id:"uptime", chip:"8. 常時稼働", title:"スリープを防ぐ",
+    why:"Render の無料プランは15分アクセスがないと停止します。外から定期的に叩いて起こし続けます。",
+    body:`
+      <ol class="todo">
+        <li><a href="https://uptimerobot.com/" target="_blank" rel="noopener noreferrer">UptimeRobot</a> に登録し「Add New Monitor」を開く</li>
+        <li>Monitor type は <b>HTTP(s)</b></li>
+        <li>URL to monitor に、前のステップで控えた <code>◯◯◯.onrender.com</code> を入れる</li>
+        <li>Monitor interval を <b>5 minutes</b> にする</li>
+        <li>「Create monitor」を押す</li>
+      </ol>
+      ${shot("20-uptimerobot-monitor.png","Add single monitor の設定（通知先は伏せています）")}
+      <div class="warnbox">
+        Render のサービスを作り直すとURLが変わります。
+        そのときは <b>UptimeRobot 側のURLも更新</b>してください。忘れると監視が空振りし、
+        ボットが停止したままになります。
+      </div>
+      <div class="note">
+        無料枠と UptimeRobot の組み合わせは完全ではありません。稼働時間の上限やIP事情で
+        まれに停止することがあります。確実な常時稼働が必要なら、Render の有料プランなどを
+        検討してください。
+      </div>`,
   },
 ];
 
 /* ===== コピーと保存 ===== */
 async function copy(text, btn){
-  try{
-    await navigator.clipboard.writeText(text);
+  const done = () => {
     const old = btn.textContent; btn.textContent = "コピーしました";
     setTimeout(() => { btn.textContent = old; }, 1600);
-  }catch(e){
-    alert("コピーできませんでした。手で選択してコピーしてください。");
-  }
+  };
+  try{
+    await navigator.clipboard.writeText(text);
+    return done();
+  }catch(e){ /* 下の方法にフォールバック */ }
+  try{
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    if(ok) return done();
+  }catch(e){}
+  alert("コピーできませんでした。表示されている内容を選択してコピーしてください。");
 }
-/* ファイルはブラウザ側で組み立てて保存する。サーバーはファイルを作らない */
 function download(text){
   const blob = new Blob([text], {type:"text/plain;charset=utf-8"});
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "calendar-bot-env.txt";
+  document.body.appendChild(a);
   a.click();
+  document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-/* ===== 画面の組み立て ===== */
+/* ===== 画面 ===== */
 function setChip(i, state){
   if(state) status[i] = state;
   renderChips();
@@ -590,25 +922,22 @@ function renderChips(){
     box.appendChild(b);
   });
 }
-
 function go(i){
   current = Math.max(0, Math.min(STEPS.length - 1, i));
   try{ sessionStorage.setItem(PROGRESS_KEY, String(current)); }catch(e){}
   const s = STEPS[current];
-  const p = document.getElementById("panels");
-  p.innerHTML = `<section class="card">
+  document.getElementById("panels").innerHTML = `<section class="card">
       <h2>${esc(s.title)}</h2>
       <p class="why">${esc(s.why)}</p>
       ${s.body}
       <div class="row">
         <button type="button" class="ghost" id="prevBtn"${current === 0 ? " disabled" : ""}>戻る</button>
-        ${s.verify ? `<button type="button" class="primary" id="vBtn">この内容で検証する</button>` : ""}
+        ${s.verify ? `<button type="button" class="primary" id="vBtn">この内容で確かめる</button>` : ""}
         <span class="spacer"></span>
         <button type="button" id="nextBtn"${current === STEPS.length - 1 ? " disabled" : ""}>次へ</button>
       </div>
     </section>`;
 
-  /* 入力欄に、いまメモリ上にある値を戻す（ページ再読み込み時は空） */
   setVal("in_token", V.DISCORD_BOT_TOKEN);
   setVal("in_channel", V.CHANNEL_ID);
   setVal("in_sa", V.SERVICE_ACCOUNT_JSON);
@@ -628,16 +957,14 @@ function go(i){
   const vb = document.getElementById("vBtn");
   if(vb){
     vb.onclick = async () => {
-      vb.disabled = true; const old = vb.textContent; vb.textContent = "検証中…";
+      vb.disabled = true; const old = vb.textContent; vb.textContent = "確認中…";
       try{
         setChip(current, await s.verify());
       }catch(err){
-        const target = document.querySelector(".card .results:last-of-type")
-          || document.querySelector(".card .results");
+        const target = document.querySelector(".card .results");
         if(target){
           target.innerHTML = "";
-          target.appendChild(resultEl(
-            {status:"ng", title:"検証を実行できませんでした", detail:err.message}, ""));
+          target.appendChild(resultEl(R.ng("確認を実行できませんでした", err.message), ""));
         }
         setChip(current, "fail");
       }
@@ -648,13 +975,38 @@ function go(i){
   renderChips();
   window.scrollTo({top:0, behavior:"smooth"});
 }
-
 function setVal(id, value){
   const el = document.getElementById(id);
   if(el && value) el.value = value;
 }
 
-/* 表示テーマ。ここは秘密情報でないので localStorage に置いてよい */
+/* ===== モードの説明 ===== */
+function renderBanner(){
+  const b = document.getElementById("modeBanner");
+  if(LIVE){
+    b.className = "banner";
+    b.innerHTML = `<b>実接続で確かめられます</b>
+      各ステップで、実際に Discord と Google に接続して値が使えるかを確認します。
+      トークンが通るか、MESSAGE CONTENT INTENT がONか、チャンネルが見えるか、
+      カレンダーが読めるかまで分かります。`;
+    return;
+  }
+  b.className = "banner limited";
+  b.innerHTML = `<b>いま確かめられるのは「値の形」までです</b>
+    このHTMLを直接開いた状態では、実際に Discord や Google へ接続できません。
+    ブラウザから Discord API を呼ぶことが許可されていないためで、これは回避できません。
+    <ul>
+      <li>確かめられる: 鍵JSONが壊れていないか、チャンネルIDがDiscordのIDとして辻褄が合うか、トークンに空白が混入していないか</li>
+      <li>確かめられない: トークンが実際に通るか、INTENTがONか、チャンネルが見えるか、<b>カレンダーが共有できているか</b></li>
+    </ul>
+    <div class="upgrade"><b>実接続で確かめるには</b><br>
+      リポジトリのフォルダで次を実行すると、同じ画面が検証付きで開きます。
+      <pre class="out" style="margin:8px 0 0">pip install -r requirements.txt
+python3 setup_wizard.py</pre>
+    </div>`;
+}
+
+/* 表示テーマ。秘密情報ではないので保存してよい */
 const themeBtn = document.getElementById("themeBtn");
 try{
   const saved = localStorage.getItem("calbot_wizard_theme");
@@ -667,6 +1019,7 @@ themeBtn.onclick = () => {
   try{ localStorage.setItem("calbot_wizard_theme", next); }catch(e){}
 };
 
+renderBanner();
 let startAt = 0;
 try{ startAt = parseInt(sessionStorage.getItem(PROGRESS_KEY) || "0", 10) || 0; }catch(e){}
 go(startAt);
