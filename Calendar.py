@@ -18,7 +18,16 @@ from PIL import Image, ImageDraw, ImageFont  # 画像生成の道具（要 Pillo
 # ===== ② 設定値（環境変数から読み込む） =====
 DISCORD_BOT_TOKEN = os.environ["DISCORD_BOT_TOKEN"]
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])   
-CALENDAR_ID = os.environ["CALENDAR_ID"]
+
+# カレンダーIDは「,」または改行で区切って複数指定できる。1つだけでも従来どおり動く
+CALENDAR_IDS = []
+for _cid in re.split(r"[,\n]", os.environ["CALENDAR_ID"]):
+    _cid = _cid.strip()
+    # 同じIDを二重に書くと同じ予定が2回表示されてしまうので除く
+    if _cid and _cid not in CALENDAR_IDS:
+        CALENDAR_IDS.append(_cid)
+if not CALENDAR_IDS:
+    raise ValueError("CALENDAR_ID にカレンダーIDが1つも入っていません")
 
 DAYS_TO_SHOW = 90
 DAYS_PER_MESSAGE = 25
@@ -45,19 +54,91 @@ client = discord.Client(intents=intents)
 state = {"messages": [], "signature": None}
 
 
+# ===== ⑤-B 読み取れなかったカレンダーを伝える道具 =====
+
+def merge_failures(*lists):
+    """複数の失敗リストを、重複を除いてまとめる"""
+    merged = []
+    for lst in lists:
+        for cid in lst:
+            if cid not in merged:
+                merged.append(cid)
+    return merged
+
+
+def failure_note(failures):
+    """失敗があれば、結果に添える警告文を返す（なければ空文字）。
+       カレンダーID自体は Discord に出さず件数だけ示し、詳細はログに済ませる"""
+    if not failures:
+        return ""
+    return (f"\n⚠️ {len(failures)}件のカレンダーを読み取れませんでした。"
+            "結果が不完全な可能性があります（詳細はサーバーのログ）")
+
+
 # ===== ⑥ カレンダーから予定を取ってくる関数 =====
+
+API_PAGE_SIZE = 2500                   # 1回の問い合わせで取る件数（APIの上限）
+API_MAX_PAGES = 20                     # たどるページの上限（2500×20＝5万件相当）
+
+
+def _event_sort_key(e):
+    """終日予定と時刻付き予定が混ざっていても並べられるキーを作る。
+       終日予定はその日の0:00として扱い、同じ時刻なら終日を先に置く"""
+    start = e["start"]
+    if "dateTime" in start:
+        return (datetime.fromisoformat(start["dateTime"]).astimezone(JST), 1)
+    d = date.fromisoformat(start["date"])
+    return (datetime(d.year, d.month, d.day, tzinfo=JST), 0)
+
+
+def _fetch_one_calendar(calendar_id, time_min, time_max):
+    """1つのカレンダーから、指定範囲の予定を全ページ分取得する。
+       nextPageToken をたどらないと、上限を超えた分が黙って消える"""
+    events = []
+    page_token = None
+    for _ in range(API_MAX_PAGES):
+        result = service.events().list(
+            calendarId=calendar_id,
+            timeMin=time_min,
+            timeMax=time_max,
+            maxResults=API_PAGE_SIZE,
+            singleEvents=True,
+            orderBy="startTime",
+            pageToken=page_token,
+        ).execute()
+        events.extend(result.get("items", []))
+        page_token = result.get("nextPageToken")
+        if not page_token:                 # 次のページがなければ終わり
+            return events
+    # 上限までたどっても終わらない場合。黙って不完全な結果を返すと
+    # 空き日を誤判定するので、失敗として呼び出し元に伝える
+    raise RuntimeError(
+        f"予定が多すぎて取りきれません（{API_MAX_PAGES}ページで打ち切り）: {calendar_id}"
+    )
+
+
+def fetch_events_multi(start_dt, end_dt):
+    """全カレンダーから予定を集め、開始時刻順に並べて返す。
+       戻り値は (予定のリスト, 読み取れなかったカレンダーIDのリスト)。
+       1つが読めなくても他は返すが、失敗を黙って捨てない（空きの誤判定を防ぐ）"""
+    time_min = start_dt.isoformat()
+    time_max = end_dt.isoformat()
+    events = []
+    failures = []
+    for calendar_id in CALENDAR_IDS:
+        try:
+            events.extend(_fetch_one_calendar(calendar_id, time_min, time_max))
+        except Exception as e:
+            failures.append(calendar_id)
+            print(f"カレンダー読み取りエラー: {calendar_id} -> {e}")
+    events.sort(key=_event_sort_key)       # 連結しただけでは順序が崩れるので並べ直す
+    return events, failures
+
+
 def fetch_events():
     now = datetime.now(JST)
     time_max = now + timedelta(days=DAYS_TO_SHOW)
-    result = service.events().list(
-        calendarId=CALENDAR_ID,
-        timeMin=now.isoformat(),
-        timeMax=time_max.isoformat(),
-        maxResults=250,
-        singleEvents=True,
-        orderBy="startTime",
-    ).execute()
-    return result.get("items", [])
+    return fetch_events_multi(now, time_max)
 
 
 # ===== ⑦ 予定を日付ごとに整え、複数のEmbedに分割する関数 =====
@@ -101,7 +182,12 @@ def build_embeds(events):
 # ===== ⑧ 定期的に実行される処理（5分ごと） =====
 @tasks.loop(minutes=60)
 async def update_calendar():
-    events = fetch_events()
+    events, failures = fetch_events()
+    if failures:
+        # 一部のカレンダーが読めないまま書き換えると、予定が抜けた表示になってしまう。
+        # 前回の正しい表示を残し、次の周期でやり直す
+        print(f"一部のカレンダーが読めないため、自動表示の更新を見送りました: {failures}")
+        return
     today = datetime.now(JST).date().isoformat()      # 今日の日付（日本時間）
     signature = str(today) + str([
         (e.get("summary"), e.get("start"), e.get("end"), e.get("updated"))
@@ -139,26 +225,15 @@ DAY_START, DAY_END = 10, 18            # 日中 10:00-18:00
 NIGHT_START, NIGHT_END = 18, 24        # 夜 18:00-24:00
 
 
-def fetch_events_between(start_dt, end_dt):
-    """指定した日時範囲の予定を取得する"""
-    result = service.events().list(
-        calendarId=CALENDAR_ID,
-        timeMin=start_dt.isoformat(),
-        timeMax=end_dt.isoformat(),
-        maxResults=2500,
-        singleEvents=True,
-        orderBy="startTime",
-    ).execute()
-    return result.get("items", [])
-
-
 def find_free_days(start_date, end_date, slot_start, slot_end):
-    """start_date〜end_date（両端含む）で、指定時間帯に予定が無い日を返す"""
+    """start_date〜end_date（両端含む）で、指定時間帯に予定が無い日を返す。
+       複数カレンダーのうちどれか1つでも予定があれば、その日は埋まっているとする。
+       戻り値は (空いている日のリスト, 読み取れなかったカレンダーIDのリスト)"""
     # 範囲の開始0:00から、終了日の翌日0:00まで取得
     range_start = datetime(start_date.year, start_date.month, start_date.day, tzinfo=JST)
     range_end = datetime(end_date.year, end_date.month, end_date.day, tzinfo=JST) \
                 + timedelta(days=1)
-    events = fetch_events_between(range_start, range_end)
+    events, failures = fetch_events_multi(range_start, range_end)
 
     busy_dates = set()
     for e in events:
@@ -188,7 +263,7 @@ def find_free_days(start_date, end_date, slot_start, slot_end):
         if day not in busy_dates:
             free_days.append(day)
         day += timedelta(days=1)
-    return free_days
+    return free_days, failures
 
 def parse_one_point(s, is_end):
     """'2026-9' や '2026-9.15' を日付に変換する。
@@ -292,15 +367,19 @@ def _img_font(size):
 
 
 def collect_month_busy(year, month):
-    """指定月について、昼が埋まっている日の集合・夜が埋まっている日の集合を返す。
+    """指定月について、昼が埋まっている日の集合・夜が埋まっている日の集合と、
+       読み取れなかったカレンダーIDのリストを返す。
        判定は空き日程コマンド（find_free_days）と同じ基準を使う。"""
     first = date(year, month, 1)
     last_day = _calendar.monthrange(year, month)[1]
     last = date(year, month, last_day)
 
     # find_free_days は「空いている日」を返すので、その補集合が「埋まっている日」
-    day_free = set(find_free_days(first, last, DAY_START, DAY_END))
-    night_free = set(find_free_days(first, last, NIGHT_START, NIGHT_END))
+    day_list, day_fail = find_free_days(first, last, DAY_START, DAY_END)
+    night_list, night_fail = find_free_days(first, last, NIGHT_START, NIGHT_END)
+    day_free = set(day_list)
+    night_free = set(night_list)
+    failures = merge_failures(day_fail, night_fail)
 
     day_busy = set()
     night_busy = set()
@@ -311,12 +390,12 @@ def collect_month_busy(year, month):
         if d not in night_free:
             night_busy.add(d)
         d += timedelta(days=1)
-    return day_busy, night_busy
+    return day_busy, night_busy, failures
 
 
 def render_month_image(year, month):
-    """月間カレンダー画像を生成（確定CSSレイアウトをPillowで正確に再現）"""
-    day_busy, night_busy = collect_month_busy(year, month)
+    """月間カレンダー画像を生成し、(PNGのバイト列, 読み取れなかったカレンダーID) を返す"""
+    day_busy, night_busy, failures = collect_month_busy(year, month)
 
     cal = _calendar.Calendar(firstweekday=6)   # 日曜始まり
     weeks = cal.monthdayscalendar(year, month)
@@ -422,7 +501,7 @@ def render_month_image(year, month):
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
-    return buf
+    return buf, failures
 
 
 # ===== ⑧-E コマンド一覧のテキスト ★追加 =====
@@ -480,9 +559,11 @@ async def on_message(message):
             return
         try:
             # 画像生成は重い処理なので、別スレッドで実行してボットを固めない
-            buf = await asyncio.to_thread(render_month_image, year, month)
+            buf, failures = await asyncio.to_thread(render_month_image, year, month)
             file = discord.File(buf, filename=f"calendar_{year}_{month:02d}.png")
-            await message.channel.send(f"📅 {year}年{month}月", file=file)
+            await message.channel.send(
+                f"📅 {year}年{month}月{failure_note(failures)}", file=file
+            )
         except Exception as e:
             print(f"画像生成エラー: {e}")
             await message.channel.send("画像の生成に失敗しました")
@@ -525,20 +606,22 @@ async def on_message(message):
 
     # モードごとに空き日を求める
     if mode == "n":
-        free_days = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        free_days, failures = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
         label = "夜が空いている日"
     elif mode == "a":
-        day_free = find_free_days(start_date, end_date, DAY_START, DAY_END)
-        night_free = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
         free_days = sorted(set(day_free) & set(night_free))
+        failures = merge_failures(day_fail, night_fail)
         label = "一日空いている日"
     elif mode == "u":                  # 昼か夜のどちらか（あるいは両方）が空いている日
-        day_free = find_free_days(start_date, end_date, DAY_START, DAY_END)
-        night_free = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
         free_days = sorted(set(day_free) | set(night_free))   # どちらかに含まれる日
+        failures = merge_failures(day_fail, night_fail)
         label = "昼か夜が空いている日"
     else:
-        free_days = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        free_days, failures = find_free_days(start_date, end_date, DAY_START, DAY_END)
         label = "昼が空いている日"
 
     # 末尾に r が付いていたら反転（昼・夜モードのみ対象。a と u には適用しない）
@@ -554,9 +637,12 @@ async def on_message(message):
         label = "夜に予定がある日" if mode == "n" else "昼に予定がある日"
 
     if densuke:
-        await message.channel.send(format_free_days_densuke(free_days))
+        await message.channel.send(format_free_days_densuke(free_days) + failure_note(failures))
     else:
-        await message.channel.send(format_free_days_range(start_date, end_date, free_days, label))
+        await message.channel.send(
+            format_free_days_range(start_date, end_date, free_days, label)
+            + failure_note(failures)
+        )
 
 # ===== ⑨-A ダミーWebサーバー（ここに丸ごと置く） =====
 class HealthHandler(BaseHTTPRequestHandler):
