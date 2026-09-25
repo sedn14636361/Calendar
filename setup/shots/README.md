@@ -10,6 +10,26 @@
 - 形式は PNG 推奨。横幅 1200px 程度まで縮小しておくと軽くなります
 - ⚠️ が付いているものは、**トークン・鍵・IDを必ず塗りつぶしてから**保存してください
 
+### 公開リポジトリに置く際の注意
+
+トークンや鍵以外にも、画面には個人を特定しうる情報が写り込みます。
+認証情報ではないためそれ単体で乗っ取られることはありませんが、塗りつぶしておくことを推奨します。
+
+| 写り込みやすいもの | どこに出るか |
+|---|---|
+| メールアドレス | UptimeRobot の通知設定、カレンダーの共有相手 |
+| Render の公開URL | サービス概要、UptimeRobot の監視対URL |
+| Discord アプリケーションID | ブラウザのURLバー |
+| Google Cloud のプロジェクトID | 画面上部のプロジェクト選択、URL |
+| サービスアカウントの数値ID | パンくずリスト |
+| Discord のサーバー名・チャンネル名 | 招待画面、サイドバー |
+| プロフィール画像 | 各サービスの右上 |
+
+## 現在の状態
+
+✓ が配置済みです。未配置のものは、ウィザード上で「画像未設定」と表示され、
+テキスト手順だけで進める状態になります。
+
 ## 一覧
 
 ★ は特に効果が大きいものです。この7枚だけでも十分に役立ちます。
@@ -18,11 +38,11 @@
 
 | ファイル名 | 内容 |
 |---|---|
-| `01-new-application.png` | Developer Portal の「New Application」名前入力画面 |
-| `02-reset-token.png` | ⚠️ Bot タブ、「Reset Token」でトークンが表示された状態 |
-| `03-message-content-intent.png` | ★ Privileged Gateway Intents で MESSAGE CONTENT INTENT を ON にした状態 |
-| `04-oauth2-url-generator.png` | ★ OAuth2 → URL Generator で `bot` と `Send Messages` をチェックした状態 |
-| `05-invite-server-select.png` | 招待URLを開いたときのサーバー選択・認証画面 |
+| ✓ `01-new-application.png` | Developer Portal の「New Application」名前入力画面 |
+| ✓ `02-reset-token.png` | ⚠️ Bot タブ、「Reset Token」でトークンが表示された状態 |
+| ✓ `03-message-content-intent.png` | ★ Privileged Gateway Intents で MESSAGE CONTENT INTENT を ON にした状態 |
+| ✓ `04-oauth2-url-generator.png` | ★ OAuth2 → URL Generator で `bot` と `Send Messages` をチェックした状態 |
+| ✓ `05-invite-server-select.png` | 招待URLを開いたときのサーバー選択・認証画面 |
 | `06-developer-mode.png` | Discord設定 → 詳細設定 → 開発者モードを ON にした状態 |
 | `07-copy-channel-id.png` | ★ チャンネルを右クリック →「チャンネルIDをコピー」 |
 
