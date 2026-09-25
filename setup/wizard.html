@@ -829,8 +829,13 @@ const STEPS = [
         </div>
         ${shot("14-render-new-web-service.png","「New +」→「Web Service」を選ぶ")}
         ${shot("16-render-build-start.png","Build / Start Command を入力し、Instance Type は Free")}
-        ${shot("17-render-env-vars.png","Environment Variables に4つ追加した状態（値は隠しています）")}
-        ${shot("18-render-logs-success.png","Logs に「ログインしました」が出た状態")}
+        ${shot("17-render-env-vars.png","Environment Variables に4つ追加した状態（値は Render が伏字にします）")}
+        <div class="note">
+          起動すると、サービスの画面に <code>◯◯◯.onrender.com</code> のURLが表示されます。
+          次のステップで使うので控えておいてください。<br>
+          Logs に <code>ログインしました: ...</code> と出ていれば起動成功です。
+        </div>
+        ${shot("18-render-service-url.png","サービス画面に出る公開URL（ここでは伏せています）")}
       </div>`,
     onEnter: () => {
       document.getElementById("genBtn").onclick = () => {
@@ -842,6 +847,29 @@ const STEPS = [
         setChip(7, "done");
       };
     },
+  },
+  {
+    id:"uptime", chip:"8. 常時稼働", title:"スリープを防ぐ",
+    why:"Render の無料プランは15分アクセスがないと停止します。外から定期的に叩いて起こし続けます。",
+    body:`
+      <ol class="todo">
+        <li><a href="https://uptimerobot.com/" target="_blank" rel="noopener noreferrer">UptimeRobot</a> に登録し「Add New Monitor」を開く</li>
+        <li>Monitor type は <b>HTTP(s)</b></li>
+        <li>URL to monitor に、前のステップで控えた <code>◯◯◯.onrender.com</code> を入れる</li>
+        <li>Monitor interval を <b>5 minutes</b> にする</li>
+        <li>「Create monitor」を押す</li>
+      </ol>
+      ${shot("20-uptimerobot-monitor.png","Add single monitor の設定（通知先は伏せています）")}
+      <div class="warnbox">
+        Render のサービスを作り直すとURLが変わります。
+        そのときは <b>UptimeRobot 側のURLも更新</b>してください。忘れると監視が空振りし、
+        ボットが停止したままになります。
+      </div>
+      <div class="note">
+        無料枠と UptimeRobot の組み合わせは完全ではありません。稼働時間の上限やIP事情で
+        まれに停止することがあります。確実な常時稼働が必要なら、Render の有料プランなどを
+        検討してください。
+      </div>`,
   },
 ];
 
