@@ -1,0 +1,8 @@
+# バッチファイルは CRLF でなければ Windows の cmd.exe が正しく解釈しない
+# （特に複数行の if ( ... ) ブロックが壊れる）
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# シェルスクリプトは LF のまま
+*.command text eol=lf
+*.sh      text eol=lf

@@ -210,8 +210,9 @@ CALENDAR_ID=aaa@group.calendar.google.com,bbb@group.calendar.google.com
 ├── .gitignore          … アップロード除外設定
 ├── setup_checks.py     … 設定値の検証（ウィザードと単体実行の両方から使う）
 ├── setup_wizard.py     … 実接続で確かめるときに起動する
-├── start_wizard.bat    … 上を起動するランチャー（Windows）
-└── start_wizard.command … 上を起動するランチャー（macOS / Linux）
+├── setup_launcher.py   … ランチャーの中身（venv作成とライブラリ導入）
+├── start_wizard.bat    … 上を呼ぶランチャー（Windows）
+└── start_wizard.command … 上を呼ぶランチャー（macOS / Linux）
 ```
 
 ### requirements.txt
@@ -550,6 +551,16 @@ python3 -m venv .venv
 
 なお `--break-system-packages` で強行する方法もありますが、システム側の
 パッケージと衝突する可能性があるため推奨しません。
+
+### ランチャーを実行すると文字化けしたエラーが並ぶ（Windows）
+`start_wizard.bat` を自分で編集して日本語を書き足した場合に起きます。
+cmd.exe はバッチファイルをシステムのコードページ（日本語環境なら CP932）で読むため、
+UTF-8 で保存した日本語が化け、化けた行がコマンドとして実行されます。
+
+同梱の `start_wizard.bat` は ASCII だけで書かれています。
+日本語の案内と実際の処理は `setup_launcher.py` 側にありますので、
+手を入れるならそちらを編集してください。
+改行コードも CRLF でないと複数行の `if ( ... )` が壊れます（`.gitattributes` で固定済み）。
 
 ### `python` や `pip` が見つからない（Windows）
 Python のインストール時に「Add python.exe to PATH」にチェックを入れずに進めると起きます。
