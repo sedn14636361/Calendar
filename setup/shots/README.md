@@ -42,15 +42,16 @@
 | ✓ `02-reset-token.png` | ⚠️ Bot タブ、「Reset Token」でトークンが表示された状態 |
 | ✓ `03-message-content-intent.png` | ★ Privileged Gateway Intents で MESSAGE CONTENT INTENT を ON にした状態 |
 | ✓ `04-oauth2-url-generator.png` | ★ OAuth2 → URL Generator で `bot` と `Send Messages` をチェックした状態 |
+| ✓ `04b-install-link.png` | 「インストール」画面の出来合いの招待リンク（簡易版の招待手順） |
 | ✓ `05-invite-server-select.png` | 招待URLを開いたときのサーバー選択・認証画面 |
-| `06-developer-mode.png` | Discord設定 → 詳細設定 → 開発者モードを ON にした状態 |
-| `07-copy-channel-id.png` | ★ チャンネルを右クリック →「チャンネルIDをコピー」 |
+| ✓ `06-developer-mode.png` | Discord設定 → 詳細設定 → 開発者モードを ON にした状態 |
+| ✓ `07-copy-channel-id.png` | ★ チャンネルを右クリック →「チャンネルIDをコピー」 |
 
 ### Google Cloud / カレンダー
 
 | ファイル名 | 内容 |
 |---|---|
-| `08-gcp-new-project.png` | Google Cloud Console のプロジェクト新規作成画面 |
+| ✓ `08-gcp-new-project.png` | プロジェクト選択ダイアログの「新しいプロジェクト」ボタン |
 | `09-enable-calendar-api.png` | ライブラリで Google Calendar API を有効化する画面 |
 | `10-create-service-account.png` | 「認証情報を作成」→「サービスアカウント」を選ぶ画面 |
 | `11-add-json-key.png` | ★ サービスアカウントの「キー」タブ →「鍵を追加」→ JSON を選択 |
