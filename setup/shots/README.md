@@ -52,9 +52,11 @@
 | ファイル名 | 内容 |
 |---|---|
 | ✓ `08-gcp-new-project.png` | プロジェクト選択ダイアログの「新しいプロジェクト」ボタン |
-| `09-enable-calendar-api.png` | ライブラリで Google Calendar API を有効化する画面 |
-| `10-create-service-account.png` | 「認証情報を作成」→「サービスアカウント」を選ぶ画面 |
-| `11-add-json-key.png` | ★ サービスアカウントの「キー」タブ →「鍵を追加」→ JSON を選択 |
+| ✓ `08b-gcp-project-form.png` | プロジェクト名を入力する作成フォーム |
+| ✓ `09a-search-calendar-api.png` | 検索欄で「google calendar」を探した状態 |
+| ✓ `09-enable-calendar-api.png` | ★ Google Calendar API の「有効にする」ボタン |
+| ✓ `10-create-service-account.png` | 「認証情報を作成」→「サービス アカウント」を選ぶ画面 |
+| ✓ `11-add-json-key.png` | ★ サービスアカウントの「キー」タブ →「鍵を追加」→ JSON を選択 |
 | `12-share-calendar.png` | ★ カレンダーの「設定と共有」に `client_email` を追加した状態 |
 | `13-calendar-id.png` | ★ 同じ画面の「カレンダーの統合」にあるカレンダーID |
 

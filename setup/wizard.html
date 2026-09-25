@@ -647,16 +647,20 @@ const STEPS = [
     why:"ボット専用のGoogleアカウントで、カレンダーを読み取り専用で参照します。",
     body:`
       <ol class="todo">
-        <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> でプロジェクトを新規作成</li>
-        <li>「APIとサービス」→「ライブラリ」→ <b>Google Calendar API</b> を有効化</li>
-        <li>「認証情報」→「認証情報を作成」→「サービスアカウント」を作成</li>
-        <li>作成したものをクリック →「キー」タブ →「鍵を追加」→「新しい鍵を作成」→ <b>JSON</b></li>
-        <li>ダウンロードしたファイルを開き、<code>{</code> から <code>}</code> まで全部をコピー</li>
+        <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> を開き、上部のプロジェクト名を押して「新しいプロジェクト」</li>
+        <li>プロジェクト名を入れて「作成」（名前は何でも構いません）</li>
+        <li>上部の検索欄で「google calendar」を検索し、<b>Google Calendar API</b> を選ぶ</li>
+        <li>「有効にする」を押す</li>
+        <li>有効化後の画面で「認証情報を作成」→「サービス アカウント」を選んで作成</li>
+        <li>作成したものをクリック →「キー」タブ →「鍵を追加」→「新しい鍵を作成」→ <b>JSON</b> を選んで作成</li>
+        <li>ダウンロードされたファイルを開き、<code>{</code> から <code>}</code> まで全部をコピー</li>
       </ol>
-      ${shot("08-gcp-new-project.png","Google Cloud Console のプロジェクト作成")}
-      ${shot("09-enable-calendar-api.png","Google Calendar API を有効化")}
-      ${shot("10-create-service-account.png","認証情報の作成でサービスアカウントを選ぶ")}
-      ${shot("11-add-json-key.png","「キー」タブから JSON 形式の鍵を追加")}
+      ${shot("08-gcp-new-project.png","プロジェクトを選択 →「新しいプロジェクト」")}
+      ${shot("08b-gcp-project-form.png","プロジェクト名を入力して作成（名前は何でも構いません）")}
+      ${shot("09a-search-calendar-api.png","上部の検索欄で「google calendar」を検索")}
+      ${shot("09-enable-calendar-api.png","Google Calendar API の「有効にする」を押す")}
+      ${shot("10-create-service-account.png","「認証情報を作成」→「サービス アカウント」を選ぶ")}
+      ${shot("11-add-json-key.png","「キー」タブ →「鍵を追加」→ JSON を選択して作成")}
       <label>SERVICE_ACCOUNT_JSON
         <span class="hint">末尾の <code>}</code> まで含めて貼ってください。途中で切れているのが最頻出の失敗です</span></label>
       <textarea id="in_sa" autocomplete="off" spellcheck="false"
