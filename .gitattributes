@@ -1,7 +1,12 @@
-# バッチファイルは CRLF でなければ Windows の cmd.exe が正しく解釈しない
-# （特に複数行の if ( ... ) ブロックが壊れる）
-*.bat text eol=crlf
-*.cmd text eol=crlf
+# バッチファイルは CRLF でなければ Windows の cmd.exe が行を正しく分割できず、
+# 複数行の if ( ... ) や、隣り合う行の連結といった形で壊れる。
+#
+# eol=crlf ではなく -text（バイト列として扱う）を指定する。
+# eol=crlf は checkout 時にしか変換せず、リポジトリの中身は LF のまま残るため、
+# GitHub の ZIP ダウンロードでは LF のファイルが手に入ってしまう。
+# -text なら、コミットしたバイト列がそのまま配布される。
+*.bat -text
+*.cmd -text
 
 # シェルスクリプトは LF のまま
 *.command text eol=lf

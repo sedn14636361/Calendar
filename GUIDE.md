@@ -562,6 +562,22 @@ UTF-8 で保存した日本語が化け、化けた行がコマンドとして�
 手を入れるならそちらを編集してください。
 改行コードも CRLF でないと複数行の `if ( ... )` が壊れます（`.gitattributes` で固定済み）。
 
+### `Python was not found; run without arguments to install from the Microsoft Store...`（Windows）
+Windows には、Python が入っていない状態でも `python.exe` と `python3.exe` という
+**名前だけのファイル**（App execution alias）が最初から置かれています。
+これを実行すると Microsoft Store が開くだけで、Python としては動きません。
+
+対処は2つあります。どちらか一方で構いません。
+
+1. [python.org](https://www.python.org/downloads/) から 3.10 以上を入れる
+   （インストール時に「Add python.exe to PATH」に必ずチェック）
+2. 名前だけのファイルを無効にする——
+   設定 → アプリ → アプリの詳細設定 → アプリ実行エイリアスで、
+   `python.exe` と `python3.exe` をオフにする
+
+同梱の `start_wizard.bat` は、候補が実際にコードを実行できるかを
+確かめてから採用するので、この名前だけのファイルを選んでしまうことはありません。
+
 ### `python` や `pip` が見つからない（Windows）
 Python のインストール時に「Add python.exe to PATH」にチェックを入れずに進めると起きます。
 Python を入れ直すか、`start_wizard.bat` を使ってください（`py` コマンドも探すため、
