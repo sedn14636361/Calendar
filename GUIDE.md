@@ -17,17 +17,32 @@ Googleカレンダーと連動して、Discord上で **予定の自動表示**�
 
 ### 手軽に使う
 
-`setup/wizard.html` をダブルクリックで開くだけです。インストールもコマンドも不要です。
+リポジトリ直下の `wizard.html` をダブルクリックで開くだけです。
+手順のスクリーンショットもこのファイルに含まれているので、この1枚だけで完結します。インストールもコマンドも不要です。
 手順の案内と、入力値の**形の検査**、設定値の出力ができます。
 
 ### 実際に使えるかまで確かめる
+
+Windows なら `start_wizard.bat`、macOS / Linux なら `start_wizard.command` をダブルクリックします。
+
+**Python を使ったことがなくても構いません。** ターミナルを開く必要はなく、
+ライブラリの導入から起動までを自動で行います。
+
+- Python 3.10 以上を探し、無ければ入手先を案内して終了します（勝手には入れません）
+- ライブラリは `.venv` という専用の場所に入れます。パソコンの Python には触れません
+- 2回目以降は数秒で起動します
+
+> **macOS で「開発元を確認できない」と出た場合**は、ファイルを
+> **右クリック→「開く」**を選び、確認画面でもう一度「開く」を押してください。初回だけです。
+
+コマンドで起動する場合は次のとおりです。
 
 ```bash
 pip install -r requirements.txt
 python3 setup_wizard.py
 ```
 
-同じ画面が開き、加えて**実際にDiscordやGoogleに接続して確かめます**。
+どちらでも同じ画面が開き、加えて**実際にDiscordやGoogleに接続して確かめます**。
 
 HTMLを直接開いただけでは実接続できません。ブラウザから Discord API を呼ぶことが
 許可されていない（CORS）ためで、回避できません。特に、不具合の主因である
@@ -108,6 +123,7 @@ Googleカレンダー ──(API)──> ボット(Python) ──> Discordチャ
 - [ ] Renderアカウント
 - [ ] UptimeRobotアカウント
 - [ ] PC（初期設定・動作確認用。Mac/Windowsどちらでも可）
+- [ ] Python 3.10 以上（実接続で確かめる場合のみ。ランチャーが確認します）
 
 このガイドで取得する「鍵」や「ID」は次の4つ。あとで環境変数に入れます。
 
@@ -188,14 +204,14 @@ CALENDAR_ID=aaa@group.calendar.google.com,bbb@group.calendar.google.com
 
 ```
 （リポジトリ直下）
+├── wizard.html         … セットアップウィザード（これをダブルクリック。画像も同梱）
 ├── Calendar.py         … ボット本体
 ├── requirements.txt    … 必要なライブラリ一覧
 ├── .gitignore          … アップロード除外設定
 ├── setup_checks.py     … 設定値の検証（ウィザードと単体実行の両方から使う）
-├── setup_wizard.py     … セットアップウィザード（ローカルで起動）
-└── setup/
-    ├── wizard.html     … ウィザードの画面（単体で開いても動きます）
-    └── shots/          … 手順のスクリーンショット（無くても動きます）
+├── setup_wizard.py     … 実接続で確かめるときに起動する
+├── start_wizard.bat    … 上を起動するランチャー（Windows）
+└── start_wizard.command … 上を起動するランチャー（macOS / Linux）
 ```
 
 ### requirements.txt
@@ -217,6 +233,9 @@ __pycache__/
 calendar-bot-env.txt
 *-env.txt
 .env
+
+# ランチャーが作る作業場所
+.venv/
 ```
 > 鍵ファイルと、ウィザードが出力する設定ファイルを GitHub に上げないための設定です。
 > どちらも中身は Render の環境変数に貼ります。
@@ -513,6 +532,29 @@ re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r|d)?", text)
 # 第III部　エラー対処
 
 ## 17. よくあるトラブルと対処
+
+### `error: externally-managed-environment`
+`pip install` を直接実行したときに出ます。Debian 12以降、Ubuntu 23.04以降、
+Fedora 36以降、Homebrew の Python を使う macOS などでは、システムの Python への
+直接導入が禁止されています。
+
+**ランチャー（`start_wizard.bat` / `start_wizard.command`）を使えばこのエラーは出ません。**
+専用の場所（`.venv`）の中に入れるので、この制限を受けないためです。
+
+手で行う場合も同じです。
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt    # Windows は .venv\Scripts\python.exe
+```
+
+なお `--break-system-packages` で強行する方法もありますが、システム側の
+パッケージと衝突する可能性があるため推奨しません。
+
+### `python` や `pip` が見つからない（Windows）
+Python のインストール時に「Add python.exe to PATH」にチェックを入れずに進めると起きます。
+Python を入れ直すか、`start_wizard.bat` を使ってください（`py` コマンドも探すため、
+PATH が通っていなくても見つかることがあります）。
 
 ### `ModuleNotFoundError: No module named 'PIL'`
 `requirements.txt` に **`Pillow`** が無い。追加してCommit → 再デプロイ。

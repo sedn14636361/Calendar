@@ -30,9 +30,7 @@
 
 import asyncio
 import json
-import mimetypes
 import os
-import re
 import secrets
 import sys
 import threading
@@ -44,8 +42,7 @@ from pathlib import Path
 import setup_checks
 
 BASE_DIR = Path(__file__).resolve().parent
-WIZARD_HTML = BASE_DIR / "setup" / "wizard.html"
-SHOTS_DIR = BASE_DIR / "setup" / "shots"
+WIZARD_HTML = BASE_DIR / "wizard.html"
 
 HOST = "127.0.0.1"                     # 外部からは絶対に触れさせない
 IDLE_TIMEOUT_SEC = 30 * 60             # 無操作が続いたら自動終了
@@ -53,9 +50,6 @@ MAX_BODY_BYTES = 256 * 1024            # 鍵JSONを含むので少し余裕を�
 
 # 起動ごとに変わる鍵。URLに載せてブラウザへ渡し、以後の全リクエストで照合する
 SESSION_KEY = secrets.token_urlsafe(32)
-
-# 画像ファイル名に許す文字。パス操作（../ など）を通さない
-SAFE_FILENAME = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,79}\Z")
 
 # 受け取る値の名前。これ以外は無視する
 ENV_NAMES = ["DISCORD_BOT_TOKEN", "CHANNEL_ID", "CALENDAR_ID", "SERVICE_ACCOUNT_JSON"]
@@ -99,7 +93,7 @@ def _origin_ok(handler, port):
 SECURITY_HEADERS = {
     # 外部リソースを一切読み込ませない。ウィザードは自己完結している
     "Content-Security-Policy": (
-        "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; "
+        "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
         "script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; "
         "base-uri 'none'; frame-ancestors 'none'"),
     "X-Content-Type-Options": "nosniff",
@@ -158,31 +152,13 @@ class Handler(BaseHTTPRequestHandler):
             # 画面本体。鍵はここで初めてブラウザに渡す
             _touch()
             if not WIZARD_HTML.exists():
-                return self._send(500, "setup/wizard.html が見つかりません",
+                return self._send(500, "wizard.html が見つかりません",
                                   "text/plain; charset=utf-8")
             html = WIZARD_HTML.read_text(encoding="utf-8")
             html = html.replace("__SETUP_KEY__", SESSION_KEY)
             return self._send(200, html, "text/html; charset=utf-8")
 
-        if path.startswith("/shots/"):
-            return self._serve_shot(path[len("/shots/"):])
-
         return self._deny(404, "見つかりません")
-
-    def _serve_shot(self, name):
-        """スクリーンショットを返す。名前を厳しく制限し、パス操作を通さない"""
-        if not SAFE_FILENAME.match(name):
-            return self._deny(404, "見つかりません")
-        target = (SHOTS_DIR / name).resolve()
-        # resolve 後に、本当に想定のフォルダ内かを確かめる（シンボリックリンク対策）
-        if not str(target).startswith(str(SHOTS_DIR.resolve()) + os.sep):
-            return self._deny(404, "見つかりません")
-        if not target.is_file():
-            return self._deny(404, "見つかりません")
-        ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
-        if not ctype.startswith("image/"):
-            return self._deny(404, "見つかりません")
-        return self._send(200, target.read_bytes(), ctype)
 
     # ===== POST：検証 =====
     def do_POST(self):
