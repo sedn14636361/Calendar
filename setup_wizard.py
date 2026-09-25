@@ -44,7 +44,7 @@ from pathlib import Path
 import setup_checks
 
 BASE_DIR = Path(__file__).resolve().parent
-WIZARD_HTML = BASE_DIR / "setup" / "wizard.html"
+WIZARD_HTML = BASE_DIR / "wizard.html"
 SHOTS_DIR = BASE_DIR / "setup" / "shots"
 
 HOST = "127.0.0.1"                     # 外部からは絶対に触れさせない
@@ -158,14 +158,14 @@ class Handler(BaseHTTPRequestHandler):
             # 画面本体。鍵はここで初めてブラウザに渡す
             _touch()
             if not WIZARD_HTML.exists():
-                return self._send(500, "setup/wizard.html が見つかりません",
+                return self._send(500, "wizard.html が見つかりません",
                                   "text/plain; charset=utf-8")
             html = WIZARD_HTML.read_text(encoding="utf-8")
             html = html.replace("__SETUP_KEY__", SESSION_KEY)
             return self._send(200, html, "text/html; charset=utf-8")
 
-        if path.startswith("/shots/"):
-            return self._serve_shot(path[len("/shots/"):])
+        if path.startswith("/setup/shots/"):
+            return self._serve_shot(path[len("/setup/shots/"):])
 
         return self._deny(404, "見つかりません")
 

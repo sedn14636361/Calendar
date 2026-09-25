@@ -457,11 +457,12 @@ function worst(list){
   return null;
 }
 
-/* 画像は相対パスで参照する。ファイルを直接開いた場合も、
-   サーバー経由の場合も、同じ指定で解決できる。 */
+/* 画像は相対パスで参照する。このファイルはリポジトリ直下にあり、
+   画像は setup/shots/ に置く。ファイルを直接開いた場合も、
+   setup_wizard.py 経由で開いた場合も、同じ指定で解決できる。 */
 function shot(name, caption){
   return `<figure>
-    <img src="shots/${name}" alt="${esc(caption)}"
+    <img src="setup/shots/${name}" alt="${esc(caption)}"
          onerror="this.outerHTML='&lt;div class=\\'shot-missing\\'&gt;画像未設定: <code>setup/shots/${name}</code>&lt;/div&gt;'">
     <figcaption>${esc(caption)}</figcaption>
   </figure>`;

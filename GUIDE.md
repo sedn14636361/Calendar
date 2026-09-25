@@ -17,7 +17,7 @@ Googleカレンダーと連動して、Discord上で **予定の自動表示**�
 
 ### 手軽に使う
 
-`setup/wizard.html` をダブルクリックで開くだけです。インストールもコマンドも不要です。
+リポジトリ直下の `wizard.html` をダブルクリックで開くだけです。インストールもコマンドも不要です。
 手順の案内と、入力値の**形の検査**、設定値の出力ができます。
 
 ### 実際に使えるかまで確かめる
@@ -188,14 +188,13 @@ CALENDAR_ID=aaa@group.calendar.google.com,bbb@group.calendar.google.com
 
 ```
 （リポジトリ直下）
+├── wizard.html         … セットアップウィザード（これをダブルクリック）
 ├── Calendar.py         … ボット本体
 ├── requirements.txt    … 必要なライブラリ一覧
 ├── .gitignore          … アップロード除外設定
 ├── setup_checks.py     … 設定値の検証（ウィザードと単体実行の両方から使う）
-├── setup_wizard.py     … セットアップウィザード（ローカルで起動）
-└── setup/
-    ├── wizard.html     … ウィザードの画面（単体で開いても動きます）
-    └── shots/          … 手順のスクリーンショット（無くても動きます）
+├── setup_wizard.py     … 実接続で確かめるときに起動する
+└── setup/shots/        … 手順のスクリーンショット（無くても動きます）
 ```
 
 ### requirements.txt
