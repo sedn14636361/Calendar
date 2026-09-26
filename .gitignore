@@ -9,3 +9,6 @@ calendar-bot-env.txt
 
 # ランチャーが作る作業場所
 .venv/
+
+# ランチャーが書く記録（環境ごとに異なるため共有しない）
+setup_log.txt

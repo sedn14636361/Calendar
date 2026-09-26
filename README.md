@@ -81,9 +81,20 @@ Googleカレンダーと連携し、Discord上で **予定の自動表示**・**
 コマンドで起動する場合は次のとおりです（Python 3.10 以上）。
 
 ```bash
-pip install -r requirements.txt
+# macOS / Linux
+python3 -m pip install -r requirements.txt
 python3 setup_wizard.py
 ```
+
+```bat
+rem Windows
+py -m pip install -r requirements.txt
+py setup_wizard.py
+```
+
+> **Windows では `python3` を使わないでください。** Python が入っていない状態でも
+> `python3.exe` という名前だけのファイル（App execution alias）が置かれており、
+> 実行すると Microsoft Store が開くだけです。`py` は置き換えられないため確実です。
 
 どちらでも同じ画面が開き、加えて**実際にDiscordとGoogleに接続して確かめます**。
 トークンが通るか、MESSAGE CONTENT INTENT がONか、チャンネルが見えるか、
@@ -94,11 +105,14 @@ HTMLを直接開いただけではこれらを確かめられません。ブラ�
 
 > どちらの使い方でも、入力したトークンや秘密鍵は **このPCの外に出ず、保存もされません**。
 > サーバーを使う場合も待ち受けは `127.0.0.1` のみで、ファイルにもログにも書きません。
+> ランチャーが書く `setup_log.txt` に入るのは、Python の検出結果と `pip` の出力までです。
+> 記録はウィザードを起動する直前で終わります。
 
 設定後に不具合を調べるときは、検証だけをコマンドで実行できます。
 
 ```bash
-python3 setup_checks.py
+python3 setup_checks.py       # macOS / Linux
+py setup_checks.py            # Windows
 ```
 
 ランチャーで導入した場合は、`.venv` の中の Python を使います。
@@ -120,8 +134,8 @@ python3 setup_checks.py
 4. 環境変数4つを設定して起動
 
 ```bash
-pip install -r requirements.txt
-python Calendar.py
+python3 -m pip install -r requirements.txt   # Windows は py -m pip install -r requirements.txt
+python3 Calendar.py                          # Windows は py Calendar.py
 ```
 
 ## 環境変数
@@ -152,7 +166,7 @@ JST = timezone(timedelta(hours=9)) # タイムゾーン
 
 ## トラブルシューティング
 
-まず `python3 setup_checks.py` を実行してください。環境変数の値で実際に接続し、
+まず `python3 setup_checks.py`（Windows は `py setup_checks.py`）を実行してください。環境変数の値で実際に接続し、
 どこが問題かを名指しします（値は読むだけで保存しません）。
 
 よくあるエラーと対処は [GUIDE.md](GUIDE.md) の「第III部 エラー対処」にまとめています。

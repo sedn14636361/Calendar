@@ -38,9 +38,20 @@ Windows なら `start_wizard.bat`、macOS / Linux なら `start_wizard.command` 
 コマンドで起動する場合は次のとおりです。
 
 ```bash
-pip install -r requirements.txt
+# macOS / Linux
+python3 -m pip install -r requirements.txt
 python3 setup_wizard.py
 ```
+
+```bat
+rem Windows
+py -m pip install -r requirements.txt
+py setup_wizard.py
+```
+
+> **Windows では `python3` を使わないでください。** Python が入っていない状態でも
+> `python3.exe` という名前だけのファイル（App execution alias）が置かれており、
+> 実行すると Microsoft Store が開くだけです。`py` は置き換えられないため確実です。
 
 どちらでも同じ画面が開き、加えて**実際にDiscordやGoogleに接続して確かめます**。
 
@@ -77,13 +88,16 @@ HTMLを直接開いただけでは実接続できません。ブラウザから 
 - （サーバーを使う場合）待ち受けは `127.0.0.1` のみで、他のマシンからは接続できません
 - （サーバーを使う場合）起動ごとの鍵を全リクエストで照合し、無関係なページからは叩けません
 - （サーバーを使う場合）30分間操作がなければ自動で終了します
+- ランチャーが書く `setup_log.txt` に入るのは、Python の検出結果・改行コードの実測値・
+  `pip` の出力までです。記録はウィザードを起動する直前で終わります。ウィザードは
+  起動URLにセッション鍵を含めて表示するため、そこまで記録すると鍵がディスクに残ります
 
 出力される設定ファイルは秘密情報を含みます。Render に貼り終えたら削除してください。
 
 出力される設定ファイルは、どちらの使い方でもブラウザ内で組み立てて保存されます。
 
 > ウィザードを使わずに手動で進めても構いません。以降の章がその手順です。
-> また、設定後に不具合を調べるときは `python3 setup_checks.py` で検証だけを実行できます。
+> また、設定後に不具合を調べるときは `python3 setup_checks.py`（Windows は `py setup_checks.py`）で検証だけを実行できます。
 
 ---
 
@@ -274,8 +288,10 @@ python3 Calendar.py
 
 必要ライブラリが未インストールなら先に：
 ```bash
-pip install discord.py google-api-python-client google-auth Pillow
+python3 -m pip install discord.py google-api-python-client google-auth Pillow
 ```
+> Windows のコマンドプロンプトでは `py -m pip install discord.py google-api-python-client google-auth Pillow` とし、
+> 上の環境変数は `set` で1つずつ設定してください（`\` での行継続は cmd.exe では使えません）。
 
 ログに `ログインしました: ...` が出れば成功。
 
@@ -560,7 +576,34 @@ UTF-8 で保存した日本語が化け、化けた行がコマンドとして�
 同梱の `start_wizard.bat` は ASCII だけで書かれています。
 日本語の案内と実際の処理は `setup_launcher.py` 側にありますので、
 手を入れるならそちらを編集してください。
-改行コードも CRLF でないと複数行の `if ( ... )` が壊れます（`.gitattributes` で固定済み）。
+改行コードは CRLF から変えないでください。cmd.exe は行をバイト位置で追うため、
+LF だけになると行の途中で切れた断片が実行されます。リポジトリには
+`.gitattributes` の `-text` でバイト列のまま保存してあります
+（`eol=crlf` では checkout 時しか変換されず、ZIP には LF のまま入ってしまいます）。
+
+### ダブルクリックしても窓が閉じるだけで何も起きない（Windows）
+配布物の改行コードが CRLF でないときに起きます。cmd.exe はバッチファイルの行を
+バイト位置で追うため、LF だけのファイルでは行の途中で切れた断片が実行され、
+読めないエラーを1行出して終了します。**まず ZIP を取り直してください。**
+古いフォルダは `.venv` ごと削除してから展開してください。
+
+原因をその場で確かめるには、コマンドプロンプトから実行して出力を残します。
+
+```bat
+cd /d "ファイルがあるフォルダ"
+start_wizard.bat
+```
+
+同梱の `start_wizard.bat` は次の3点でこの症状を避けています。
+
+- リポジトリに CRLF のバイト列で保存してある（`.gitattributes` の `-text`）
+- ラベル・`goto`・`call`・括弧ブロックを使わない。これらは cmd.exe が
+  ファイル内をバイト位置で探し回る構文で、改行が壊れると最初に破綻する
+- どの経路でも最後に `pause` する。窓が黙って閉じることがない
+
+それでも起きる場合は、`setup_launcher.py` が同じフォルダに書く `setup_log.txt` を
+確認してください。実行した Python、改行コードの実測値、`pip` の出力が入っています
+（トークンや秘密鍵は、この段階では扱わないため含まれません）。
 
 ### `Python was not found; run without arguments to install from the Microsoft Store...`（Windows）
 Windows には、Python が入っていない状態でも `python.exe` と `python3.exe` という
