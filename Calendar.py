@@ -667,8 +667,39 @@ threading.Thread(target=run_web_server, daemon=True).start()
 @client.event
 async def on_ready():
     print(f"ログインしました: {client.user}")
-    update_calendar.start()
+    # 再接続のたびに on_ready が呼ばれることがある。二重に start すると例外になる
+    if not update_calendar.is_running():
+        update_calendar.start()
 
 
 # ===== ⑩ ボットを起動する =====
-client.run(DISCORD_BOT_TOKEN)
+# Discord に一時的に締め出される（429）と、ログインは例外で終わる。
+# そのままプロセスを終えると Render がすぐ再起動し、ログインを繰り返して
+# 締め出しを長引かせる。そこで、プロセスは生かしたまま（ダミーWebサーバーも
+# 動き続ける）間隔を空けて待ち、締め出しが解けてからログインし直す。
+RATE_LIMIT_WAIT_FIRST = 10 * 60        # 最初は10分待つ
+RATE_LIMIT_WAIT_MAX = 60 * 60          # 待ち時間は倍々に延ばし、最大60分
+
+
+async def run_bot():
+    wait = RATE_LIMIT_WAIT_FIRST
+    while True:
+        try:
+            async with client:
+                await client.start(DISCORD_BOT_TOKEN)
+            return
+        except discord.HTTPException as e:
+            if e.status != 429:
+                raise
+            print(f"Discord に一時的に締め出されています（429）。"
+                  f"{wait // 60}分待ってからログインし直します: {e}")
+        client.clear()                 # 閉じた状態を戻し、もう一度ログインできるようにする
+        await asyncio.sleep(wait)
+        wait = min(wait * 2, RATE_LIMIT_WAIT_MAX)
+
+
+discord.utils.setup_logging()          # client.run() と同じくライブラリのログを出す
+try:
+    asyncio.run(run_bot())
+except KeyboardInterrupt:
+    pass
