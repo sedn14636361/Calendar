@@ -38,7 +38,11 @@ except Exception:
     HAS_GOOGLE = False
 
 
-GUIDE = "GUIDE.md"
+GUIDE = "README.md"
+
+# ライブラリが無いときの案内。ランチャーが .venv に入れるので、そちらへ誘導する
+INSTALL_HINT = ("start_wizard.bat / start_wizard.command から起動すると、"
+                "必要なライブラリが入り、検証できます")
 
 # 鍵JSONに最低限必要なキー
 REQUIRED_KEY_FIELDS = ["type", "project_id", "private_key", "client_email", "token_uri"]
@@ -128,7 +132,78 @@ def check_service_account_json(text):
     return ok(
         "鍵JSONは正常です",
         f"client_email: {email}\n"
-        f"↑ この値を、読みたいカレンダーの「設定と共有」に追加します（{GUIDE} 4-3）")
+        f"↑ この値を、読みたいカレンダーの「設定と共有」に追加します（{GUIDE} 4-3）"
+        + _default_account_note(email))
+
+
+def _default_account_note(email):
+    """Google が自動で作るデフォルトのサービスアカウントなら、その旨を添える。
+    本物のサービスアカウントなので動くが、プロジェクト全体の編集権限が
+    付いていることがあり、鍵が漏れたときの被害が大きい"""
+    if email.endswith("-compute@developer.gserviceaccount.com"):
+        kind = "Compute Engine"
+    elif email.endswith("@appspot.gserviceaccount.com"):
+        kind = "App Engine"
+    else:
+        return ""
+    return (f"\n\n※ これは {kind} のデフォルトのサービスアカウントです。このまま使えますが、"
+            "プロジェクト全体の編集権限が付いていることがあります。"
+            "このボット専用のサービスアカウントを作って使う方が安全です"
+            f"（{GUIDE} 4-2）")
+
+
+def check_service_account_auth(text):
+    """鍵JSONで実際に Google に認証できるかを確かめる。
+
+    ボット本体と同じ from_service_account_info で認証情報を作り、アクセストークンを
+    発行してもらう。削除した鍵や、別のプロジェクトの鍵はここで分かる。"""
+    shape = check_service_account_json(text)
+    if shape["status"] != "ok":
+        return shape
+    if not HAS_GOOGLE:
+        return skip("Googleライブラリが無いため未検証", INSTALL_HINT)
+
+    try:
+        from google.auth.exceptions import RefreshError, TransportError
+        from google.auth.transport.requests import Request
+        creds = service_account.Credentials.from_service_account_info(
+            json.loads(text.strip()),
+            scopes=["https://www.googleapis.com/auth/calendar.readonly"])
+    except Exception as e:
+        return ng("鍵JSONから認証情報を作れませんでした",
+                  f"{type(e).__name__}: {e}",
+                  fixes=["鍵ファイルを編集せず、そのままコピーし直してください",
+                         f"直らなければ鍵を作り直してください（{GUIDE} 4-2）"])
+
+    try:
+        creds.refresh(Request())
+    except RefreshError as e:
+        msg = str(e)
+        if "Invalid JWT Signature" in msg or "account not found" in msg:
+            return ng(
+                "Google がこの鍵を受け付けませんでした",
+                "鍵が削除されたか、サービスアカウントが削除されています。",
+                fixes=[f"Google Cloud Console でサービスアカウントの「キー」タブを開き、"
+                       f"新しい鍵を作って、その中身を貼ってください（{GUIDE} 4-2）"])
+        if "reasonable timeframe" in msg:
+            return ng(
+                "パソコンの時計がずれているため、認証できませんでした",
+                "Google は、時刻が大きくずれた認証要求を拒否します。",
+                fixes=["Windows の設定 →「時刻と言語」→「今すぐ同期」などで時計を合わせてから、"
+                       "もう一度確かめてください"])
+        return unknown("認証が拒否されました",
+                       "この応答に対する診断は用意していません。内容をそのまま表示します。",
+                       raw=msg)
+    except TransportError as e:
+        return unknown("Google に接続できませんでした",
+                       "インターネットに繋がっているか確認してください。",
+                       raw=f"{type(e).__name__}: {e}")
+    except Exception as e:
+        return unknown("検証中に予期しないエラーが発生しました",
+                       "診断せず、そのまま表示します。",
+                       raw=f"{type(e).__name__}: {e}")
+
+    return ok("Google に認証できました", shape["detail"])
 
 
 def client_email_of(text):
@@ -166,7 +241,7 @@ def check_calendar(sa_json_text, calendar_id, client_email=""):
     ボット本体と同じ events().list を使う。別の方法で確かめても意味がない。"""
     if not HAS_GOOGLE:
         return skip("Googleライブラリが無いため未検証",
-                    "pip install -r requirements.txt を実行すると検証できます")
+                    INSTALL_HINT)
 
     calendar_id = (calendar_id or "").strip()
     if not calendar_id:
@@ -296,7 +371,7 @@ async def check_discord(token, channel_id_text=None, send_test=False):
 
     if not HAS_DISCORD:
         s = skip("discord.py が無いため未検証",
-                 "pip install -r requirements.txt を実行すると検証できます")
+                 INSTALL_HINT)
         return {"token": s, "intent": dict(s), "channel": dict(s)}
 
     shape = _token_shape_problem(token or "")
@@ -561,7 +636,7 @@ def main():
 
     if not HAS_DISCORD or not HAS_GOOGLE:
         print("※ 一部のライブラリが見つかりません。"
-              "pip install -r requirements.txt を実行すると全項目を検証できます。\n")
+              + INSTALL_HINT + "。\n")
 
     report = asyncio.run(check_all(env, send_test=args.send_test))
     for item in report["items"]:
