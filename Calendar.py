@@ -318,12 +318,67 @@ def format_free_days_range(start_date, end_date, free_days, label):
     return header + "\n" + "\n".join(lines)
 
 
+# ===== ⑦-B 曜日での絞り込み =====
+# 並びは既存の伝助出力と同じで、Python の date.weekday()（月曜=0）に合わせている。
+# 独立した方法（Zeller の公式）で照合済み。
+WEEKDAY_NAMES = ["月", "火", "水", "木", "金", "土", "日"]
+
+# 英語3文字と日本語1文字の両方を受け付ける。Discord では日本語入力から
+# 切り替えずに打てるほうが早いため、どちらでも同じ曜日を指せるようにする。
+WEEKDAY_TOKENS = {}
+for _i, (_en, _ja) in enumerate([("mon", "月"), ("tue", "火"), ("wed", "水"),
+                                 ("thu", "木"), ("fri", "金"), ("sat", "土"),
+                                 ("sun", "日")]):
+    WEEKDAY_TOKENS[_en] = _i
+    WEEKDAY_TOKENS[_ja] = _i
+
+WEEKDAY_HELP = ("使えるのは mon tue wed thu fri sat sun と 月 火 水 木 金 土 日 です。\n"
+                "複数指定は /2026-9/sat/sun のように並べます（順番は自由）。")
+
+
+def parse_weekdays(part):
+    """'/sat/sun' や '/土,日' を曜日番号の集合にする。
+
+    集合として扱うので、並べる順番は結果に影響しない。同じ曜日を
+    重ねて書いても1回分として扱う。
+    戻り値は (曜日番号の集合, 読めなかった語のリスト)。
+    指定が無ければ空集合を返す＝絞り込みなし。
+    """
+    wanted = set()
+    unknown = []
+    for token in re.split(r"[/,]", part):
+        token = token.strip()
+        if not token:
+            continue
+        key = WEEKDAY_TOKENS.get(token.lower())
+        if key is None:
+            unknown.append(token)
+        else:
+            wanted.add(key)
+    return wanted, unknown
+
+
+def weekday_label(wanted):
+    """選んだ曜日を見出し用の文字列にする。例）土曜・日曜
+
+    入力の順番によらず同じ見た目になるよう、必ず月→日に並べ替える。
+    「曜」を付けるのは、単独の「月」が月（month）と読めてしまうため。
+    """
+    return "・".join(WEEKDAY_NAMES[i] + "曜" for i in sorted(wanted))
+
+
+def filter_by_weekday(days, wanted):
+    """指定された曜日の日だけを残す。指定が無ければそのまま返す"""
+    if not wanted:
+        return days
+    return [d for d in days if d.weekday() in wanted]
+
+
 def format_free_days_densuke(free_days):
     """伝助用：1日1行・曜日付きで出力する。例）9/9(水)"""
     if not free_days:
         return "該当する日はありません"
-    weekdays = ["月", "火", "水", "木", "金", "土", "日"]
-    lines = [f"{d.month}/{d.day}({weekdays[d.weekday()]})" for d in free_days]
+    lines = [f"{d.month}/{d.day}({WEEKDAY_NAMES[d.weekday()]})" for d in free_days]
     return "\n".join(lines)
 
 def format_free_days(year, month, free_days, label):
@@ -531,8 +586,18 @@ HELP_TEXT = (
     "/2026-8.15:2026-9.30   日単位の範囲\n"
     "/2026-12:2027-1        年をまたぐ範囲\n"
     "\n"
-    "※ 先頭(n/a/u)・期間・末尾(r か d)は組み合わせ可\n"
+    "■ 曜日で絞る（いちばん最後に付ける）\n"
+    "/2026-9/sat            土曜だけ\n"
+    "/2026-9/sat/sun        土日（複数は / を重ねる）\n"
+    "/2026-9/sat,sun        カンマ区切りでも同じ\n"
+    "/2026-9/土/日          日本語1文字でも同じ\n"
+    "/n2026-9d/fri/sat      他の指定と組み合わせ可\n"
+    "  mon tue wed thu fri sat sun ／ 月 火 水 木 金 土 日\n"
+    "  並べる順番は自由（/sun/sat でも同じ結果）\n"
+    "\n"
+    "※ 先頭(n/a/u)・期間・末尾(r か d)・曜日は組み合わせ可\n"
     "※ r と d の同時使用は不可\n"
+    "※ 画像(/c)は曜日で絞れません\n"
     "```"
 )
 
@@ -551,6 +616,15 @@ async def on_message(message):
         return
 
     # --- /c2026-9 : 月間カレンダー画像を出力 ---
+    # 画像は月まるごとを描くものなので、曜日で絞る指定は受けられない。
+    # 黙って無反応にすると原因が分からないため、理由を返す。
+    if re.fullmatch(r"/c\d{4}-\d{1,2}(?:/[^/\s]+)+", text):
+        await message.channel.send(
+            "カレンダー画像は月まるごとを描くため、曜日での絞り込みはできません。\n"
+            "曜日で絞るときは画像でない形式を使ってください（例：/2026-9/sat）"
+        )
+        return
+
     cmatch = re.fullmatch(r"/c(\d{4})-(\d{1,2})", text)
     if cmatch:
         year = int(cmatch.group(1))
@@ -570,8 +644,11 @@ async def on_message(message):
             await message.channel.send("画像の生成に失敗しました")
         return
 
-    # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、末尾に r または d
-    match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r|d)?", text)
+    # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、末尾に r または d、
+    # さらに最後に曜日の指定（/sat/sun など）を任意個つけられる。
+    # 範囲文字列に使える文字は数字と - . : だけなので、英字で始まる
+    # 曜日の部分と取り違えることはない。
+    match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r|d)?((?:/[^/\s]+)*)", text)
 
     if not match:
         return
@@ -582,12 +659,22 @@ async def on_message(message):
     negate = suffix == "r"             # 末尾 r ＝反転（予定がある日）
     densuke = suffix == "d"            # 末尾 d ＝伝助形式（全モードで使える／r とは排他）
 
+    # 曜日の指定（無ければ空集合＝絞り込みなし）
+    wanted_weekdays, unknown_weekdays = parse_weekdays(match.group(4))
+    if unknown_weekdays:
+        await message.channel.send(
+            "曜日の指定が分かりません：" + "、".join(unknown_weekdays) + "\n"
+            + WEEKDAY_HELP
+        )
+        return
+
     # 日付への変換を試す（形式が変なら注意メッセージ）
     try:
         start_date, end_date = parse_range(body)
     except (ValueError, IndexError):
         await message.channel.send(
-            "書式が正しくありません。例：/2026-9 、/a2026-8:2026-9 、/n2026-8.15:2026-9.30"
+            "書式が正しくありません。\n"
+            "例：/2026-9 、/a2026-8:2026-9 、/n2026-8.15:2026-9.30 、/2026-9/sat/sun"
         )
         return
 
@@ -636,6 +723,14 @@ async def on_message(message):
             d += timedelta(days=1)
         free_days = all_days
         label = "夜に予定がある日" if mode == "n" else "昼に予定がある日"
+
+    # 曜日で絞る。r の反転を適用した「後」に行う。
+    # こうすると /2026-9r/mon は「月曜で予定がある日」になる。
+    # 先に絞ってから反転すると、月曜以外が予定のある日として並んでしまう。
+    if wanted_weekdays:
+        free_days = filter_by_weekday(free_days, wanted_weekdays)
+        # 括弧は既存の「（09/28現在）」で使っているため重ねない
+        label = "%sの%s" % (weekday_label(wanted_weekdays), label)
 
     if densuke:
         await message.channel.send(format_free_days_densuke(free_days) + failure_note(failures))
