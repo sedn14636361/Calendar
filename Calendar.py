@@ -564,6 +564,9 @@ def render_month_image(year, month):
 HELP_TEXT = (
     "**📅 コマンド一覧**\n"
     "```\n"
+    "■ この一覧を出す\n"
+    "cmds           /cmds でも同じ（/ は付けなくてよい）\n"
+    "\n"
     "■ 空き日程を調べる（年-月）\n"
     "/2026-9        昼(10-18)が空いている日\n"
     "/n2026-9       夜(18-24)が空いている日\n"
@@ -610,8 +613,13 @@ async def on_message(message):
 
     text = message.content.strip()
 
-    # --- /cmds : コマンド一覧を表示 ---
-    if text == "/cmds":
+    # --- cmds ／ /cmds : コマンド一覧を表示 ---
+    # Discord で / を打つとスラッシュコマンドの候補窓が開き、同じサーバーに
+    # 入っている他のボットのコマンドと取り違えやすい。/ を付けずに打てる
+    # 形も用意しておく。
+    # 会話中の「cmds」という語に反応しないよう、メッセージ全体が一致する
+    # ときだけ返す。前後の空白は無視し、大文字小文字は問わない。
+    if text.lower() in ("cmds", "/cmds"):
         await message.channel.send(HELP_TEXT)
         return
 
