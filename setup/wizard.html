@@ -1022,11 +1022,14 @@ const STEPS = [
       <ol class="todo">
         <li><a href="https://uptimerobot.com/" target="_blank" rel="noopener noreferrer">UptimeRobot</a> に登録し「Add New Monitor」を開く</li>
         <li>Monitor type は <b>HTTP(s)</b></li>
-        <li>URL to monitor に、前のステップで控えた <code>◯◯◯.onrender.com</code> を入れる</li>
+        <li>URL to monitor に、前のステップで控えた <code>◯◯◯.onrender.com</code> の<b>末尾に <code>/health</code> を付けて</b>入れる（例：<code>https://◯◯◯.onrender.com/health</code>。下の画像は付ける前のものです）</li>
         <li>Monitor interval を <b>5 minutes</b> にする</li>
         <li>「Create monitor」を押す</li>
       </ol>
       ${shot("20-uptimerobot-monitor.png","Add single monitor の設定（通知先は伏せています）")}
+      <div class="note"> <code>/health</code> は、ボットが応答できない状態（Discord に未接続、処理が止まっている）のときに 503 を返します。
+        UptimeRobot はこれを「Down」として扱い、通知先のメールに知らせます。付けずに登録するとスリープ防止にはなりますが、
+        ボットが止まっても「Up」のままで気づけません。 </div>
       <div class="warnbox">
         Render のサービスを作り直すとURLが変わります。
         そのときは <b>UptimeRobot 側のURLも更新</b>してください。忘れると監視が空振りし、
