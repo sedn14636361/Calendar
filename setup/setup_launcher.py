@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """セットアップウィザードの起動準備をする。
 
-start_wizard.bat / start_wizard.command から呼ばれる。
+プロジェクト直下の start_wizard.bat / start_wizard.command から呼ばれる。
   1. 配布物が壊れていないか確かめる
   2. Python のバージョンを確かめる
-  3. 専用の作業場所（.venv）を作る
+  3. 専用の作業場所（setup/.venv）を作る
   4. 必要なライブラリを入れる
   5. ウィザードを起動する
 
@@ -25,7 +25,7 @@ start_wizard.bat / start_wizard.command から呼ばれる。
 
 ■ なぜログを残すのか
   「窓が閉じるだけで何も起きない」という状態からは原因が追えない。
-  この段階の出力を setup_log.txt に残しておけば、そのファイル1枚で調べられる。
+  この段階の出力を setup/setup_log.txt に残しておけば、そのファイル1枚で調べられる。
   ログはウィザードを起動する直前で閉じる。ウィザードは起動URLに
   セッション鍵を含めて表示するため、そこまで記録すると鍵がディスクに残り、
   「入力した値はファイルにもログにも書かない」という設計に反する。
@@ -43,6 +43,16 @@ DOWNLOAD_URL = "https://www.python.org/downloads/"
 VENV_DIR = ".venv"
 LOG_NAME = "setup_log.txt"
 
+# このファイルは setup/ にある。ボット本体と requirements.txt は1つ上の階層
+# （プロジェクトの直下）にある。.venv と記録は、利用者が直下で目にするファイルを
+# 増やさないよう setup/ の中に作る。
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+VENV_PATH = os.path.join(HERE, VENV_DIR)
+LOG_PATH = os.path.join(HERE, LOG_NAME)
+LOG_SHOWN = os.path.join("setup", LOG_NAME)       # 利用者に見せる場所
+VENV_SHOWN = os.path.join("setup", VENV_DIR)
+
 # バッチ側から --no-pause で呼ばれる。バッチが最後に必ず pause するので、
 # こちらでも待つと Enter を2回押すことになる。
 NO_PAUSE = "--no-pause" in sys.argv[1:]
@@ -59,10 +69,10 @@ def say(text):
         print(text.encode("ascii", "replace").decode("ascii"))
 
 
-def write_log(root):
+def write_log():
     """ここまでの出力をファイルに残す。秘密情報は通らない段階のみ"""
     try:
-        path = os.path.join(root, LOG_NAME)
+        path = LOG_PATH
         f = open(path, "w", encoding="utf-8", errors="replace")
         try:
             f.write("セットアップランチャーの記録\n")
@@ -108,11 +118,11 @@ def check_launcher_bytes(root):
     return (data.count(b"\r\n"), data.replace(b"\r\n", b"").count(b"\n"))
 
 
-def venv_python(root):
+def venv_python():
     """作った仮想環境の中の Python の場所を返す"""
     if os.name == "nt":
-        return os.path.join(root, VENV_DIR, "Scripts", "python.exe")
-    return os.path.join(root, VENV_DIR, "bin", "python")
+        return os.path.join(VENV_PATH, "Scripts", "python.exe")
+    return os.path.join(VENV_PATH, "bin", "python")
 
 
 def run(args, what):
@@ -135,7 +145,7 @@ def run(args, what):
 
 
 def main():
-    root = os.path.dirname(os.path.abspath(__file__))
+    root = ROOT
     os.chdir(root)
 
     say("=" * 60)
@@ -166,7 +176,7 @@ def main():
             say("   しても窓が閉じるだけ、という症状になります。")
             say("")
             say("   GitHub から ZIP を取り直してください。")
-            say("   古いフォルダは .venv ごと削除してから展開してください。")
+            say("   古いフォルダはまるごと削除してから展開してください。")
         say("")
 
     # ===== 2. バージョンを確かめる =====
@@ -186,20 +196,20 @@ def main():
         return 1
 
     # ===== 3. 専用の作業場所を用意する =====
-    py = venv_python(root)
+    py = venv_python()
     if not os.path.exists(py):
         say("初回のみ、専用の作業場所を作ります（1分ほどかかります）…")
-        if not run([sys.executable, "-m", "venv", VENV_DIR], "作業場所の作成"):
+        if not run([sys.executable, "-m", "venv", VENV_PATH], "作業場所の作成"):
             say("")
             if os.name != "nt":
                 say("Linux の場合、python3-venv パッケージが要ることがあります:")
                 say("  sudo apt install python3-venv")
             else:
-                say(".venv フォルダがあれば削除してから、もう一度お試しください。")
+                say("%s フォルダがあれば削除してから、もう一度お試しください。" % VENV_SHOWN)
             return 1
 
     if not os.path.exists(py):
-        say("作業場所が壊れています。.venv フォルダを削除してやり直してください。")
+        say("作業場所が壊れています。%s フォルダを削除してやり直してください。" % VENV_SHOWN)
         return 1
 
     # ===== 4. ライブラリを入れる =====
@@ -218,12 +228,12 @@ def main():
 
     # ===== 5. ウィザードを起動する =====
     # ここでログを閉じる。これより後はセッション鍵を含む出力が出るため。
-    path = write_log(root)
+    path = write_log()
     if path:
-        say("（ここまでの記録: %s）" % LOG_NAME)
+        say("（ここまでの記録: %s）" % LOG_SHOWN)
     say("")
     try:
-        return subprocess.call([py, "setup_wizard.py"])
+        return subprocess.call([py, os.path.join(HERE, "setup_wizard.py")])
     except KeyboardInterrupt:
         return 0
 
@@ -232,10 +242,9 @@ if __name__ == "__main__":
     code = main()
     if code:
         # 失敗して終わるときは、その理由までを記録に残す
-        root = os.path.dirname(os.path.abspath(__file__))
-        if write_log(root):
+        if write_log():
             say("")
-            say("この内容は %s にも保存しました。" % LOG_NAME)
+            say("この内容は %s にも保存しました。" % LOG_SHOWN)
         pause()
         sys.exit(code)
     pause()

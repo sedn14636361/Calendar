@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """セットアップウィザード。自分のPC上でだけ動く小さなWebアプリ。
 
-    python3 setup_wizard.py
+    python3 setup/setup_wizard.py
+
+通常はプロジェクト直下の start_wizard.bat / start_wizard.command から起動する。
 
 ブラウザが開き、手順を1つずつ進めながら、その場で値が本当に使えるかを
 確かめられる。検証は setup_checks.py（ボット本体と同じライブラリを使う）に任せる。
@@ -218,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
             })
 
         if path == "/api/check/service-account":
-            result = setup_checks.check_service_account_json(
+            result = setup_checks.check_service_account_auth(
                 data.get("service_account_json", ""))
             return self._json(200, {
                 "result": result,
@@ -310,7 +312,7 @@ def main():
         print()
         print(" ※ 次のライブラリが見つかりません。形式チェックのみで動作します:")
         print(f"     {', '.join(missing)}")
-        print("   すべて検証するには: pip install -r requirements.txt")
+        print("   すべて検証するには: start_wizard.bat / start_wizard.command から起動してください")
     print("=" * 64)
 
     threading.Thread(target=_idle_watchdog, daemon=True).start()
