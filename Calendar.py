@@ -681,4 +681,12 @@ except discord.HTTPException as e:
     if e.status == 429:
         print("Discord に一時的に締め出されています（429）。"
               "1時間ほど待ってから、Render で再デプロイまたは再起動してください。")
+        # 締め出しの種類と解除までの時間を調べられるよう、Discord の応答ヘッダーを残す
+        # （Retry-After、X-RateLimit-Global / X-RateLimit-Scope、Via、CF-Ray など）。
+        # 出すのは応答ヘッダーだけ。トークンを含むリクエスト側は出さない。Cookie も省く
+        headers = getattr(getattr(e, "response", None), "headers", None) or {}
+        print("429 の応答ヘッダー:")
+        for name, value in headers.items():
+            if name.lower() != "set-cookie":
+                print(f"  {name}: {value}")
     raise

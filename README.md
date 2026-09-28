@@ -622,6 +622,16 @@ Render の Logs に `You are being blocked from accessing our API temporarily` �
   Logs に同じエラーが何度も出ている場合は、サービス画面の「Settings」→「Suspend Service」でいったん止め、
   1時間ほどおいてから「Resume Service」で再開してください
 - 数時間たっても解けない場合は、下の `1015` と同じく、Render のサービスを別のリージョンで作り直してください
+- エラーの直前に「429 の応答ヘッダー:」として、Discord から返ってきたヘッダーが並びます。次の項目が手がかりになります
+
+  | ヘッダー | 意味 |
+  |---|---|
+  | `Retry-After` | 締め出しが解けるまでの目安（秒）。`3600` なら約1時間 |
+  | `X-RateLimit-Global` / `X-RateLimit-Scope` | Discord の利用制限（ボットごとの回数制限）による 429 のときに付きます。`Global` が `true` か `Scope` が `global` なら、このボット全体の制限です |
+  | `Via` が無い、または `Content-Type` が `text/html` | 接続元のIPごとの締め出し（Cloudflare）です。下の `1015` と同じ対処をしてください |
+  | `CF-Ray` | 問い合わせのときに使う識別番号です |
+
+  ボットのトークンはログに出しません（ヘッダーは Discord からの応答のものだけで、Cookie も省いています）
 
 #### Cloudflare `1015 / rate limited`（Discord）
 接続元のIPが一時的にブロックされています。**ボットを止めて、数十分〜数時間待ってください**。

@@ -206,6 +206,9 @@ macOS / Linux では起きない。
   `PORT` 環境変数（既定 8080）でダミーの Web サーバーを同居させている。
 - UptimeRobot は HEAD リクエストを送ることがある。`do_HEAD` が無いと `501 Not Implemented` になる。
 - ログイン時に 429（IP ごとの一時的な締め出し）を受けたら、説明を1行出してから、例外のまま終了する（終了コード 1）。
+  - 終了前に、Discord の**応答**ヘッダーをすべてログに出す（締め出しの種類と `Retry-After` を調べるため）。
+    リクエスト側のヘッダーは Authorization（トークン）を含むので出さない。応答の `Set-Cookie` も省く。
+    ヘッダーは `e.response.headers`（aiohttp の ClientResponse）から読む。
   - 締め出されていることが Render 上でエラーとして見えるようにするため（利用者の方針）。
   - 代わりに、Render が自動で再起動するとログインを繰り返し、締め出しを長引かせることがある。
     README では、そのときは Suspend Service で止めて時間をおくよう案内している。
