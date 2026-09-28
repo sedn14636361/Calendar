@@ -6,6 +6,7 @@ import threading                      # 2つの処理を同時に動かすため
 import re                              # 文字列のパターンを判定する道具
 import calendar as _calendar           # 月末日を求める道具
 import asyncio
+import time                             # 締め出されたときに待つための道具
 import io                               # 画像をメモリ上で扱う道具
 from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー
 from discord.ext import tasks
@@ -674,19 +675,60 @@ async def on_ready():
 
 # ===== ⑩ ボットを起動する =====
 # Discord に一時的に締め出される（429）と、ログインは例外で終わる。
+# 応答の Retry-After（あと何秒待てばよいか）が読めたら、その秒数＋10ミリ秒だけ
+# 待って、1回だけログインし直す。読めないときや、再試行も失敗したときは、
 # 締め出されていることが Render 上で分かるよう、エラーのまま終了させる。
+RETRY_MARGIN_SEC = 0.010               # Retry-After に足す余裕（10ミリ秒）
+
+
+def report_429(e):
+    """締め出しの種類と解除までの時間を調べられるよう、Discord の応答ヘッダーを残す
+    （Retry-After、X-RateLimit-Global / X-RateLimit-Scope、Via、CF-Ray など）。
+    出すのは応答ヘッダーだけ。トークンを含むリクエスト側は出さない。Cookie も省く"""
+    headers = getattr(getattr(e, "response", None), "headers", None) or {}
+    print("429 の応答ヘッダー:")
+    for name, value in headers.items():
+        if name.lower() != "set-cookie":
+            print(f"  {name}: {value}")
+
+
+def retry_after_seconds(e):
+    """Retry-After を秒数として読む。無い・数字でない（日時の形など）ときは None"""
+    headers = getattr(getattr(e, "response", None), "headers", None) or {}
+    try:
+        seconds = float(headers.get("Retry-After", ""))
+    except ValueError:
+        return None
+    return seconds if seconds >= 0 else None
+
+
 try:
     client.run(DISCORD_BOT_TOKEN)
+    wait = None
 except discord.HTTPException as e:
-    if e.status == 429:
-        print("Discord に一時的に締め出されています（429）。"
+    if e.status != 429:
+        raise
+    print("Discord に一時的に締め出されています（429）。")
+    report_429(e)
+    wait = retry_after_seconds(e)
+    if wait is None:
+        print("Retry-After を読み取れなかったため、再試行せずに終了します。"
               "1時間ほど待ってから、Render で再デプロイまたは再起動してください。")
-        # 締め出しの種類と解除までの時間を調べられるよう、Discord の応答ヘッダーを残す
-        # （Retry-After、X-RateLimit-Global / X-RateLimit-Scope、Via、CF-Ray など）。
-        # 出すのは応答ヘッダーだけ。トークンを含むリクエスト側は出さない。Cookie も省く
-        headers = getattr(getattr(e, "response", None), "headers", None) or {}
-        print("429 の応答ヘッダー:")
-        for name, value in headers.items():
-            if name.lower() != "set-cookie":
-                print(f"  {name}: {value}")
-    raise
+        raise
+
+if wait is not None:
+    wait += RETRY_MARGIN_SEC
+    print(f"Retry-After に従い {wait:.3f} 秒待ってから、1回だけログインし直します。")
+    time.sleep(wait)
+    client.clear()                     # 一度閉じたボットを、もう一度ログインできる状態に戻す
+    # 1回目の接続部品（コネクタ）は閉じていて、前のイベントループにも結びついている。
+    # clear() では戻らないので捨て、ログイン時に新しく作らせる
+    client.http.connector = discord.utils.MISSING
+    try:
+        client.run(DISCORD_BOT_TOKEN, log_handler=None)   # ログの設定は1回目で済んでいる
+    except discord.HTTPException as e:
+        if e.status == 429:
+            print("再試行でも締め出されていました（429）。これ以上は再試行しません。"
+                  "時間をおいてから、Render で再デプロイまたは再起動してください。")
+            report_429(e)
+        raise
