@@ -645,11 +645,19 @@ async def on_message(message):
         )
 
 # ===== ⑨-A ダミーWebサーバー（ここに丸ごと置く） =====
+# Discord に締め出されてログインを止めているかどうか（⑩で立てる）
+blocked_by_discord = threading.Event()
+
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        # 200 のまま返す。エラーにすると Render が再起動し、ログインを試みてしまう
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"bot is alive")
+        if blocked_by_discord.is_set():
+            self.wfile.write(b"blocked by Discord (429). Not logged in. "
+                             b"Wait about an hour, then restart the service on Render.")
+        else:
+            self.wfile.write(b"bot is alive")
     def do_HEAD(self):
         self.send_response(200)
         self.end_headers()
@@ -675,31 +683,16 @@ async def on_ready():
 # ===== ⑩ ボットを起動する =====
 # Discord に一時的に締め出される（429）と、ログインは例外で終わる。
 # そのままプロセスを終えると Render がすぐ再起動し、ログインを繰り返して
-# 締め出しを長引かせる。そこで、プロセスは生かしたまま（ダミーWebサーバーも
-# 動き続ける）間隔を空けて待ち、締め出しが解けてからログインし直す。
-RATE_LIMIT_WAIT_FIRST = 10 * 60        # 最初は10分待つ
-RATE_LIMIT_WAIT_MAX = 60 * 60          # 待ち時間は倍々に延ばし、最大60分
-
-
-async def run_bot():
-    wait = RATE_LIMIT_WAIT_FIRST
-    while True:
-        try:
-            async with client:
-                await client.start(DISCORD_BOT_TOKEN)
-            return
-        except discord.HTTPException as e:
-            if e.status != 429:
-                raise
-            print(f"Discord に一時的に締め出されています（429）。"
-                  f"{wait // 60}分待ってからログインし直します: {e}")
-        client.clear()                 # 閉じた状態を戻し、もう一度ログインできるようにする
-        await asyncio.sleep(wait)
-        wait = min(wait * 2, RATE_LIMIT_WAIT_MAX)
-
-
-discord.utils.setup_logging()          # client.run() と同じくライブラリのログを出す
+# 締め出しを長引かせる。かといって自動でログインし直すのも危ないので、
+# ログインはもう試みず、プロセスだけ生かして（ダミーWebサーバーも動いたまま）
+# 手動で再起動されるのを待つ。
 try:
-    asyncio.run(run_bot())
-except KeyboardInterrupt:
-    pass
+    client.run(DISCORD_BOT_TOKEN)
+except discord.HTTPException as e:
+    if e.status != 429:
+        raise
+    blocked_by_discord.set()
+    print("Discord に一時的に締め出されています（429）。自動ではログインし直しません。"
+          "1時間ほど待ってから、Render でサービスを手動で再起動してください。"
+          f" 詳細: {e}")
+    threading.Event().wait()           # 手動で再起動されるまで、何もせずに待つ
