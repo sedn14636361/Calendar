@@ -668,6 +668,13 @@ async def on_message(message):
         )
         return
 
+    # 7曜日すべてが揃った指定は、曜日を書かなかったのと同じ扱いにする。
+    # 1日も除外されないので、見出しに「月曜・火曜・…・日曜の」と並べる意味がない。
+    # ここで空集合に戻しておけば、絞り込みも見出しも分岐が1つで済み、
+    # 「曜日なし」と「全曜日」の出力が作りからして同じになる。
+    if len(wanted_weekdays) == len(WEEKDAY_NAMES):
+        wanted_weekdays = set()
+
     # 日付への変換を試す（形式が変なら注意メッセージ）
     try:
         start_date, end_date = parse_range(body)
