@@ -205,6 +205,12 @@ macOS / Linux では起きない。
   Web Service はポートを開かないと `No open ports detected` で失敗するので、
   `PORT` 環境変数（既定 8080）でダミーの Web サーバーを同居させている。
 - UptimeRobot は HEAD リクエストを送ることがある。`do_HEAD` が無いと `501 Not Implemented` になる。
+- 起動は `client.run()` ではなく `run_bot()` で行う。ログイン時に 429（IP ごとの一時的な締め出し）を
+  受けたらプロセスを終えずに待ち、`client.clear()` で状態を戻してからログインし直す（10分から倍々、最大60分）。
+  `client.run()` のまま例外で終わると、Render が即座に再起動してログインを繰り返し、締め出しを長引かせる。
+  待っている間もダミー Web サーバーは動いているので、Render からはサービスが生きているように見える。
+  429 以外の例外（トークン誤りなど）は、これまでどおりそのまま終了する。
+- `on_ready` は再接続のたびに呼ばれることがあるので、`update_calendar` は動いていないときだけ start する。
 - 自動表示の編集ループでは、メッセージごとに `asyncio.sleep(1)` を入れている。
   外すと Discord の `429 Too Many Requests` や Cloudflare の `1015` にかかりやすくなる。
 
