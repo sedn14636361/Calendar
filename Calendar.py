@@ -9,13 +9,10 @@ import asyncio
 import time                             # 処理が止まっていないかを測る道具
 import io                               # 画像をメモリ上で扱う道具
 import math                             # 応答時間が有限かを確かめる道具
-import traceback                        # エラーの詳細をログに出す道具
 from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー
 from discord.ext import tasks
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-import httplib2                         # Google API の通信部品（タイムアウトを付けるため）
-import google_auth_httplib2             # 上の通信部品に認証を載せる道具
 from datetime import datetime, timezone, timedelta, date
 from PIL import Image, ImageDraw, ImageFont  # 画像生成の道具（要 Pillow）
 
@@ -48,25 +45,6 @@ creds = service_account.Credentials.from_service_account_info(
 )
 service = build("calendar", "v3", credentials=creds)
 
-# Google API の1回の問い合わせを待つ上限（秒）。
-# 指定しないと httplib2 は無期限に待つ（timeout=None が既定）。応答が途絶えると
-# その呼び出しは二度と戻らず、ボットが固まったまま「オンライン」に見え続ける。
-# 参考：Google 自身の認証ライブラリの既定は 120 秒
-# （google/auth/transport/requests.py の _DEFAULT_TIMEOUT）。
-# ここでは人がチャットで返事を待っており、複数のカレンダーを順に読むため短くした。
-GOOGLE_TIMEOUT_SEC = 30
-
-
-def _new_http():
-    """Google API 用の接続を1つ作る（タイムアウト付き・認証付き）。
-
-    httplib2 はスレッド安全ではない（同ライブラリ自身が
-    「Not thread-safe」と明記）。自動表示とコマンドが別々のスレッドから
-    同時に読みに行くので、接続は呼び出しごとに新しく作り、共有しない。
-    """
-    return google_auth_httplib2.AuthorizedHttp(
-        creds, http=httplib2.Http(timeout=GOOGLE_TIMEOUT_SEC))
-
 
 # ===== ④ Discordへの接続準備 =====
 intents = discord.Intents.default()
@@ -86,9 +64,6 @@ health = {
     "loop_tick": None,         # イベントループが最後に動いた時刻（time.monotonic）
     "calendar_ok_at": None,    # カレンダーを最後に全件読めた時刻
     "calendar_error": None,    # 直近の読み取り失敗 (時刻, 説明)。全件読めたら消す
-    "display_ok_at": None,     # 自動表示を最後に更新（または変化なしを確認）できた時刻
-    "display_error": None,     # 自動表示の直近の失敗 (時刻, 説明)。成功したら消す
-    "command_error": None,     # コマンド処理の直近の失敗 (時刻, 説明)。成功したら消す
 }
 
 # イベントループの見張り。LOOP_TICK_SEC ごとに時刻を記録し、
@@ -97,28 +72,6 @@ health = {
 # （discord/state.py の heartbeat_timeout = 60.0）に合わせた。
 LOOP_TICK_SEC = 5
 LOOP_STALL_SEC = 60
-
-
-class SetupError(Exception):
-    """設定の誤りなど、利用者が直せる原因。メッセージはそのまま見せてよい
-    （秘密情報や ID を含めないこと）"""
-
-
-def describe_error(e):
-    """例外を、Discord や状態表示に出せる短い説明にする。
-
-    例外の本文にはカレンダーID（メールアドレス）などが入りうるので、
-    素性の分かっているもの以外は種類の名前だけを出す。詳細はログに残す。
-    """
-    if isinstance(e, SetupError):
-        return str(e)
-    if isinstance(e, discord.Forbidden):
-        return f"Discord の権限が足りません（HTTP {e.status} / code {e.code}）"
-    if isinstance(e, discord.HTTPException):
-        return f"Discord がエラーを返しました（HTTP {e.status} / code {e.code}）"
-    if isinstance(e, TimeoutError):
-        return "応答がなく時間切れになりました"
-    return type(e).__name__
 
 
 # ===== ⑤-B 読み取れなかったカレンダーを伝える道具 =====
@@ -163,7 +116,6 @@ def _fetch_one_calendar(calendar_id, time_min, time_max):
        nextPageToken をたどらないと、上限を超えた分が黙って消える"""
     events = []
     page_token = None
-    http = _new_http()                 # この呼び出し専用の接続（他のスレッドと共有しない）
     for _ in range(API_MAX_PAGES):
         result = service.events().list(
             calendarId=calendar_id,
@@ -173,7 +125,7 @@ def _fetch_one_calendar(calendar_id, time_min, time_max):
             singleEvents=True,
             orderBy="startTime",
             pageToken=page_token,
-        ).execute(http=http)
+        ).execute()
         events.extend(result.get("items", []))
         page_token = result.get("nextPageToken")
         if not page_token:                 # 次のページがなければ終わり
@@ -256,29 +208,11 @@ def build_embeds(events):
 # ===== ⑧ 定期的に実行される処理（5分ごと） =====
 @tasks.loop(minutes=60)
 async def update_calendar():
-    # tasks.loop は、通信系以外の例外が1度でも出るとループごと止まり、以後二度と
-    # 実行されない（discord/ext/tasks の _loop で確認）。そうなると自動表示は
-    # 古いまま残り、ボットはオンラインのまま「動いているように見える」。
-    # ここで受け止めて記録し、次の周期でやり直す。
-    try:
-        await _update_calendar_once()
-    except Exception as e:
-        health["display_error"] = (datetime.now(JST), describe_error(e))
-        print("自動表示の更新でエラーが発生しました。次の周期でやり直します。")
-        traceback.print_exception(type(e), e, e.__traceback__)
-
-
-async def _update_calendar_once():
-    # Google への問い合わせは別スレッドで行う。応答を待つ間も、
-    # コマンドへの返信などボット本体の処理が止まらないようにするため
-    events, failures = await asyncio.to_thread(fetch_events)
+    events, failures = fetch_events()
     if failures:
         # 一部のカレンダーが読めないまま書き換えると、予定が抜けた表示になってしまう。
         # 前回の正しい表示を残し、次の周期でやり直す
         print(f"一部のカレンダーが読めないため、自動表示の更新を見送りました: {failures}")
-        health["display_error"] = (
-            datetime.now(JST),
-            f"{len(failures)}件のカレンダーを読み取れないため、更新を見送りました")
         return
     today = datetime.now(JST).date().isoformat()      # 今日の日付（日本時間）
     signature = str(today) + str([
@@ -286,21 +220,12 @@ async def _update_calendar_once():
         for e in events
     ])
     if signature == state["signature"]:
-        health["display_ok_at"] = datetime.now(JST)   # 変化なしを確認できた
-        health["display_error"] = None
         return
-
-    channel = client.get_channel(CHANNEL_ID)
-    if channel is None:
-        # 以前はここで None のまま send を呼び、AttributeError でループが止まっていた
-        print(f"CHANNEL_ID（{CHANNEL_ID}）のチャンネルが見つかりません")
-        raise SetupError(
-            "自動表示の送り先チャンネルが見つかりません。CHANNEL_ID が正しいか、"
-            "ボットがそのチャンネルを見られるか確認してください")
+    state["signature"] = signature
 
     embeds = build_embeds(events)
-    errors = []
-
+    channel = client.get_channel(CHANNEL_ID)
+    
     if not state["messages"]:
         for embed in embeds:
             try:
@@ -309,7 +234,6 @@ async def _update_calendar_once():
                 await asyncio.sleep(1) # ★1秒待つ（スロットリング）
             except discord.HTTPException as e:
                 print(f"送信エラー: {e}")
-                errors.append(e)
                 await asyncio.sleep(5) # エラーが出たら長めに待つ
     else:
         for msg, embed in zip(state["messages"], embeds):
@@ -318,20 +242,7 @@ async def _update_calendar_once():
                 await asyncio.sleep(1) # ★1秒待つ（スロットリング）
             except discord.HTTPException as e:
                 print(f"編集エラー: {e}")
-                errors.append(e)
                 await asyncio.sleep(5) # エラーが出たら長めに待つ
-
-    if errors:
-        # 失敗したのに「反映済み」と覚えると、次の周期で内容が同じだとして
-        # やり直さなくなる。覚えを消して、次の周期で必ず再送させる
-        state["signature"] = None
-        health["display_error"] = (
-            datetime.now(JST),
-            f"{len(errors)}件の送信・編集に失敗しました（{describe_error(errors[0])}）")
-    else:
-        state["signature"] = signature
-        health["display_ok_at"] = datetime.now(JST)
-        health["display_error"] = None
 
 # ===== ⑧-B 指定月の空き日程を調べる機能 ★追加 =====
 
@@ -682,7 +593,7 @@ HELP_TEXT = (
     "cmds           /cmds でも同じ（/ は付けなくてよい）\n"
     "\n"
     "■ 動作確認（反応がおかしいとき）\n"
-    "ping           ボットの状態と、直近の失敗を表示\n"
+    "ping           ボットの状態を表示\n"
     "\n"
     "■ 空き日程を調べる（年-月）\n"
     "/2026-9        昼(10-18)が空いている日\n"
@@ -723,28 +634,16 @@ HELP_TEXT = (
 
 
 # ===== ⑧-C メッセージを受け取ったときの処理 ★追加 =====
-def _is_command_text(text):
-    """このボット宛てのコマンドらしい文字列か（ログと成功記録の判定に使う）"""
-    return text.startswith("/") or text.lower() in ("cmds", "ping")
-
-
 async def _handle_message(message):
     """コマンドを解釈して返信する。
 
     返信したら True を返す（このボット宛てでなく何もしなかったときは None）。
-    失敗は例外のまま on_message に返し、そこで知らせる。
     """
     text = message.content.strip()
 
-    # 受け取ったことをログに残す。返信が無いとき、「そもそも届いていない」のか
-    # 「届いたが返信に失敗した」のかを、ログにこの行があるかで見分けられる
-    if _is_command_text(text):
-        where = getattr(message.channel, "name", None) or "DM"
-        print(f"受信: {text[:100]!r}（#{where}）")
-
     # --- ping ／ /ping : 動作確認と状態表示 ---
     # Google に一切触らず、平文を返すだけ。これが返ればボットは生きていて、
-    # そのチャンネルに書き込める。あわせて、直近の失敗の記録を見せる
+    # そのチャンネルに書き込める。あわせて、ボットの状態を見せる
     if text.lower() in ("ping", "/ping"):
         level, lines = status_report()
         await message.channel.send("🏓 pong\n" + "\n".join(lines))
@@ -777,15 +676,18 @@ async def _handle_message(message):
         if not 1 <= month <= 12:
             await message.channel.send("月は1〜12で指定してください")
             return True
-        # 「入力中…」を出して、受け付けたことを見せる。
-        # 画像生成は重い処理なので、別スレッドで実行してボットを固めない。
-        # 失敗は on_message でまとめて知らせる（ここで飲み込むと原因がログに残らない）
+        # 「入力中…」を出して、受け付けたことを見せる
         async with message.channel.typing():
-            buf, failures = await asyncio.to_thread(render_month_image, year, month)
-        file = discord.File(buf, filename=f"calendar_{year}_{month:02d}.png")
-        await message.channel.send(
-            f"📅 {year}年{month}月{failure_note(failures)}", file=file
-        )
+            try:
+                # 画像生成は重い処理なので、別スレッドで実行してボットを固めない
+                buf, failures = await asyncio.to_thread(render_month_image, year, month)
+                file = discord.File(buf, filename=f"calendar_{year}_{month:02d}.png")
+                await message.channel.send(
+                    f"📅 {year}年{month}月{failure_note(failures)}", file=file
+                )
+            except Exception as e:
+                print(f"画像生成エラー: {e}")
+                await message.channel.send("画像の生成に失敗しました")
         return True
 
     # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、末尾に r または d、
@@ -848,22 +750,22 @@ async def _handle_message(message):
     # 別スレッドで行う（応答を待つ間もボット本体を止めないため）
     async with message.channel.typing():
         if mode == "n":
-            free_days, failures = await _find_free_days_async(start_date, end_date, NIGHT_START, NIGHT_END)
+            free_days, failures = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
             label = "夜が空いている日"
         elif mode == "a":
-            day_free, day_fail = await _find_free_days_async(start_date, end_date, DAY_START, DAY_END)
-            night_free, night_fail = await _find_free_days_async(start_date, end_date, NIGHT_START, NIGHT_END)
+            day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
+            night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
             free_days = sorted(set(day_free) & set(night_free))
             failures = merge_failures(day_fail, night_fail)
             label = "一日空いている日"
         elif mode == "u":                  # 昼か夜のどちらか（あるいは両方）が空いている日
-            day_free, day_fail = await _find_free_days_async(start_date, end_date, DAY_START, DAY_END)
-            night_free, night_fail = await _find_free_days_async(start_date, end_date, NIGHT_START, NIGHT_END)
+            day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
+            night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
             free_days = sorted(set(day_free) | set(night_free))   # どちらかに含まれる日
             failures = merge_failures(day_fail, night_fail)
             label = "昼か夜が空いている日"
         else:
-            free_days, failures = await _find_free_days_async(start_date, end_date, DAY_START, DAY_END)
+            free_days, failures = find_free_days(start_date, end_date, DAY_START, DAY_END)
             label = "昼が空いている日"
 
     # 末尾に r が付いていたら反転（昼・夜モードのみ対象。a と u には適用しない）
@@ -895,63 +797,12 @@ async def _handle_message(message):
         )
     return True
 
-async def _find_free_days_async(start_date, end_date, slot_start, slot_end):
-    """find_free_days を別スレッドで実行する（イベントループを止めないため）"""
-    return await asyncio.to_thread(
-        find_free_days, start_date, end_date, slot_start, slot_end)
-
 
 @client.event
 async def on_message(message):
     if message.author.bot:
         return
-    # discord.py は、ここで起きた例外をログに出すだけで握りつぶす
-    # （discord/client.py の _run_event）。利用者から見ると無反応になり、
-    # 動いていないのに動いて見える。失敗はすべてここで受け止めて知らせる
-    try:
-        replied = await _handle_message(message)
-    except discord.Forbidden as e:
-        await _report_forbidden(message, e)
-        return
-    except Exception as e:
-        await _report_command_error(message, e)
-        return
-    # 実際に返信できたら、前回のコマンドの失敗の記録は消す。
-    # このボット宛てでない文字列（/hello など）では消さない（何も確かめていないため）。
-    # ping では消さない（ping は記録を見せるためのもので、見せた途端に消えると困る）
-    if replied and message.content.strip().lower() not in ("ping", "/ping"):
-        health["command_error"] = None
-
-
-async def _report_forbidden(message, e):
-    """返信する権限がないとき。そのチャンネルには書けないので、ログと本人への DM で知らせる"""
-    where = getattr(message.channel, "name", None) or "DM"
-    health["command_error"] = (datetime.now(JST), f"#{where} に返信する権限がありません")
-    print(f"#{where} に返信できません。ボットの権限が足りません"
-          f"（HTTP {e.status} / code {e.code}: {e.text}）。"
-          "「チャンネルを見る」「メッセージを送信」「埋め込みリンク」「ファイルを添付」を確認してください")
-    try:
-        await message.author.send(
-            f"⚠️ #{where} ではボットに書き込む権限がないため、返信できませんでした。\n"
-            "サーバーの管理者に、このボットへ「メッセージを送信」「埋め込みリンク」"
-            "「ファイルを添付」の権限を付けてもらってください。")
-    except discord.HTTPException as dm_error:
-        print(f"DM でも知らせられませんでした（HTTP {dm_error.status} / code {dm_error.code}）")
-
-
-async def _report_command_error(message, e):
-    """コマンドの処理中に想定外のエラーが出たとき。黙らず、その場で知らせる"""
-    what = describe_error(e)
-    health["command_error"] = (datetime.now(JST), what)
-    print(f"コマンドの処理中にエラーが発生しました: {message.content.strip()[:100]!r}")
-    traceback.print_exception(type(e), e, e.__traceback__)
-    try:
-        await message.channel.send(
-            f"⚠️ 処理中にエラーが発生しました（{what}）。\n"
-            "時間をおいても直らない場合は、`ping` で状態を確認するか、"
-            "管理者にサーバーのログを見てもらってください。")
-    except discord.HTTPException as send_error:
-        print(f"エラーの通知も送れませんでした（HTTP {send_error.status} / code {send_error.code}）")
+    await _handle_message(message)
 
 
 # ===== ⑧-F 動作状況のまとめ（ping の返信と Web の状態表示で共用） =====
@@ -999,20 +850,6 @@ def status_report():
         lines.append("カレンダー: まだ読み取っていません")
     else:
         lines.append(f"カレンダー: 前回の読み取りは正常（{_fmt_time(health['calendar_ok_at'])}）")
-
-    # --- 自動表示 ---
-    if health["display_error"]:
-        at, what = health["display_error"]
-        warnings.append(f"自動表示: {what}（{_fmt_time(at)}）")
-    elif health["display_ok_at"] is None:
-        lines.append("自動表示: まだ更新していません")
-    else:
-        lines.append(f"自動表示: 前回の更新は正常（{_fmt_time(health['display_ok_at'])}）")
-
-    # --- コマンド ---
-    if health["command_error"]:
-        at, what = health["command_error"]
-        warnings.append(f"コマンド: 直近で失敗しました — {what}（{_fmt_time(at)}）")
 
     if errors:
         level, head = "error", "❌ ボットが応答できない状態です"
@@ -1083,28 +920,12 @@ async def loop_heartbeat():
 @client.event
 async def on_ready():
     print(f"ログインしました: {client.user}")
-    # 再接続のたびに on_ready が呼ばれることがある。二重に start すると例外になる
+    # 処理が止まっていないかの見張り（状態表示で使う）。
+    # 再接続のたびに on_ready が呼ばれることがあり、二重に start すると例外になる
     if not loop_heartbeat.is_running():
         loop_heartbeat.start()
-    if not update_calendar.is_running():
-        update_calendar.start()
+    update_calendar.start()
 
 
 # ===== ⑩ ボットを起動する =====
-# Discord に一時的に締め出される（429）と、ログインは例外で終わる。
-# 締め出されていることが Render 上で分かるよう、エラーのまま終了させる。
-try:
-    client.run(DISCORD_BOT_TOKEN)
-except discord.HTTPException as e:
-    if e.status == 429:
-        print("Discord に一時的に締め出されています（429）。"
-              "1時間ほど待ってから、Render で再デプロイまたは再起動してください。")
-        # 締め出しの種類と解除までの時間を調べられるよう、Discord の応答ヘッダーを残す
-        # （Retry-After、X-RateLimit-Global / X-RateLimit-Scope、Via、CF-Ray など）。
-        # 出すのは応答ヘッダーだけ。トークンを含むリクエスト側は出さない。Cookie も省く
-        headers = getattr(getattr(e, "response", None), "headers", None) or {}
-        print("429 の応答ヘッダー:")
-        for name, value in headers.items():
-            if name.lower() != "set-cookie":
-                print(f"  {name}: {value}")
-    raise
+client.run(DISCORD_BOT_TOKEN)
