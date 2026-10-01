@@ -294,7 +294,7 @@ def check_calendar(sa_json_text, calendar_id, client_email=""):
                     f"「カレンダーの統合」のIDと、貼った値 `{calendar_id}` を照合してください",
                     f"(b) 共有漏れ … このカレンダーの「設定と共有」→「共有する相手」の"
                     f"「ユーザーやグループを追加」で `{share_to}` を追加してください"
-                    f"（権限は「予定の変更」。表示だけなら「予定の表示」でも可／{GUIDE} 4-3）",
+                    f"（権限は「すべての予定の詳細の変更や表示ができます」。表示だけなら「予定の表示」でも可／{GUIDE} 4-3）",
                 ])
 
         if status == 403 and reason in ("accessNotConfigured", "SERVICE_DISABLED"):

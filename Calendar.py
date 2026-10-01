@@ -838,7 +838,7 @@ async def handle_add_command(message, parsed):
                 raise AddError(
                     f"{label}には書き込む権限がありません（いまの権限：{role}）。\n"
                     "Google カレンダーの共有設定で、サービスアカウントの権限を"
-                    "「予定の変更」にしてください")
+                    "「すべての予定の詳細の変更や表示ができます」にしてください")
             created = service.events().insert(
                 calendarId=cid, body=build_event_body(parsed)).execute()
         except AddError as e:
@@ -849,7 +849,7 @@ async def handle_add_command(message, parsed):
             print(f"予定の追加エラー（HTTP {status}）: {e}")
             if status == 403:
                 reason = ("カレンダーに書き込む権限がありません。Google カレンダーの共有設定で、"
-                          "サービスアカウントの権限を「予定の変更」にしてください")
+                          "サービスアカウントの権限を「すべての予定の詳細の変更や表示ができます」にしてください")
             elif status == 404:
                 reason = "カレンダーが見つかりません。CALENDAR_ID と共有設定を確認してください"
             else:
