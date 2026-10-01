@@ -761,7 +761,7 @@ const STEPS = [
   {
     id:"key", chip:"4. 鍵JSON",
     title:"Googleのサービスアカウントと鍵を作る",
-    why:"ボット専用のGoogleアカウントで、カレンダーを読み取り専用で参照します。",
+    why:"ボット専用のGoogleアカウントで、カレンダーの予定を読み取ります（add コマンドを使うときは予定の追加も行います）。",
     body:`
       <ol class="todo">
         <li><a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> を開き、上部のプロジェクト名を押して「新しいプロジェクト」</li>
@@ -817,7 +817,7 @@ const STEPS = [
       <ol class="todo">
         <li>読みたいカレンダーの「設定と共有」を開く</li>
         <li>「特定のユーザーやグループと共有」に、前のステップの
-            <code>client_email</code> を追加（権限は「予定の表示」でOK）</li>
+            <code>client_email</code> を追加（権限は<b>「予定の変更」</b>。「予定の表示」でも表示と空き日程の検索は動きますが、<code>add</code> で予定を追加できません）</li>
         <li>同じ画面の「カレンダーの統合」にある<b>カレンダーID</b>をコピー</li>
         <li>複数のカレンダーを使う場合は、<b>1つずつ同じ共有作業</b>を行ってから、
             IDを「,」または改行で区切って並べる</li>

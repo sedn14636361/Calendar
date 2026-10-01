@@ -233,6 +233,22 @@ re.fullmatch(r"/c(\d{4})-(\d{1,2})", text)            # 月間カレンダー画
 
 先頭 `n/a/u` が時間帯モード、末尾 `r` が反転、`d` が伝助形式。書式を変えたら、`/cmds` の表示と README 第II部も直す。
 
+### Google の権限範囲と予定の追加
+
+`Calendar.py` は `calendar.events` を使う（`events.list` と `events.insert` の両方に有効）。
+同梱の API 定義（`googleapiclient/discovery_cache/documents/calendar.v3.json`）で確認できる注意点：
+
+- `calendar.events` では `calendars.get` を呼べない（`calendar.readonly` は呼べる）。
+  そのため `add` の追加先の名前と権限は、`events.list` の応答にある `summary`（カレンダー名）と
+  `accessRole`（このアカウントの権限）を `fields="summary,accessRole"`・`maxResults=1` で取っている
+- `setup/setup_checks.py` は `calendars.get` を使うので、自前で `calendar.readonly` を要求している。
+  ここを `Calendar.py` の `SCOPES` にそろえると検証が壊れる
+- 終日の予定は `date`、時刻つきは `dateTime`（オフセット必須）。`end` は排他的なので、
+  終日の終わりは最終日の翌日を書く
+
+`add` の入力の解釈は `parse_add_command()` に、Google に送る中身は `build_event_body()` に分けてあり、
+どちらも Discord と Google に触らずに単体で試せる。
+
 ### 画像の寸法
 
 `render_month_image()` 内の `CELL`（マスの一辺）と `LINE`（線の太さ）で調整する。
