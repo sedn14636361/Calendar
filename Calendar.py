@@ -4,6 +4,7 @@ import json                           # JSON文字列を扱うための道具
 import discord
 import threading                      # 2つの処理を同時に動かすための道具
 import re                              # 文字列のパターンを判定する道具
+import unicodedata                      # 全角の数字・記号を半角にそろえる道具
 import calendar as _calendar           # 月末日を求める道具
 import asyncio
 import time                             # 処理が止まっていないかを測る道具
@@ -13,6 +14,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバ
 from discord.ext import tasks
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError   # Google が返したエラー（403 など）
 from datetime import datetime, timezone, timedelta, date
 from PIL import Image, ImageDraw, ImageFont  # 画像生成の道具（要 Pillow）
 
@@ -37,7 +39,9 @@ JST = timezone(timedelta(hours=9))     # 日本時間
 
 
 # ===== ③ Googleカレンダーへの接続準備（鍵も環境変数から） =====
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+# 予定の読み取り（events.list）と追加（events.insert）の両方に使える範囲。
+# calendar.readonly のままでは追加できない（API 定義の events.insert の scopes に無い）
+SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
 
 service_account_info = json.loads(os.environ["SERVICE_ACCOUNT_JSON"])
 creds = service_account.Credentials.from_service_account_info(  
@@ -585,12 +589,302 @@ def render_month_image(year, month):
     return buf, failures
 
 
+# ===== ⑧-G 予定の追加 =====
+# 書式：add [カレンダー名] 日付 [時刻] 予定の名前
+#   add 2026-10.5 14:00-16:00 打ち合わせ   … 時刻指定
+#   add 2026-10.5 打ち合わせ               … 終日
+#   add 2026-10.5:2026-10.7 合宿           … 複数日の終日
+#   add [仕事] 2026-10.5 9-12 定例         … 追加先のカレンダーを名前で指定
+# 名前を最後に置くので、空白を含む名前もそのまま書ける。
+# 日付の次の語が「時:分-時:分」の形なら時刻指定、そうでなければ終日とみなす。
+
+class AddError(Exception):
+    """入力や設定の誤り。メッセージをそのまま利用者に返す"""
+
+
+ADD_USAGE = (
+    "書き方：`add 日付 [時刻] 予定の名前`\n"
+    "例：`add 2026-10.5 14:00-16:00 打ち合わせ`（時刻指定）\n"
+    "　　`add 2026-10.5 打ち合わせ`（終日）\n"
+    "　　`add 2026-10.5:2026-10.7 合宿`（複数日の終日）\n"
+    "　　`add [カレンダー名] 2026-10.5 打ち合わせ`（追加先を指定）"
+)
+
+_ADD_HEAD_RE = re.compile(r"/?add(?=\s|$)", re.IGNORECASE)
+# 追加先の指定。半角 [ ] のほか、日本語入力で打ちやすい【 】と［ ］も受け付ける
+_ADD_CAL_RE = re.compile(r"(?:\[([^\]]*)\]|【([^】]*)】|［([^］]*)］)")
+_ADD_DATE_RE = re.compile(r"(\d{4})-(\d{1,2})\.(\d{1,2})(?::(\d{4})-(\d{1,2})\.(\d{1,2}))?")
+# 区切りは - のほか、~ 〜 − ー も受け付ける（全角の －／～ は NFKC で半角になる）
+_ADD_TIME_RE = re.compile(r"(\d{1,2})(?::(\d{2}))?[-~〜−ー](\d{1,2})(?::(\d{2}))?")
+
+
+def _nfkc(s):
+    """全角の数字・コロン・記号を半角にそろえる（日付と時刻の部分にだけ使う。名前には使わない）"""
+    return unicodedata.normalize("NFKC", s)
+
+
+def _make_date(y, m, d):
+    try:
+        return date(int(y), int(m), int(d))
+    except ValueError:
+        raise AddError(f"{y}-{m}.{d} は存在しない日付です")
+
+
+def _one_year_after(d):
+    """d のちょうど1年後（2/29 の翌年は 2/28）。期間の上限に使う"""
+    last = _calendar.monthrange(d.year + 1, d.month)[1]
+    return date(d.year + 1, d.month, min(d.day, last))
+
+
+def parse_add_command(text):
+    """add コマンドを解釈する。
+
+    このコマンドでなければ None を返す。会話中の「add me …」のような文に
+    反応しないよう、/add で始まるか、add の後に [カレンダー名] か数字（日付）が
+    続くときだけコマンドとみなす。add だけのときは使い方を返す。
+    解釈できれば dict を返し、誤りがあれば AddError を投げる。
+    dict の中身：
+      calendar … 追加先の指定（[ ] の中身。無ければ None）
+      name     … 予定の名前
+      start, end … 時刻指定なら datetime（日本時間）、終日なら date。
+                   終日の end は Google の仕様どおり「最終日の翌日」（排他的な終わり）
+      all_day  … 終日なら True
+      overnight … 終了が開始より前で、翌日にまたいだとみなしたら True
+    """
+    head = _ADD_HEAD_RE.match(text)
+    if not head:
+        return None
+    rest = text[head.end():].strip()
+    if not rest:
+        raise AddError(ADD_USAGE)
+
+    # --- 追加先のカレンダー（任意） ---
+    calendar = None
+    m = _ADD_CAL_RE.match(rest)
+    if m:
+        calendar = next(g for g in m.groups() if g is not None).strip()
+        if not calendar:
+            raise AddError("[ ] の中にカレンダー名がありません。\n" + ADD_USAGE)
+        rest = rest[m.end():].strip()
+
+    # --- 日付 ---
+    parts = rest.split(None, 1)
+    explicit = text.startswith("/") or calendar is not None
+    if not explicit and not _nfkc(parts[0])[:1].isdigit():
+        return None                            # 「add me to …」のような普通の文
+    if not parts:
+        raise AddError("日付がありません。\n" + ADD_USAGE)
+    dm = _ADD_DATE_RE.fullmatch(_nfkc(parts[0]))
+    if not dm:
+        raise AddError("日付は `2026-10.5` の形で書いてください"
+                       "（複数日なら `2026-10.5:2026-10.7`）。\n" + ADD_USAGE)
+    first = _make_date(dm.group(1), dm.group(2), dm.group(3))
+    last = _make_date(dm.group(4), dm.group(5), dm.group(6)) if dm.group(4) else None
+    rest = parts[1].strip() if len(parts) > 1 else ""
+
+    # --- 時刻（任意）：日付の次の語が丸ごと「時:分-時:分」のときだけ時刻とみなす ---
+    parts = rest.split(None, 1)
+    tm = _ADD_TIME_RE.fullmatch(_nfkc(parts[0])) if parts else None
+    if tm:
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+    name = rest
+    if not name:
+        raise AddError("予定の名前がありません。\n" + ADD_USAGE)
+
+    if tm:
+        if last is not None:
+            raise AddError("複数日の予定には時刻を付けられません。終日として追加するか、1日ずつ追加してください")
+        sh, sm = int(tm.group(1)), int(tm.group(2) or 0)
+        eh, em = int(tm.group(3)), int(tm.group(4) or 0)
+        if sm > 59 or em > 59:
+            raise AddError("分は 00〜59 で書いてください")
+        if sh > 23:
+            raise AddError("開始時刻は 0:00〜23:59 で書いてください")
+        if eh > 24 or (eh == 24 and em != 0):
+            raise AddError("終了時刻は 0:00〜24:00 で書いてください")
+        start_min, end_min = sh * 60 + sm, eh * 60 + em
+        if end_min == start_min:
+            raise AddError("開始と終了が同じ時刻です")
+        midnight = datetime(first.year, first.month, first.day, tzinfo=JST)
+        start = midnight + timedelta(minutes=start_min)
+        overnight = end_min < start_min          # 22:00-2:00 のような日またぎ
+        end = midnight + timedelta(days=1 if overnight else 0, minutes=end_min)
+        return {"calendar": calendar, "name": name, "start": start, "end": end,
+                "all_day": False, "overnight": overnight}
+
+    # 終日
+    last = last or first
+    if last < first:
+        raise AddError("開始日が終了日より後になっています")
+    if last > _one_year_after(first):
+        raise AddError("終日の予定の期間は最大12か月までです")
+    return {"calendar": calendar, "name": name, "start": first,
+            "end": last + timedelta(days=1),   # Google の終日予定は「翌日まで」と書く
+            "all_day": True, "overnight": False}
+
+
+def build_event_body(parsed):
+    """Google Calendar API の events.insert に渡す中身を作る。
+
+    API 定義より：終日は date（yyyy-mm-dd）、時刻指定は dateTime（RFC3339、
+    タイムゾーンのオフセット必須）。end は排他的（その時刻・その日を含まない）。
+    """
+    if parsed["all_day"]:
+        start = {"date": parsed["start"].isoformat()}
+        end = {"date": parsed["end"].isoformat()}
+    else:
+        start = {"dateTime": parsed["start"].isoformat()}
+        end = {"dateTime": parsed["end"].isoformat()}
+    return {"summary": parsed["name"], "start": start, "end": end}
+
+
+def format_added_when(parsed):
+    """返信に出す日時。日をまたぐときは終了側にも日付を付け、打ち間違いに気づけるようにする"""
+    def md(d):
+        return f"{d.month}/{d.day}({WEEKDAY_NAMES[d.weekday()]})"
+    s = parsed["start"]
+    if parsed["all_day"]:
+        last = parsed["end"] - timedelta(days=1)          # 表示は最終日（含む）で
+        head = f"{s.year}/{md(s)}"
+        return f"{head} 終日" if last == s else f"{head}〜{md(last)} 終日"
+    e = parsed["end"]
+    head = f"{s.year}/{md(s.date())} {s:%H:%M}"
+    if e.date() == s.date():
+        return f"{head}〜{e:%H:%M}"
+    if e.date() == s.date() + timedelta(days=1) and (e.hour, e.minute) == (0, 0) and not parsed["overnight"]:
+        return f"{head}〜24:00"
+    return f"{head}〜{md(e.date())} {e:%H:%M}（日をまたぐ予定として追加）"
+
+
+# --- 追加先のカレンダーを決める ---
+_WRITABLE_ROLES = ("writer", "owner", "writerWithoutPrivateAccess")
+
+
+def _calendar_meta(calendar_id):
+    """カレンダーの名前とこのボットの権限を取る（予定は1件も取らない小さな問い合わせ）。
+
+    calendars.get は calendar.events の権限では使えないので、events.list の応答に
+    含まれる summary（カレンダー名）と accessRole（権限）を使う。
+    """
+    r = service.events().list(calendarId=calendar_id, maxResults=1,
+                              fields="summary,accessRole").execute()
+    return r.get("summary"), r.get("accessRole")
+
+
+def _calendar_label(index, name):
+    """返信に出すカレンダーの呼び名。名前がメールアドレスのときは番号で呼ぶ
+    （個人のメインカレンダーは名前がメールアドレスになっており、チャンネルに載せないため）"""
+    if not name or "@" in name:
+        return f"{index + 1}番目のカレンダー"
+    return name
+
+
+def _same_name(a, b):
+    return _nfkc(a).strip().casefold() == _nfkc(b).strip().casefold()
+
+
+def resolve_add_calendar(spec):
+    """追加先を決める。戻り値は (番号, カレンダーID, 名前, 権限)。
+
+    spec が None なら先頭。数字なら CALENDAR_ID の何番目か。
+    CALENDAR_ID に書いた ID そのものでもよい。それ以外はカレンダー名で探す。
+    """
+    def pick(i):
+        name, role = _calendar_meta(CALENDAR_IDS[i])
+        return i, CALENDAR_IDS[i], name, role
+
+    if spec is None:
+        return pick(0)
+    if spec.isdigit():
+        i = int(spec) - 1
+        if not 0 <= i < len(CALENDAR_IDS):
+            raise AddError(f"カレンダーの番号は 1〜{len(CALENDAR_IDS)} で指定してください")
+        return pick(i)
+    if spec in CALENDAR_IDS:
+        return pick(CALENDAR_IDS.index(spec))
+
+    found, listing, unreadable = [], [], 0
+    for i, cid in enumerate(CALENDAR_IDS):
+        try:
+            name, role = _calendar_meta(cid)
+        except Exception as e:
+            print(f"カレンダー名の取得エラー: {cid} -> {e}")
+            unreadable += 1
+            continue
+        listing.append(f"{i + 1}: {_calendar_label(i, name)}")
+        if name and _same_name(name, spec):
+            found.append((i, cid, name, role))
+    if len(found) == 1:
+        return found[0]
+    if len(found) > 1:
+        raise AddError(f"「{spec}」という名前のカレンダーが複数あります。番号で指定してください（例：`add [1] …`）\n"
+                       + "\n".join(listing))
+    msg = f"「{spec}」という名前のカレンダーが見つかりません。使えるカレンダー：\n" + "\n".join(listing)
+    if unreadable:
+        msg += f"\n（ほかに読み取れなかったカレンダーが {unreadable} 件あります）"
+    msg += "\n名前のほか、番号でも指定できます（例：`add [1] …`）"
+    raise AddError(msg)
+
+
+async def handle_add_command(message, parsed):
+    """予定を追加して、結果を返信する"""
+    async with message.channel.typing():
+        try:
+            index, cid, name, role = resolve_add_calendar(parsed["calendar"])
+            label = _calendar_label(index, name)
+            # 書き込み権限が無いことが分かっているなら、追加を試す前に理由を返す
+            if role is not None and role not in _WRITABLE_ROLES:
+                raise AddError(
+                    f"{label}には書き込む権限がありません（いまの権限：{role}）。\n"
+                    "Google カレンダーの共有設定で、サービスアカウントの権限を"
+                    "「予定の変更」にしてください")
+            created = service.events().insert(
+                calendarId=cid, body=build_event_body(parsed)).execute()
+        except AddError as e:
+            await message.channel.send(f"⚠️ {e}")
+            return
+        except HttpError as e:
+            status = e.status_code
+            print(f"予定の追加エラー（HTTP {status}）: {e}")
+            if status == 403:
+                reason = ("カレンダーに書き込む権限がありません。Google カレンダーの共有設定で、"
+                          "サービスアカウントの権限を「予定の変更」にしてください")
+            elif status == 404:
+                reason = "カレンダーが見つかりません。CALENDAR_ID と共有設定を確認してください"
+            else:
+                reason = f"Google がエラーを返しました（HTTP {status}）"
+            await message.channel.send(f"⚠️ 予定を追加できませんでした。{reason}")
+            return
+        except Exception as e:
+            print(f"予定の追加エラー: {e!r}")
+            await message.channel.send(
+                f"⚠️ 予定を追加できませんでした（{type(e).__name__}）。時間をおいて試してください")
+            return
+
+    lines = ["✅ 予定を追加しました",
+             f"**{parsed['name']}**",
+             format_added_when(parsed),
+             f"追加先：{label}"]
+    link = created.get("htmlLink")
+    if link:
+        lines.append(f"<{link}>")             # < > で囲み、リンクのプレビュー表示を抑える
+    await message.channel.send("\n".join(lines))
+
+
 # ===== ⑧-E コマンド一覧のテキスト ★追加 =====
 HELP_TEXT = (
     "**📅 コマンド一覧**\n"
     "```\n"
     "■ この一覧を出す\n"
     "cmds           /cmds でも同じ（/ は付けなくてよい）\n"
+    "\n"
+    "■ 予定を追加する（名前は最後に書く）\n"
+    "add 2026-10.5 14:00-16:00 打ち合わせ   時刻指定\n"
+    "add 2026-10.5 打ち合わせ               終日\n"
+    "add 2026-10.5:2026-10.7 合宿           複数日の終日\n"
+    "add 2026-10.5 22:00-2:00 飲み会        終了が前なら翌日まで\n"
+    "add [仕事] 2026-10.5 9-12 定例         追加先をカレンダー名で（番号も可）\n"
     "\n"
     "■ 動作確認（反応がおかしいとき）\n"
     "ping           ボットの状態を表示\n"
@@ -657,6 +951,16 @@ async def _handle_message(message):
     # ときだけ返す。前後の空白は無視し、大文字小文字は問わない。
     if text.lower() in ("cmds", "/cmds"):
         await message.channel.send(HELP_TEXT)
+        return True
+
+    # --- add ／ /add : Google カレンダーに予定を追加 ---
+    try:
+        parsed = parse_add_command(text)
+    except AddError as e:
+        await message.channel.send(f"⚠️ {e}")
+        return True
+    if parsed is not None:
+        await handle_add_command(message, parsed)
         return True
 
     # --- /c2026-9 : 月間カレンダー画像を出力 ---
