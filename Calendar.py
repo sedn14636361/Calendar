@@ -3,7 +3,6 @@ import os                              # 環境変数（コード外から渡す
 import json                           # JSON文字列を扱うための道具
 import discord
 from discord import app_commands       # スラッシュコマンド（/date・/add）
-from typing import Optional
 import threading                      # 2つの処理を同時に動かすための道具
 import re                              # 文字列のパターンを判定する道具
 import unicodedata                      # 全角の数字・記号を半角にそろえる道具
@@ -898,7 +897,7 @@ HELP_TEXT = (
     "\n"
     "■ 選ぶだけで使う（入力欄で / を打つと一覧に出る）\n"
     "/date          フォームで月・時間帯・曜日（チェック）を選んで調べる\n"
-    "/add           予定を、日付・時刻を選んで追加する\n"
+    "/add           パネルで日付・時刻・追加先を選んで追加する\n"
     "\n"
     "■ 動作確認（反応がおかしいとき）\n"
     "ping           ボットの状態を表示\n"
@@ -1192,7 +1191,7 @@ def _slash_point(s):
 
 
 def _slash_day(s, today=None):
-    """/add の date・end_date を「2026-10.5」の形にする。読めなければ None。
+    """/add の日付・最終日を「2026-10.5」の形にする。読めなければ None。
     年を省いた「10/5」は、今日以降で最も近いその日付とみなす（存在しない日付は
     そのまま渡し、既存の処理に「存在しない日付です」と返させる）"""
     m = _SLASH_DAY_RE.fullmatch(_nfkc(s).strip())
@@ -1335,35 +1334,6 @@ def _day_choices(base, count=14, today=None):
     return out
 
 
-def _day_suggestions(current, base):
-    typed = _slash_day(current) if current else None
-    if typed:
-        try:
-            y, md = typed.split("-")
-            mo, d = md.split(".")
-            return _day_choices(date(int(y), int(mo), int(d)))[:25]   # 打った日から2週間
-        except ValueError:
-            return [app_commands.Choice(name=typed, value=typed)]      # 存在しない日付もそのまま
-    return _filter(_day_choices(base), current)[:25]
-
-
-async def _date_autocomplete(interaction, current):
-    return _day_suggestions(current, _today())
-
-
-async def _end_date_autocomplete(interaction, current):
-    base = _today()
-    start = _slash_day(getattr(interaction.namespace, "date", None) or "")
-    if start:
-        try:
-            y, md = start.split("-")
-            mo, d = md.split(".")
-            base = date(int(y), int(mo), int(d)) + timedelta(days=1)
-        except ValueError:
-            pass
-    return _day_suggestions(current, base)
-
-
 # /add の時刻は「時」と「分」を別の欄で選ぶ。
 # 候補は一度に25件までなので、時と分を1つの欄にすると 10:00〜23:00 の30分刻み（27件）すら収まらない。
 # 時は 10〜23時（利用者の指定）、分は 00・15・30・45 の4つ（60通りは上限に収まらない）。
@@ -1404,10 +1374,6 @@ def _calendar_choices():
         items.append(app_commands.Choice(name=f"{i + 1}: {label}", value=str(i + 1)))
     _calendar_choice_cache.update(at=now, items=items)
     return items
-
-
-async def _calendar_autocomplete(interaction, current):
-    return _filter(_calendar_choices(), current)[:25]
 
 
 # /date は入力フォーム（モーダル）を開く。曜日をチェックボックスで自由に選べるようにするため。
@@ -1481,55 +1447,286 @@ async def slash_date(interaction: discord.Interaction):
     await interaction.response.send_modal(DateModal())
 
 
-@tree.command(name="add", description="Google カレンダーに予定を追加する（時刻が空なら終日）")
-@app_commands.rename(date_="date")
-@app_commands.describe(
-    name="予定の名前",
-    date_="日付（押すと2週間分の一覧。10/5 や 2026-10.5 と入れてもよい）",
-    start_hour="開始の時（10〜23時。時も分も空なら終日）",
-    start_minute="開始の分（空なら00分）",
-    end_hour="終了の時（開始より前なら翌日まで）",
-    end_minute="終了の分（空なら00分）",
-    end_date="複数日の終日予定にするときの最終日",
-    calendar="追加先のカレンダー（省略すると先頭のカレンダー）",
-)
-@app_commands.choices(start_hour=HOUR_CHOICES, start_minute=MINUTE_CHOICES,
-                      end_hour=HOUR_CHOICES, end_minute=MINUTE_CHOICES)
-@app_commands.autocomplete(date_=_date_autocomplete, end_date=_end_date_autocomplete,
-                           calendar=_calendar_autocomplete)
-async def slash_add(interaction: discord.Interaction, name: str, date_: str,
-                    start_hour: Optional[app_commands.Choice[int]] = None,
-                    start_minute: Optional[app_commands.Choice[int]] = None,
-                    end_hour: Optional[app_commands.Choice[int]] = None,
-                    end_minute: Optional[app_commands.Choice[int]] = None,
-                    end_date: Optional[str] = None, calendar: Optional[str] = None):
-    await interaction.response.defer(thinking=True)
-    try:
-        name = name.strip()
-        if not name:
-            await interaction.followup.send("⚠️ 予定の名前を入れてください")
-            return
-        def val(c):
-            return c.value if c is not None else None
-        start, error = _join_time(val(start_hour), val(start_minute), "開始")
+# ===== /add の設定パネル =====
+# /add を送ると、送った人だけに見える設定パネルが開く。日付・時刻・追加先をメニューで選ぶと
+# 上の要約がその場で書き換わり、最後に「名前を入れて追加」で名前の入力欄が開く。
+# 欄が8つあり、入力フォーム（上限5つ）にも従来のメッセージ（選択メニューは5つまで）にも
+# 収まらないので、部品を40個まで置ける新しい形式のメッセージ（LayoutView）にしている。
+# 中身は文字のコマンドに組み立てて、既存の parse_add_command・handle_add_command に渡す。
+
+PANEL_TIMEOUT_SEC = 840                # 14分。応答の書き換えに使う鍵が15分で切れるので、その手前で閉じる
+_INPUT = "__input__"                   # 選択肢「ほかの日付を入力…」の値
+_NONE = "__none__"                     # 選択肢「なし」の値
+_DATE_DAYS = 23                        # 日付の一覧に並べる日数（上限25件から入力用と表示中の日付の分を引いた。「なし」がある欄はさらに1日減る）
+
+
+def _day_value(d):
+    return f"{d.year}-{d.month}.{d.day}"
+
+
+def _value_day(v):
+    y, md = v.split("-")
+    mo, d = md.split(".")
+    return date(int(y), int(mo), int(d))
+
+
+def _closed_view(text):
+    """パネルを閉じたあとの表示（操作できる部品は無い）"""
+    view = discord.ui.LayoutView()
+    view.add_item(discord.ui.Container(discord.ui.TextDisplay(text)))
+    return view
+
+
+class AddPanel(discord.ui.LayoutView):
+    """/add の設定パネル。選ばれた内容（状態）を持ち、操作のたびに作り直して表示を更新する"""
+
+    def __init__(self, origin, calendars, today=None):
+        super().__init__(timeout=PANEL_TIMEOUT_SEC)
+        self.origin = origin                   # /add のやり取り。閉じるときにパネルを書き換えるのに使う
+        self.owner_id = origin.user.id
+        self.today = today or _today()
+        self.date = _day_value(self.today)     # 最初は今日・終日・先頭のカレンダー
+        self.end_date = None
+        self.start_hour = self.start_minute = None
+        self.end_hour = self.end_minute = None
+        self.calendars = calendars             # 開いた時点の候補を使い続ける（操作のたびに Google に問い合わせない）
+        self.calendar = "1"
+        self.note = None                       # 入力の誤りなど、要約の下に一度だけ出す一言
+        self.render()
+
+    # --- 今の選択を文字のコマンドにして確かめる ---
+    def check(self):
+        """(解釈結果 または None, 組み立てた文字列, 誤り または None)"""
+        start, error = _join_time(self.start_hour, self.start_minute, "開始")
         if not error:
-            end, error = _join_time(val(end_hour), val(end_minute), "終了")
+            end, error = _join_time(self.end_hour, self.end_minute, "終了")
         if not error:
-            text, error = build_add_command(date_, start, end, end_date, calendar)
+            text, error = build_add_command(self.date, start, end, self.end_date, self.calendar)
         if error:
-            await interaction.followup.send(f"⚠️ {error}")
-            return
+            return None, None, error
         try:
-            parsed = parse_add_command(text)
+            return parse_add_command(text), text, None
         except AddError as e:
-            await interaction.followup.send(f"⚠️ {e}")
+            return None, text, str(e)
+
+    def summary(self):
+        parsed, _text, error = self.check()
+        cal = next((c.name.split(": ", 1)[-1] for c in self.calendars if c.value == self.calendar),
+                   f"{self.calendar}番目のカレンダー")
+        if error:
+            head = f"⚠️ {error}"
+        else:
+            head = f"📅 {format_added_when(parsed)} → {cal}"
+        if self.note:
+            head += f"\n{self.note}"
+        return head, error is None
+
+    # --- 表示を作る ---
+    def _date_options(self, current, base, with_none):
+        opts = []
+        if with_none:
+            opts.append(discord.SelectOption(label="なし（1日だけ）", value=_NONE, default=current is None))
+        days = [base + timedelta(days=i) for i in range(_DATE_DAYS)]
+        if current is not None and _value_day(current) not in days:
+            d = _value_day(current)          # 入力した日付が一覧の外なら、先頭に出して選ばれた状態にする
+            opts.append(discord.SelectOption(label=f"{d.year}/{_md(d)}", value=current, default=True))
+        # 上限25件。「ほかの日付を入力…」が必ず残るよう、並べる日数を前に置いた分だけ減らす
+        days = days[:25 - 1 - len(opts)]
+        for d in days:
+            note = "（今日）" if d == self.today else "（明日）" if d == self.today + timedelta(days=1) else ""
+            opts.append(discord.SelectOption(label=f"{d.year}/{_md(d)}{note}", value=_day_value(d),
+                                             default=(_day_value(d) == current)))
+        opts.append(discord.SelectOption(label="📝 ほかの日付を入力…", value=_INPUT))
+        return opts
+
+    def _hour_select(self, current, placeholder, on_pick):
+        opts = [discord.SelectOption(label="なし（終日）", value=_NONE, default=current is None)]
+        opts += [discord.SelectOption(label=c.name, value=str(c.value), default=(c.value == current))
+                 for c in HOUR_CHOICES]
+        return self._select(opts, placeholder, on_pick)
+
+    def _minute_select(self, hour, current, placeholder, on_pick):
+        opts = [discord.SelectOption(label=c.name, value=str(c.value),
+                                     default=(c.value == (current or 0)))
+                for c in MINUTE_CHOICES]
+        sel = self._select(opts, placeholder, on_pick)
+        sel.disabled = hour is None            # 時を選ぶまでは分を選べない
+        return sel
+
+    def _select(self, options, placeholder, on_pick):
+        sel = discord.ui.Select(options=options, placeholder=placeholder, min_values=1, max_values=1)
+
+        async def callback(interaction):
+            await on_pick(interaction, sel.values[0])
+        sel.callback = callback
+        return sel
+
+    def _button(self, label, style, on_press, disabled=False):
+        btn = discord.ui.Button(label=label, style=style, disabled=disabled)
+
+        async def callback(interaction):
+            await on_press(interaction)
+        btn.callback = callback
+        return btn
+
+    def render(self):
+        self.clear_items()
+        head, ok = self.summary()
+        self.note = None                       # 一言は一度出したら消す
+        base_end = _value_day(self.date) + timedelta(days=1)
+        all_day = self.start_hour is None and self.end_hour is None
+        self.add_item(discord.ui.Container(
+            discord.ui.TextDisplay(f"### 予定を追加\n{head}"),
+            discord.ui.TextDisplay("**日付**"),
+            discord.ui.ActionRow(self._select(self._date_options(self.date, self.today, False),
+                                              "日付", self._pick_date)),
+            discord.ui.ActionRow(self._select(self._date_options(self.end_date, base_end, True),
+                                              "最終日（複数日の終日にするとき）", self._pick_end_date)),
+            discord.ui.TextDisplay("**開始**"),
+            discord.ui.ActionRow(self._hour_select(self.start_hour, "開始の時（なしなら終日）", self._pick_start_hour)),
+            discord.ui.ActionRow(self._minute_select(self.start_hour, self.start_minute, "開始の分", self._pick_start_minute)),
+            discord.ui.TextDisplay("**終了**"),
+            discord.ui.ActionRow(self._hour_select(self.end_hour, "終了の時（開始より前なら翌日まで）", self._pick_end_hour)),
+            discord.ui.ActionRow(self._minute_select(self.end_hour, self.end_minute, "終了の分", self._pick_end_minute)),
+            discord.ui.TextDisplay("**追加先**"),
+            discord.ui.ActionRow(self._select(
+                [discord.SelectOption(label=c.name, value=c.value, default=(c.value == self.calendar))
+                 for c in self.calendars][:25], "追加先のカレンダー", self._pick_calendar)),
+            discord.ui.ActionRow(
+                self._button("終日にする", discord.ButtonStyle.secondary, self._press_all_day, disabled=all_day),
+                self._button("名前を入れて追加", discord.ButtonStyle.primary, self._press_add, disabled=not ok),
+                self._button("やめる", discord.ButtonStyle.danger, self._press_cancel),
+            ),
+        ))
+
+    async def _update(self, interaction):
+        self.render()
+        await interaction.response.edit_message(view=self)
+
+    # --- 操作 ---
+    async def interaction_check(self, interaction):
+        return interaction.user.id == self.owner_id   # 開いた本人だけが操作できる
+
+    async def _pick_date(self, interaction, value):
+        if value == _INPUT:
+            await interaction.response.send_modal(DateInputModal(self, "date"))
             return
-        parsed["name"] = name                  # 解釈が済んでから本当の名前を入れる
-        print(f"スラッシュコマンド: {text!r}（名前 {name!r}）")
-        await handle_add_command(_SlashMessage(interaction, text), parsed)
-    except Exception as e:
-        print(f"/add のエラー: {e!r}")
-        await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
+        self.date = value
+        await self._update(interaction)
+
+    async def _pick_end_date(self, interaction, value):
+        if value == _INPUT:
+            await interaction.response.send_modal(DateInputModal(self, "end_date"))
+            return
+        self.end_date = None if value == _NONE else value
+        await self._update(interaction)
+
+    async def _pick_start_hour(self, interaction, value):
+        self.start_hour = None if value == _NONE else int(value)
+        if self.start_hour is None:
+            self.start_minute = None
+        await self._update(interaction)
+
+    async def _pick_start_minute(self, interaction, value):
+        self.start_minute = int(value)
+        await self._update(interaction)
+
+    async def _pick_end_hour(self, interaction, value):
+        self.end_hour = None if value == _NONE else int(value)
+        if self.end_hour is None:
+            self.end_minute = None
+        await self._update(interaction)
+
+    async def _pick_end_minute(self, interaction, value):
+        self.end_minute = int(value)
+        await self._update(interaction)
+
+    async def _pick_calendar(self, interaction, value):
+        self.calendar = value
+        await self._update(interaction)
+
+    async def _press_all_day(self, interaction):
+        self.start_hour = self.start_minute = self.end_hour = self.end_minute = None
+        await self._update(interaction)
+
+    async def _press_add(self, interaction):
+        await interaction.response.send_modal(NameModal(self))
+
+    async def _press_cancel(self, interaction):
+        self.stop()
+        await interaction.response.edit_message(view=_closed_view("予定の追加を取り消しました。"))
+
+    async def finish(self, text):
+        """追加が済んだら、パネルを閉じた表示に書き換える"""
+        self.stop()
+        try:
+            await self.origin.edit_original_response(view=_closed_view(text))
+        except discord.HTTPException as e:
+            print(f"設定パネルを閉じられませんでした: {e}")
+
+    async def on_timeout(self):
+        await self.finish(f"{PANEL_TIMEOUT_SEC // 60}分操作が無かったので閉じました。もう一度 /add を送ってください。")
+
+
+class DateInputModal(discord.ui.Modal):
+    """「ほかの日付を入力…」で開く入力欄。一覧に無い先の日付を入れるため"""
+
+    def __init__(self, panel, field):
+        super().__init__(title="日付を入力")
+        self.panel, self.field = panel, field
+        self.text = discord.ui.TextInput(placeholder="例：10/20 または 2026-11.3", max_length=20)
+        self.add_item(discord.ui.Label(
+            text="開始の日付" if field == "date" else "最終日", component=self.text))
+
+    async def on_submit(self, interaction):
+        value = _slash_day(self.text.value)
+        if value is None:
+            self.panel.note = "⚠️ 日付は `10/20` か `2026-11.3` の形で入力してください"
+        else:
+            try:
+                _value_day(value)              # 2/30 のような存在しない日付は、ここで弾く（一覧を作れないため）
+                setattr(self.panel, self.field, value)
+            except ValueError:
+                self.panel.note = f"⚠️ {value} は存在しない日付です"
+        await self.panel._update(interaction)
+
+
+class NameModal(discord.ui.Modal):
+    """「名前を入れて追加」で開く入力欄。送信すると予定を追加し、結果をチャンネルに出す"""
+
+    def __init__(self, panel):
+        super().__init__(title="予定の名前")
+        self.panel = panel
+        self.name = discord.ui.TextInput(placeholder="例：打ち合わせ", max_length=200)
+        self.add_item(discord.ui.Label(text="予定の名前", component=self.name))
+
+    async def on_submit(self, interaction):
+        await interaction.response.defer(thinking=True)   # 結果はチャンネルに出す（文字のコマンドと同じ）
+        try:
+            name = self.name.value.strip()
+            parsed, text, error = self.panel.check()
+            if not name:
+                await interaction.followup.send("⚠️ 予定の名前を入れてください")
+                return
+            if error:
+                await interaction.followup.send(f"⚠️ {error}")
+                return
+            parsed["name"] = name              # 解釈が済んでから本当の名前を入れる
+            print(f"スラッシュコマンド: {text!r}（名前 {name!r}）")
+            await handle_add_command(_SlashMessage(interaction, text), parsed)
+            await self.panel.finish("このパネルは閉じました。結果はチャンネルに表示しています。")
+        except Exception as e:
+            print(f"/add のエラー: {e!r}")
+            await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
+
+
+@tree.command(name="add", description="Google カレンダーに予定を追加する（設定パネルが開く）")
+async def slash_add(interaction: discord.Interaction):
+    # Google の窓口（service）は複数のスレッドから同時に使えないので、ほかの処理と同じくここで直接呼ぶ。
+    # 結果は10分間覚えておくので、問い合わせが起きるのは久しぶりに開いたときだけ
+    calendars = _calendar_choices()
+    panel = AddPanel(interaction, calendars)
+    await interaction.response.send_message(view=panel, ephemeral=True)   # 送った人だけに見える
 
 
 _slash_synced = False
