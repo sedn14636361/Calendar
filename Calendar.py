@@ -2,6 +2,8 @@
 import os                              # 環境変数（コード外から渡す値）を読むための道具
 import json                           # JSON文字列を扱うための道具
 import discord
+from discord import app_commands       # スラッシュコマンド（/date・/add）
+from typing import Optional
 import threading                      # 2つの処理を同時に動かすための道具
 import re                              # 文字列のパターンを判定する道具
 import unicodedata                      # 全角の数字・記号を半角にそろえる道具
@@ -54,6 +56,14 @@ service = build("calendar", "v3", credentials=creds)
 intents = discord.Intents.default()
 intents.message_content = True         # メッセージ本文を読めるようにする
 client = discord.Client(intents=intents)
+tree = app_commands.CommandTree(client)  # スラッシュコマンドの登録先
+
+# スラッシュコマンドを使うか。off にして起動すると、Discord に登録済みの
+# /date・/add を消してから動く（文字のコマンドはそのまま使える）。
+# コードを以前の版に戻すときは、先にこれで一度起動して登録を消しておく。
+# 以前の版は Discord 側の登録に触らないので、戻しただけでは一覧に残ってしまう
+SLASH_COMMANDS_ENABLED = os.environ.get("SLASH_COMMANDS", "on").strip().lower() \
+    not in ("off", "0", "false", "no")
 
 
 # ===== ⑤ 前回の状態を覚えておく箱 =====
@@ -886,6 +896,10 @@ HELP_TEXT = (
     "add 2026-10.5 22:00-2:00 飲み会        終了が前なら翌日まで\n"
     "add [仕事] 2026-10.5 9-12 定例         追加先をカレンダー名で（番号も可）\n"
     "\n"
+    "■ 選ぶだけで使う（入力欄で / を打つと一覧に出る）\n"
+    "/date          空いている日を、月・時間帯・曜日を選んで調べる\n"
+    "/add           予定を、日付・時刻を選んで追加する\n"
+    "\n"
     "■ 動作確認（反応がおかしいとき）\n"
     "ping           ボットの状態を表示\n"
     "\n"
@@ -1109,6 +1123,459 @@ async def on_message(message):
     await _handle_message(message)
 
 
+# ===== ⑧-H スラッシュコマンド（/date・/add） =====
+# 欄を選ぶだけで、文字のコマンドと同じことができる。
+# 選ばれた内容を文字のコマンド（例 /n2026-10:2026-12d/sat/sun）に組み立て、
+# 既存の _handle_message にそのまま渡す。判定や表示の処理を二重に持たないので、
+# 文字のコマンドとスラッシュコマンドの結果は作りからして同じになる。
+# 返信先だけを、スラッシュコマンドへの返信（interaction.followup）に差し替える。
+
+class _SlashChannel:
+    """_handle_message が使う channel の代わり。送信先をスラッシュコマンドの返信にする"""
+    def __init__(self, interaction):
+        self._interaction = interaction
+
+    async def send(self, content=None, **kwargs):
+        await self._interaction.followup.send(content, **kwargs)
+
+    def typing(self):
+        # 最初に defer(thinking=True) で「考え中…」を出しているので、ここでは何もしない
+        return _NoTyping()
+
+
+class _NoTyping:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _SlashMessage:
+    """_handle_message に渡す message の代わり（本文・送信者・返信先だけを持つ）"""
+    def __init__(self, interaction, text):
+        self.content = text
+        self.author = interaction.user
+        self.channel = _SlashChannel(interaction)
+
+
+async def _run_as_text_command(interaction, text):
+    """組み立てた文字のコマンドを、既存の処理で実行して返信する"""
+    print(f"スラッシュコマンド: {text!r}")
+    handled = await _handle_message(_SlashMessage(interaction, text))
+    if not handled:
+        # 組み立てた文字列は必ずどれかのコマンドに当たるはずなので、ここに来たら不具合
+        await interaction.followup.send("⚠️ 指定を解釈できませんでした。")
+
+
+def _today():
+    return datetime.now(JST).date()
+
+
+def _md(d):
+    return f"{d.month}/{d.day}({WEEKDAY_NAMES[d.weekday()]})"
+
+
+# --- 入力の正規化（候補から選んだ値も、手で打った値も、ここで同じ形にそろえる） ---
+_SLASH_POINT_RE = re.compile(r"(\d{4})[-/](\d{1,2})(?:[./-](\d{1,2}))?")
+_SLASH_DAY_RE = re.compile(r"(?:(\d{4})[-/])?(\d{1,2})[./-](\d{1,2})")
+_SLASH_TIME_RE = re.compile(r"(\d{1,2})(?::(\d{2}))?")
+
+
+def _slash_point(s):
+    """/date の start・end を「2026-10」か「2026-10.15」の形にする。読めなければ None"""
+    m = _SLASH_POINT_RE.fullmatch(_nfkc(s).strip())
+    if not m:
+        return None
+    y, mo, d = m.groups()
+    return f"{int(y)}-{int(mo)}" + (f".{int(d)}" if d else "")
+
+
+def _slash_day(s, today=None):
+    """/add の date・end_date を「2026-10.5」の形にする。読めなければ None。
+    年を省いた「10/5」は、今日以降で最も近いその日付とみなす（存在しない日付は
+    そのまま渡し、既存の処理に「存在しない日付です」と返させる）"""
+    m = _SLASH_DAY_RE.fullmatch(_nfkc(s).strip())
+    if not m:
+        return None
+    y, mo, d = m.groups()
+    mo, d = int(mo), int(d)
+    if y is None:
+        today = today or _today()
+        # 月日の並びで比べる。date() を作って比べると、今年に存在しない日付（2/29 など）で
+        # 年の推定が働かず、過去の年のまま「存在しない日付」と返してしまう
+        y = today.year + (1 if (mo, d) < (today.month, today.day) else 0)
+    return f"{int(y)}-{mo}.{d}"
+
+
+def _slash_time(s):
+    """時刻を「14:00」の形にする。読めなければ None（範囲の検査は既存の処理に任せる）"""
+    m = _SLASH_TIME_RE.fullmatch(_nfkc(s).strip())
+    if not m:
+        return None
+    h, mi = m.groups()
+    return f"{int(h)}:{int(mi or 0):02d}"
+
+
+_WEEKDAY_PRESETS = [
+    ("指定なし", "none"),
+    ("平日（月〜金）", "mon,tue,wed,thu,fri"),
+    ("土日", "sat,sun"),
+    ("金土日", "fri,sat,sun"),
+    ("金土", "fri,sat"),
+] + [(f"{WEEKDAY_NAMES[i]}曜", en) for i, en in
+     enumerate(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])]
+
+
+def _slash_weekdays(s):
+    """/date の weekday を、文字のコマンドの末尾（/sat/sun）にする。
+    「土日」「金,土」「平日」のような手打ちも受ける。読めない語はそのまま残し、
+    既存の処理に「曜日の指定が分かりません」と返させる"""
+    s = _nfkc(s or "").strip()
+    if not s or s == "none" or s == "指定なし":
+        return ""
+    if s == "平日":
+        s = "mon,tue,wed,thu,fri"
+    tokens = []
+    for tok in re.split(r"[/,、\s]+", s):
+        if not tok:
+            continue
+        if len(tok) > 1 and all(c in WEEKDAY_NAMES for c in tok):
+            tokens.extend(tok)                 # 「土日」→「土」「日」
+        else:
+            tokens.append(tok)
+    return "".join("/" + tok for tok in tokens)
+
+
+TIME_CHOICES = [
+    app_commands.Choice(name="昼（10〜18時）", value="day"),
+    app_commands.Choice(name="夜（18〜24時）", value="night"),
+    app_commands.Choice(name="昼夜とも空いている", value="all"),
+    app_commands.Choice(name="昼か夜が空いている", value="any"),
+]
+_TIME_TO_MODE = {"day": "", "night": "n", "all": "a", "any": "u"}
+
+FORMAT_CHOICES = [
+    app_commands.Choice(name="空いている日（通常）", value="normal"),
+    app_commands.Choice(name="空いている日（伝助形式）", value="densuke"),
+    app_commands.Choice(name="予定がある日", value="busy"),
+]
+_FORMAT_TO_SUFFIX = {"normal": "", "densuke": "d", "busy": "r"}
+
+
+def build_date_command(start, end=None, time=None, weekday=None, fmt=None):
+    """/date の入力から、文字のコマンド（例 /n2026-10:2026-12d/sat/sun）を組み立てる。
+    入力に誤りがあれば (None, 理由) を返す"""
+    s = _slash_point(start)
+    if s is None:
+        return None, "start は `2026-10` か `2026-10.15` の形で選ぶか入力してください"
+    body = s
+    if end:
+        e = _slash_point(end)
+        if e is None:
+            return None, "end は `2026-12` か `2026-12.31` の形で選ぶか入力してください"
+        body = f"{s}:{e}"
+    mode = _TIME_TO_MODE.get(time or "day", "")
+    suffix = _FORMAT_TO_SUFFIX.get(fmt or "normal", "")
+    if suffix == "r" and mode in ("a", "u"):
+        # 文字のコマンドでは無視される組み合わせ。黙って空き日を返すと誤解を招くので止める
+        return None, "「予定がある日」は、時間帯が「昼」か「夜」のときだけ使えます"
+    return f"/{mode}{body}{suffix}{_slash_weekdays(weekday)}", None
+
+
+def build_add_command(date_, start=None, end=None, end_date=None, calendar=None):
+    """/add の入力から、名前を除いた文字のコマンドを組み立てる。
+    名前は文字列に入れない（「10-12 振り返り」のような名前の先頭を時刻と読まないため）。
+    解釈が済んでから parsed["name"] に差し込む。誤りがあれば (None, 理由) を返す"""
+    d = _slash_day(date_)
+    if d is None:
+        return None, "date は `10/5` か `2026-10.5` の形で選ぶか入力してください"
+    when = d
+    if end_date:
+        e = _slash_day(end_date)
+        if e is None:
+            return None, "end_date は `10/7` か `2026-10.7` の形で選ぶか入力してください"
+        when = f"{d}:{e}"
+    parts = ["add"]
+    if calendar:
+        spec = calendar.strip()
+        for left, right in (("[", "]"), ("【", "】"), ("［", "］")):
+            if left not in spec and right not in spec:
+                parts.append(f"{left}{spec}{right}")
+                break
+        else:
+            return None, "カレンダー名に使えない記号が含まれています。番号で選んでください"
+    parts.append(when)
+    if start or end:
+        if not (start and end):
+            return None, "時刻を指定するときは start と end の両方を選んでください（両方空なら終日）"
+        st, en = _slash_time(start), _slash_time(end)
+        if st is None or en is None:
+            return None, "時刻は `14:00` の形で選ぶか入力してください"
+        parts.append(f"{st}-{en}")
+    parts.append("_")                          # 名前の代わり（後で本当の名前に差し替える）
+    return " ".join(parts), None
+
+
+# --- 候補（入力中に出る一覧）。どれも最大25件まで（Discord の上限） ---
+def _filter(choices, current):
+    cur = _nfkc(current or "").strip().casefold()
+    if not cur:
+        return choices
+    return [c for c in choices if cur in _nfkc(c.name).casefold() or cur in c.value.casefold()]
+
+
+def _month_choices(base, count=12):
+    out = []
+    for i in range(count):
+        y = base.year + (base.month - 1 + i) // 12
+        m = (base.month - 1 + i) % 12 + 1
+        out.append(app_commands.Choice(name=f"{y}年{m}月", value=f"{y}-{m}"))
+    return out
+
+
+async def _start_autocomplete(interaction, current):
+    choices = _month_choices(_today())
+    typed = _slash_point(current) if current else None
+    found = _filter(choices, current)
+    if typed and all(c.value != typed for c in found):
+        found = [app_commands.Choice(name=typed, value=typed)] + found
+    return found[:25]
+
+
+async def _end_autocomplete(interaction, current):
+    base = _today()
+    start = _slash_point(getattr(interaction.namespace, "start", None) or "")
+    if start:                                  # 開始の月から先を並べる
+        y, m = start.split(".")[0].split("-")
+        base = date(int(y), int(m), 1)
+    choices = _month_choices(base)
+    typed = _slash_point(current) if current else None
+    found = _filter(choices, current)
+    if typed and all(c.value != typed for c in found):
+        found = [app_commands.Choice(name=typed, value=typed)] + found
+    return found[:25]
+
+
+def _weekday_set(s):
+    """曜日の指定が表す曜日の集合（「土」と「sat」と「土曜」の値を同じものとみなすため）"""
+    wanted, unknown = parse_weekdays(_slash_weekdays(s))
+    return None if unknown else frozenset(wanted)
+
+
+async def _weekday_autocomplete(interaction, current):
+    choices = [app_commands.Choice(name=n, value=v) for n, v in _WEEKDAY_PRESETS]
+    found = _filter(choices, current)
+    cur = (current or "").strip()
+    # 手打ちの「金,土」なども選べるようにする。ただし一覧に同じ意味の候補があれば重ねない
+    if cur and _weekday_set(cur) not in {_weekday_set(c.value) for c in found}:
+        found = [app_commands.Choice(name=cur, value=cur)] + found
+    return found[:25]
+
+
+def _day_choices(base, count=14, today=None):
+    today = today or _today()
+    out = []
+    for i in range(count):
+        d = base + timedelta(days=i)
+        note = "（今日）" if d == today else "（明日）" if d == today + timedelta(days=1) else ""
+        out.append(app_commands.Choice(name=f"{d.year}/{_md(d)}{note}",
+                                       value=f"{d.year}-{d.month}.{d.day}"))
+    return out
+
+
+def _day_suggestions(current, base):
+    typed = _slash_day(current) if current else None
+    if typed:
+        try:
+            y, md = typed.split("-")
+            mo, d = md.split(".")
+            return _day_choices(date(int(y), int(mo), int(d)))[:25]   # 打った日から2週間
+        except ValueError:
+            return [app_commands.Choice(name=typed, value=typed)]      # 存在しない日付もそのまま
+    return _filter(_day_choices(base), current)[:25]
+
+
+async def _date_autocomplete(interaction, current):
+    return _day_suggestions(current, _today())
+
+
+async def _end_date_autocomplete(interaction, current):
+    base = _today()
+    start = _slash_day(getattr(interaction.namespace, "date", None) or "")
+    if start:
+        try:
+            y, md = start.split("-")
+            mo, d = md.split(".")
+            base = date(int(y), int(mo), int(d)) + timedelta(days=1)
+        except ValueError:
+            pass
+    return _day_suggestions(current, base)
+
+
+_HALF_HOURS = [f"{h}:{m:02d}" for h in range(24) for m in (0, 30)]
+
+
+def _time_suggestions(current, after=None):
+    if after is not None:                      # 開始の30分後から24時間ぶん（日またぎも選べる）
+        i = _HALF_HOURS.index(after) if after in _HALF_HOURS else None
+        if i is not None:
+            seq = [_HALF_HOURS[(i + k) % 48] for k in range(1, 49)]
+            labels = []
+            for k, v in enumerate(seq, 1):
+                if v == "0:00" and i + k == 48:
+                    labels.append(("24:00", "24:00"))
+                else:
+                    labels.append((v + ("（翌日）" if i + k > 48 else ""), v))
+            choices = [app_commands.Choice(name=n, value=v) for n, v in labels]
+        else:
+            choices = [app_commands.Choice(name=v, value=v) for v in _HALF_HOURS]
+    else:
+        choices = [app_commands.Choice(name=v, value=v) for v in _HALF_HOURS]
+        if not (current or "").strip():
+            choices = choices[16:41]           # 何も打っていなければ 8:00〜20:00 を出す
+    cur = _nfkc(current or "").strip()
+    if cur:
+        found = [c for c in choices if c.value.startswith(cur) or c.name.startswith(cur)]
+        typed = _slash_time(cur)
+        if typed and all(c.value != typed for c in found):
+            found = [app_commands.Choice(name=typed, value=typed)] + found   # 14:15 なども選べる
+        choices = found
+    return choices[:25]
+
+
+async def _start_time_autocomplete(interaction, current):
+    return _time_suggestions(current)
+
+
+async def _end_time_autocomplete(interaction, current):
+    start = _slash_time(getattr(interaction.namespace, "start", None) or "")
+    return _time_suggestions(current, after=start)
+
+
+# カレンダー名の候補。入力のたびに Google に問い合わせると遅いので、10分間覚えておく
+_CALENDAR_CACHE_SEC = 600
+_calendar_choice_cache = {"at": None, "items": []}
+
+
+def _calendar_choices():
+    now = time.monotonic()
+    at = _calendar_choice_cache["at"]
+    if at is not None and now - at < _CALENDAR_CACHE_SEC:
+        return _calendar_choice_cache["items"]
+    items = []
+    for i, cid in enumerate(CALENDAR_IDS):
+        try:
+            name, _role = _calendar_meta(cid)
+            label = _calendar_label(i, name)
+        except Exception as e:
+            print(f"カレンダー名の取得エラー: {cid} -> {e}")
+            label = f"{i + 1}番目のカレンダー（読み取れません）"
+        # 値は番号にする。名前に記号が入っていても、番号なら確実に指定できる
+        items.append(app_commands.Choice(name=f"{i + 1}: {label}", value=str(i + 1)))
+    _calendar_choice_cache.update(at=now, items=items)
+    return items
+
+
+async def _calendar_autocomplete(interaction, current):
+    return _filter(_calendar_choices(), current)[:25]
+
+
+@tree.command(name="date", description="空いている日を調べる（欄を選ぶだけ）")
+@app_commands.rename(fmt="format")
+@app_commands.describe(
+    start="開始の月（押すと一覧。2026-10.15 のように日まで入れてもよい）",
+    end="終了の月（省略すると開始と同じ月）",
+    time="時間帯（省略すると昼）",
+    weekday="曜日で絞る（土日・平日など。金,土 のように入れてもよい）",
+    fmt="出し方（省略すると通常）",
+)
+@app_commands.choices(time=TIME_CHOICES, fmt=FORMAT_CHOICES)
+@app_commands.autocomplete(start=_start_autocomplete, end=_end_autocomplete,
+                           weekday=_weekday_autocomplete)
+async def slash_date(interaction: discord.Interaction, start: str,
+                     end: Optional[str] = None,
+                     time: Optional[app_commands.Choice[str]] = None,
+                     weekday: Optional[str] = None,
+                     fmt: Optional[app_commands.Choice[str]] = None):
+    await interaction.response.defer(thinking=True)   # 先に「考え中…」を返す
+    try:
+        text, error = build_date_command(start, end, time.value if time else None,
+                                         weekday, fmt.value if fmt else None)
+        if error:
+            await interaction.followup.send(f"⚠️ {error}")
+            return
+        await _run_as_text_command(interaction, text)
+    except Exception as e:
+        # 返信しないと「考え中…」のまま止まるので、失敗もその場で返す
+        print(f"/date のエラー: {e!r}")
+        await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
+
+
+@tree.command(name="add", description="Google カレンダーに予定を追加する（時刻が空なら終日）")
+@app_commands.rename(date_="date")
+@app_commands.describe(
+    name="予定の名前",
+    date_="日付（押すと2週間分の一覧。10/5 や 2026-10.5 と入れてもよい）",
+    start="開始時刻（空なら終日）",
+    end="終了時刻（開始より前なら翌日まで）",
+    end_date="複数日の終日予定にするときの最終日",
+    calendar="追加先のカレンダー（省略すると先頭のカレンダー）",
+)
+@app_commands.autocomplete(date_=_date_autocomplete, start=_start_time_autocomplete,
+                           end=_end_time_autocomplete, end_date=_end_date_autocomplete,
+                           calendar=_calendar_autocomplete)
+async def slash_add(interaction: discord.Interaction, name: str, date_: str,
+                    start: Optional[str] = None, end: Optional[str] = None,
+                    end_date: Optional[str] = None, calendar: Optional[str] = None):
+    await interaction.response.defer(thinking=True)
+    try:
+        name = name.strip()
+        if not name:
+            await interaction.followup.send("⚠️ 予定の名前を入れてください")
+            return
+        text, error = build_add_command(date_, start, end, end_date, calendar)
+        if error:
+            await interaction.followup.send(f"⚠️ {error}")
+            return
+        try:
+            parsed = parse_add_command(text)
+        except AddError as e:
+            await interaction.followup.send(f"⚠️ {e}")
+            return
+        parsed["name"] = name                  # 解釈が済んでから本当の名前を入れる
+        print(f"スラッシュコマンド: {text!r}（名前 {name!r}）")
+        await handle_add_command(_SlashMessage(interaction, text), parsed)
+    except Exception as e:
+        print(f"/add のエラー: {e!r}")
+        await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
+
+
+_slash_synced = False
+_sync_task = None
+
+
+async def sync_slash_commands():
+    """スラッシュコマンドを Discord に登録する（起動ごとに1回だけ）。
+    SLASH_COMMANDS=off なら、空の一覧を登録して既存の登録を消す"""
+    global _slash_synced
+    if _slash_synced:
+        return
+    _slash_synced = True
+    try:
+        if not SLASH_COMMANDS_ENABLED:
+            tree.clear_commands(guild=None)
+        synced = await tree.sync()
+        if SLASH_COMMANDS_ENABLED:
+            print("スラッシュコマンドを登録しました: " + ", ".join("/" + c.name for c in synced))
+        else:
+            print("SLASH_COMMANDS=off のため、スラッシュコマンドの登録を消しました")
+    except Exception as e:
+        # 登録に失敗しても、文字のコマンドと自動表示はそのまま動く
+        print(f"スラッシュコマンドの登録に失敗しました: {e!r}"
+              "（文字のコマンドはそのまま使えます）")
+
+
 # ===== ⑧-F 動作状況のまとめ（ping の返信と Web の状態表示で共用） =====
 def _fmt_time(dt):
     return dt.strftime("%m/%d %H:%M") if dt else "まだありません"
@@ -1228,6 +1695,10 @@ async def on_ready():
     # 再接続のたびに on_ready が呼ばれることがあり、二重に start すると例外になる
     if not loop_heartbeat.is_running():
         loop_heartbeat.start()
+    # スラッシュコマンドの登録は裏で行い、自動表示の開始を待たせない。
+    # タスクは参照を持っておかないと途中で片付けられることがあるため、変数に残す
+    global _sync_task
+    _sync_task = asyncio.create_task(sync_slash_commands())
     update_calendar.start()
 
 
