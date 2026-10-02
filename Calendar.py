@@ -1298,7 +1298,7 @@ def build_add_command(date_, start=None, end=None, end_date=None, calendar=None)
     parts.append(when)
     if start or end:
         if not (start and end):
-            return None, "時刻を指定するときは start と end の両方を選んでください（両方空なら終日）"
+            return None, "時刻を指定するときは開始と終了の両方の時を選んでください（どちらも空なら終日）"
         st, en = _slash_time(start), _slash_time(end)
         if st is None or en is None:
             return None, "時刻は `14:00` の形で選ぶか入力してください"
@@ -1364,44 +1364,22 @@ async def _end_date_autocomplete(interaction, current):
     return _day_suggestions(current, base)
 
 
-_HALF_HOURS = [f"{h}:{m:02d}" for h in range(24) for m in (0, 30)]
+# /add の時刻は「時」と「分」を別の欄で選ぶ。
+# 候補は一度に25件までなので、時と分を1つの欄にすると 10:00〜23:00 の30分刻み（27件）すら収まらない。
+# 時は 10〜23時（利用者の指定）、分は 00・15・30・45 の4つ（60通りは上限に収まらない）。
+# どちらも年月と違って古くならないので、押せばすぐ一覧が出る固定の選択肢にする
+HOUR_CHOICES = [app_commands.Choice(name=f"{h}時", value=h) for h in range(10, 24)]
+MINUTE_CHOICES = [app_commands.Choice(name=f"{m:02d}分", value=m) for m in (0, 15, 30, 45)]
 
 
-def _time_suggestions(current, after=None):
-    if after is not None:                      # 開始の30分後から24時間ぶん（日またぎも選べる）
-        i = _HALF_HOURS.index(after) if after in _HALF_HOURS else None
-        if i is not None:
-            seq = [_HALF_HOURS[(i + k) % 48] for k in range(1, 49)]
-            labels = []
-            for k, v in enumerate(seq, 1):
-                if v == "0:00" and i + k == 48:
-                    labels.append(("24:00", "24:00"))
-                else:
-                    labels.append((v + ("（翌日）" if i + k > 48 else ""), v))
-            choices = [app_commands.Choice(name=n, value=v) for n, v in labels]
-        else:
-            choices = [app_commands.Choice(name=v, value=v) for v in _HALF_HOURS]
-    else:
-        choices = [app_commands.Choice(name=v, value=v) for v in _HALF_HOURS]
-        if not (current or "").strip():
-            choices = choices[16:41]           # 何も打っていなければ 8:00〜20:00 を出す
-    cur = _nfkc(current or "").strip()
-    if cur:
-        found = [c for c in choices if c.value.startswith(cur) or c.name.startswith(cur)]
-        typed = _slash_time(cur)
-        if typed and all(c.value != typed for c in found):
-            found = [app_commands.Choice(name=typed, value=typed)] + found   # 14:15 なども選べる
-        choices = found
-    return choices[:25]
-
-
-async def _start_time_autocomplete(interaction, current):
-    return _time_suggestions(current)
-
-
-async def _end_time_autocomplete(interaction, current):
-    start = _slash_time(getattr(interaction.namespace, "start", None) or "")
-    return _time_suggestions(current, after=start)
+def _join_time(hour, minute, which):
+    """時と分の選択から「14:30」を作る。時だけなら00分。分だけなら誤り。
+    戻り値は (時刻の文字列 または None, 理由 または None)"""
+    if hour is None:
+        if minute is not None:
+            return None, f"{which}の分だけが選ばれています。{which}の時も選んでください"
+        return None, None
+    return f"{hour}:{(minute or 0):02d}", None
 
 
 # カレンダー名の候補。入力のたびに Google に問い合わせると遅いので、10分間覚えておく
@@ -1508,16 +1486,22 @@ async def slash_date(interaction: discord.Interaction):
 @app_commands.describe(
     name="予定の名前",
     date_="日付（押すと2週間分の一覧。10/5 や 2026-10.5 と入れてもよい）",
-    start="開始時刻（空なら終日）",
-    end="終了時刻（開始より前なら翌日まで）",
+    start_hour="開始の時（10〜23時。時も分も空なら終日）",
+    start_minute="開始の分（空なら00分）",
+    end_hour="終了の時（開始より前なら翌日まで）",
+    end_minute="終了の分（空なら00分）",
     end_date="複数日の終日予定にするときの最終日",
     calendar="追加先のカレンダー（省略すると先頭のカレンダー）",
 )
-@app_commands.autocomplete(date_=_date_autocomplete, start=_start_time_autocomplete,
-                           end=_end_time_autocomplete, end_date=_end_date_autocomplete,
+@app_commands.choices(start_hour=HOUR_CHOICES, start_minute=MINUTE_CHOICES,
+                      end_hour=HOUR_CHOICES, end_minute=MINUTE_CHOICES)
+@app_commands.autocomplete(date_=_date_autocomplete, end_date=_end_date_autocomplete,
                            calendar=_calendar_autocomplete)
 async def slash_add(interaction: discord.Interaction, name: str, date_: str,
-                    start: Optional[str] = None, end: Optional[str] = None,
+                    start_hour: Optional[app_commands.Choice[int]] = None,
+                    start_minute: Optional[app_commands.Choice[int]] = None,
+                    end_hour: Optional[app_commands.Choice[int]] = None,
+                    end_minute: Optional[app_commands.Choice[int]] = None,
                     end_date: Optional[str] = None, calendar: Optional[str] = None):
     await interaction.response.defer(thinking=True)
     try:
@@ -1525,7 +1509,13 @@ async def slash_add(interaction: discord.Interaction, name: str, date_: str,
         if not name:
             await interaction.followup.send("⚠️ 予定の名前を入れてください")
             return
-        text, error = build_add_command(date_, start, end, end_date, calendar)
+        def val(c):
+            return c.value if c is not None else None
+        start, error = _join_time(val(start_hour), val(start_minute), "開始")
+        if not error:
+            end, error = _join_time(val(end_hour), val(end_minute), "終了")
+        if not error:
+            text, error = build_add_command(date_, start, end, end_date, calendar)
         if error:
             await interaction.followup.send(f"⚠️ {error}")
             return
