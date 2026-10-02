@@ -222,6 +222,26 @@ macOS / Linux では起きない。
 - 自動表示の編集ループでは、メッセージごとに `asyncio.sleep(1)` を入れている。
   外すと Discord の `429 Too Many Requests` や Cloudflare の `1015` にかかりやすくなる。
 
+### スラッシュコマンド（/date・/add）
+
+`app_commands.CommandTree` に `/date` と `/add` を登録している。作りの要点：
+
+- **選ばれた内容を文字のコマンドに組み立てて、既存の `_handle_message` に渡す**
+  （`build_date_command()`・`build_add_command()`）。返信先は `_SlashMessage` で
+  `interaction.followup` に差し替える。判定や表示の処理を二重に持たないので、文字の
+  コマンドと結果が食い違わない。テストもこの同一性を確かめている
+- `/add` の名前だけは組み立てた文字列に入れず、`parse_add_command()` の後で `parsed["name"]` に
+  差し込む。文字列に入れると「10-12 振り返り」の先頭を時刻と、「[仕事] 定例」を追加先と読んでしまう
+- 月・日付・時刻は固定の選択肢（`choices`）ではなく候補（`autocomplete`）。固定の選択肢は
+  登録時に一度だけ決まるので、「2026年10月」が翌年も残ってしまう
+- 候補・選択肢は最大25件（discord.py の制約）。時刻は30分刻みで48件あるので、空欄のときは 8:00〜20:00 だけ出す
+- 最初に `defer(thinking=True)` で「考え中…」を返してから処理する。失敗しても必ず返信し、「考え中…」のまま残さない
+- 登録（`tree.sync()`）は `on_ready` から1回だけ、裏のタスクで行う。discord.py の説明に
+  「表示させるには必ず呼ぶ」とある
+- `SLASH_COMMANDS=off` なら空の一覧を登録し、Discord 側の登録を消す。以前の版のコードは
+  登録に触らないので、コードを戻す前にこれで一度起動しておく（README 16章）
+- 導入前の状態は GitHub のブランチ `backup/before-slash-commands` に残してある
+
 ### コマンドの書式
 
 `on_message` 内の正規表現で判定している。

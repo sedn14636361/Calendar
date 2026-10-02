@@ -691,8 +691,9 @@ const STEPS = [
     why:"予定を自動表示するチャンネルを指定します。",
     body:`
       <ol class="todo">
-        <li>「OAuth2」→「URL Generator」で SCOPES に <code>bot</code>、
-            BOT PERMISSIONS に <code>Send Messages</code> をチェック</li>
+        <li>「OAuth2」→「URL Generator」で SCOPES に <code>bot</code> と <code>applications.commands</code>、
+            BOT PERMISSIONS に <code>Send Messages</code> をチェック
+            （<code>applications.commands</code> は <code>/date</code>・<code>/add</code> を使うためのもの。下の画像はこれを付ける前のものです）</li>
         <li>生成されたURLをブラウザで開き、自分のサーバーを選んで招待</li>
         <li>Discordアプリの設定 →「詳細設定」→「開発者モード」を ON</li>
         <li>表示したいチャンネルを右クリック →「チャンネルIDをコピー」</li>
