@@ -897,7 +897,7 @@ HELP_TEXT = (
     "add [仕事] 2026-10.5 9-12 定例         追加先をカレンダー名で（番号も可）\n"
     "\n"
     "■ 選ぶだけで使う（入力欄で / を打つと一覧に出る）\n"
-    "/date          空いている日を、月・時間帯・曜日を選んで調べる\n"
+    "/date          フォームで月・時間帯・曜日（チェック）を選んで調べる\n"
     "/add           予定を、日付・時刻を選んで追加する\n"
     "\n"
     "■ 動作確認（反応がおかしいとき）\n"
@@ -1183,7 +1183,7 @@ _SLASH_TIME_RE = re.compile(r"(\d{1,2})(?::(\d{2}))?")
 
 
 def _slash_point(s):
-    """/date の start・end を「2026-10」か「2026-10.15」の形にする。読めなければ None"""
+    """/date の開始・終了の月を「2026-10」（日まであれば「2026-10.15」）の形にする。読めなければ None"""
     m = _SLASH_POINT_RE.fullmatch(_nfkc(s).strip())
     if not m:
         return None
@@ -1217,18 +1217,8 @@ def _slash_time(s):
     return f"{int(h)}:{int(mi or 0):02d}"
 
 
-_WEEKDAY_PRESETS = [
-    ("指定なし", "none"),
-    ("平日（月〜金）", "mon,tue,wed,thu,fri"),
-    ("土日", "sat,sun"),
-    ("金土日", "fri,sat,sun"),
-    ("金土", "fri,sat"),
-] + [(f"{WEEKDAY_NAMES[i]}曜", en) for i, en in
-     enumerate(["mon", "tue", "wed", "thu", "fri", "sat", "sun"])]
-
-
 def _slash_weekdays(s):
-    """/date の weekday を、文字のコマンドの末尾（/sat/sun）にする。
+    """/date の曜日（フォームでは「sat,sun」の形で渡す）を、文字のコマンドの末尾（/sat/sun）にする。
     「土日」「金,土」「平日」のような手打ちも受ける。読めない語はそのまま残し、
     既存の処理に「曜日の指定が分かりません」と返させる"""
     s = _nfkc(s or "").strip()
@@ -1332,45 +1322,6 @@ def _month_choices(base, count=12):
         m = (base.month - 1 + i) % 12 + 1
         out.append(app_commands.Choice(name=f"{y}年{m}月", value=f"{y}-{m}"))
     return out
-
-
-async def _start_autocomplete(interaction, current):
-    choices = _month_choices(_today())
-    typed = _slash_point(current) if current else None
-    found = _filter(choices, current)
-    if typed and all(c.value != typed for c in found):
-        found = [app_commands.Choice(name=typed, value=typed)] + found
-    return found[:25]
-
-
-async def _end_autocomplete(interaction, current):
-    base = _today()
-    start = _slash_point(getattr(interaction.namespace, "start", None) or "")
-    if start:                                  # 開始の月から先を並べる
-        y, m = start.split(".")[0].split("-")
-        base = date(int(y), int(m), 1)
-    choices = _month_choices(base)
-    typed = _slash_point(current) if current else None
-    found = _filter(choices, current)
-    if typed and all(c.value != typed for c in found):
-        found = [app_commands.Choice(name=typed, value=typed)] + found
-    return found[:25]
-
-
-def _weekday_set(s):
-    """曜日の指定が表す曜日の集合（「土」と「sat」と「土曜」の値を同じものとみなすため）"""
-    wanted, unknown = parse_weekdays(_slash_weekdays(s))
-    return None if unknown else frozenset(wanted)
-
-
-async def _weekday_autocomplete(interaction, current):
-    choices = [app_commands.Choice(name=n, value=v) for n, v in _WEEKDAY_PRESETS]
-    found = _filter(choices, current)
-    cur = (current or "").strip()
-    # 手打ちの「金,土」なども選べるようにする。ただし一覧に同じ意味の候補があれば重ねない
-    if cur and _weekday_set(cur) not in {_weekday_set(c.value) for c in found}:
-        found = [app_commands.Choice(name=cur, value=cur)] + found
-    return found[:25]
 
 
 def _day_choices(base, count=14, today=None):
@@ -1481,35 +1432,75 @@ async def _calendar_autocomplete(interaction, current):
     return _filter(_calendar_choices(), current)[:25]
 
 
-@tree.command(name="date", description="空いている日を調べる（欄を選ぶだけ）")
-@app_commands.rename(fmt="format")
-@app_commands.describe(
-    start="開始の月（押すと一覧。2026-10.15 のように日まで入れてもよい）",
-    end="終了の月（省略すると開始と同じ月）",
-    time="時間帯（省略すると昼）",
-    weekday="曜日で絞る（土日・平日など。金,土 のように入れてもよい）",
-    fmt="出し方（省略すると通常）",
-)
-@app_commands.choices(time=TIME_CHOICES, fmt=FORMAT_CHOICES)
-@app_commands.autocomplete(start=_start_autocomplete, end=_end_autocomplete,
-                           weekday=_weekday_autocomplete)
-async def slash_date(interaction: discord.Interaction, start: str,
-                     end: Optional[str] = None,
-                     time: Optional[app_commands.Choice[str]] = None,
-                     weekday: Optional[str] = None,
-                     fmt: Optional[app_commands.Choice[str]] = None):
-    await interaction.response.defer(thinking=True)   # 先に「考え中…」を返す
-    try:
-        text, error = build_date_command(start, end, time.value if time else None,
-                                         weekday, fmt.value if fmt else None)
-        if error:
-            await interaction.followup.send(f"⚠️ {error}")
-            return
-        await _run_as_text_command(interaction, text)
-    except Exception as e:
-        # 返信しないと「考え中…」のまま止まるので、失敗もその場で返す
-        print(f"/date のエラー: {e!r}")
-        await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
+# /date は入力フォーム（モーダル）を開く。曜日をチェックボックスで自由に選べるようにするため。
+# スラッシュコマンドの欄は1つの値しか持てず、複数選択ができない。
+# フォームに置ける部品は最大5つ（discord.py の制約）なので、
+# 開始の月・終了の月・時間帯・曜日・形式でちょうど使い切る。
+_WEEKDAY_VALUES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+
+class DateModal(discord.ui.Modal):
+    """/date で開くフォーム。送信されたら文字のコマンドに組み立てて実行する"""
+
+    def __init__(self, today=None):
+        super().__init__(title="空いている日を調べる")
+        months = _month_choices(today or _today())    # 開くたびに「今月から12か月」を作る
+        self.start = discord.ui.Select(
+            options=[discord.SelectOption(label=c.name, value=c.value, default=(i == 0))
+                     for i, c in enumerate(months)],
+            min_values=1, max_values=1, required=True)
+        self.end = discord.ui.Select(
+            options=[discord.SelectOption(label=c.name, value=c.value) for c in months],
+            placeholder="選ばなければ開始と同じ月",
+            min_values=0, max_values=1, required=False)
+        self.time = discord.ui.RadioGroup(options=[
+            discord.RadioGroupOption(label=c.name, value=c.value, default=(c.value == "day"))
+            for c in TIME_CHOICES], required=True)
+        # 選択肢に「曜」は付けない（月 火 水 木 金 土 日）
+        self.weekday = discord.ui.CheckboxGroup(options=[
+            discord.CheckboxGroupOption(label=WEEKDAY_NAMES[i], value=v)
+            for i, v in enumerate(_WEEKDAY_VALUES)],
+            min_values=0, max_values=7, required=False)  # 既定の max_values は1なので明示する
+        self.fmt = discord.ui.RadioGroup(options=[
+            discord.RadioGroupOption(label=c.name, value=c.value, default=(c.value == "normal"))
+            for c in FORMAT_CHOICES], required=True)
+        self.add_item(discord.ui.Label(text="開始の月", component=self.start))
+        self.add_item(discord.ui.Label(text="終了の月", component=self.end,
+                                       description="選ばなければ開始と同じ月"))
+        self.add_item(discord.ui.Label(text="時間帯", component=self.time))
+        self.add_item(discord.ui.Label(text="曜日", component=self.weekday,
+                                       description="選ばなければすべての曜日"))
+        self.add_item(discord.ui.Label(text="出し方", component=self.fmt))
+
+    def to_command(self):
+        """選ばれた内容から文字のコマンドを組み立てる。誤りがあれば (None, 理由)"""
+        start = self.start.values[0] if self.start.values else None
+        if start is None:
+            return None, "開始の月を選んでください"
+        end = self.end.values[0] if self.end.values else None
+        # 選ばれた順ではなく月→日の順で並べる（結果は同じだが、組み立てる文字列をそろえるため）
+        picked = [v for v in _WEEKDAY_VALUES if v in set(self.weekday.values)]
+        return build_date_command(start, end, self.time.value, ",".join(picked) or None,
+                                  self.fmt.value)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(thinking=True)   # 先に「考え中…」を返す
+        try:
+            text, error = self.to_command()
+            if error:
+                await interaction.followup.send(f"⚠️ {error}")
+                return
+            await _run_as_text_command(interaction, text)
+        except Exception as e:
+            # 返信しないと「考え中…」のまま止まるので、失敗もその場で返す
+            print(f"/date のエラー: {e!r}")
+            await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
+
+
+@tree.command(name="date", description="空いている日を調べる（フォームで月・時間帯・曜日を選ぶ）")
+async def slash_date(interaction: discord.Interaction):
+    # フォームは最初の応答として開く必要がある（先に「考え中…」を返すと開けない）
+    await interaction.response.send_modal(DateModal())
 
 
 @tree.command(name="add", description="Google カレンダーに予定を追加する（時刻が空なら終日）")
