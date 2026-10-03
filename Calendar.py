@@ -1404,10 +1404,14 @@ class _Panel(discord.ui.LayoutView):
 
     # --- 部品を作る ---
     def _select(self, options, placeholder, on_pick, disabled=False):
+        # required=False：discord.py は文字の選択メニューに既定で「必須」の印を付けて送る。
+        # 本来フォーム用の印だが、パネルの空のメニュー（日の前半・後半の片方など）まで必須と扱われ、
+        # 実行のボタンが押せなくなる症状が出たため外す
         sel = discord.ui.Select(options=options, placeholder=placeholder, min_values=1, max_values=1,
-                                disabled=disabled)
+                                disabled=disabled, required=False)
 
         async def callback(interaction):
+            self._log(f"{placeholder} = {sel.values[0]}")
             await on_pick(interaction, sel.values[0])
         sel.callback = callback
         return sel
@@ -1416,9 +1420,14 @@ class _Panel(discord.ui.LayoutView):
         btn = discord.ui.Button(label=label, style=style, disabled=disabled)
 
         async def callback(interaction):
+            self._log(f"ボタン「{label}」")
             await on_press(interaction)
         btn.callback = callback
         return btn
+
+    def _log(self, what):
+        """操作がボットに届いたことをログに残す（コマンド名と、選んだ項目・値だけ。利用者名や予定名は残さない）"""
+        print(f"パネル操作 /{self.command}: {what}")
 
     def _date_rows(self, y, m, d, on_pick, none_label=None, day_none_label=None):
         """年・月・日（1〜15）・日（16〜31）の4つのメニューを、1つずつ行に入れて返す。
@@ -1451,10 +1460,16 @@ class _Panel(discord.ui.LayoutView):
     # --- 共通の操作 ---
     async def _update(self, interaction):
         self.render()
+        head, ok = self.summary()
+        # 注意の文言は日付や時刻だけで、カレンダー名や予定名は含まない
+        self._log("→ 実行できる状態" if ok else f"→ 注意を表示中（実行のボタンは押せない）：{head.splitlines()[0]}")
         await interaction.response.edit_message(view=self)
 
     async def interaction_check(self, interaction):
-        return interaction.user.id == self.owner_id   # 開いた本人だけが操作できる
+        if interaction.user.id != self.owner_id:   # 開いた本人だけが操作できる
+            self._log("開いた本人以外の操作のため受け付けませんでした")
+            return False
+        return True
 
     async def _press_cancel(self, interaction):
         self.stop()
@@ -1610,6 +1625,7 @@ class DatePanel(_Panel):
 async def slash_date(interaction: discord.Interaction):
     panel = DatePanel(interaction)
     await interaction.response.send_message(view=panel, ephemeral=True)   # 送った人だけに見える
+    panel._log("パネルを開きました")
 
 
 # ----- /add：予定を追加する -----
@@ -1772,7 +1788,7 @@ class NameModal(discord.ui.Modal):
                 await interaction.followup.send(f"⚠️ {error}")
                 return
             parsed["name"] = name              # 解釈が済んでから本当の名前を入れる
-            print(f"スラッシュコマンド: {text!r}（名前 {name!r}）")
+            print(f"スラッシュコマンド: {text!r}（予定の名前はログに残さない）")
             await handle_add_command(_SlashMessage(interaction, text), parsed)
             await self.panel.finish("このパネルは閉じました。結果はチャンネルに表示しています。")
         except Exception as e:
@@ -1787,6 +1803,7 @@ async def slash_add(interaction: discord.Interaction):
     calendars = _calendar_choices()
     panel = AddPanel(interaction, calendars)
     await interaction.response.send_message(view=panel, ephemeral=True)   # 送った人だけに見える
+    panel._log("パネルを開きました")
 
 
 _slash_synced = False
