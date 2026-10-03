@@ -338,6 +338,29 @@ def parse_range(body):
     else:                               # 単一（月 or 日）
         return parse_one_point(body, is_end=False), parse_one_point(body, is_end=True)
 
+def check_range(body):
+    """範囲の文字列を (開始日, 終了日, 誤り) にする。誤りが無ければ 誤り は None。
+    文字のコマンドと /date のパネルの要約で同じ検査を使い、食い違わないようにする"""
+    try:
+        start_date, end_date = parse_range(body)
+    except (ValueError, IndexError):
+        return None, None, ("書式が正しくありません。\n"
+                            "例：/2026-9 、/a2026-8:2026-9 、/n2026-8.15:2026-9.30 、/2026-9/sat/sun")
+
+    if start_date > end_date:          # 開始と終了が逆なら注意
+        return start_date, end_date, "開始日が終了日より後になっています"
+
+    # 範囲は最大12か月まで（超長期の指定によるAPI過負荷・レート制限を防ぐ）
+    # 開始日の12か月後を上限日として比較する
+    limit_year = start_date.year + 1
+    limit_month = start_date.month
+    limit_day = min(start_date.day, _calendar.monthrange(limit_year, limit_month)[1])
+    limit_date = date(limit_year, limit_month, limit_day)
+    if end_date > limit_date:
+        return start_date, end_date, "指定できる範囲は最大12か月までです"
+    return start_date, end_date, None
+
+
 def format_free_days_range(start_date, end_date, free_days, label):
     now = datetime.now(JST)
     stamp = now.strftime("%m/%d現在")
@@ -905,8 +928,8 @@ HELP_TEXT = (
     "add [仕事] 2026-10.5 9-12 定例         追加先をカレンダー名で（番号も可）\n"
     "\n"
     "■ 選ぶだけで使う（入力欄で / を打つと一覧に出る）\n"
-    "/date          フォームで月・時間帯・曜日（チェック）を選んで調べる\n"
-    "/add           パネルで日付・時刻・追加先を選んで追加する\n"
+    "/date          パネルで年月日・時間帯・曜日を選んで調べる\n"
+    "/add           パネルで年月日・時刻・追加先を選んで追加する\n"
     "\n"
     "■ 動作確認（反応がおかしいとき）\n"
     "ping           ボットの状態を表示\n"
@@ -1047,28 +1070,10 @@ async def _handle_message(message):
     if len(wanted_weekdays) == len(WEEKDAY_NAMES):
         wanted_weekdays = set()
 
-    # 日付への変換を試す（形式が変なら注意メッセージ）
-    try:
-        start_date, end_date = parse_range(body)
-    except (ValueError, IndexError):
-        await message.channel.send(
-            "書式が正しくありません。\n"
-            "例：/2026-9 、/a2026-8:2026-9 、/n2026-8.15:2026-9.30 、/2026-9/sat/sun"
-        )
-        return True
-
-    if start_date > end_date:          # 開始と終了が逆なら注意
-        await message.channel.send("開始日が終了日より後になっています")
-        return True
-
-    # 範囲は最大12か月まで（超長期の指定によるAPI過負荷・レート制限を防ぐ）
-    # 開始日の12か月後を上限日として比較する
-    limit_year = start_date.year + 1
-    limit_month = start_date.month
-    limit_day = min(start_date.day, _calendar.monthrange(limit_year, limit_month)[1])
-    limit_date = date(limit_year, limit_month, limit_day)
-    if end_date > limit_date:
-        await message.channel.send("指定できる範囲は最大12か月までです")
+    # 日付への変換と範囲の検査（/date のパネルの要約も同じ関数を使う）
+    start_date, end_date, range_error = check_range(body)
+    if range_error:
+        await message.channel.send(range_error)
         return True
 
     # モードごとに空き日を求める。
@@ -1315,34 +1320,6 @@ def build_add_command(date_, start=None, end=None, end_date=None, calendar=None)
     return " ".join(parts), None
 
 
-# --- 候補（入力中に出る一覧）。どれも最大25件まで（Discord の上限） ---
-def _filter(choices, current):
-    cur = _nfkc(current or "").strip().casefold()
-    if not cur:
-        return choices
-    return [c for c in choices if cur in _nfkc(c.name).casefold() or cur in c.value.casefold()]
-
-
-def _month_choices(base, count=12):
-    out = []
-    for i in range(count):
-        y = base.year + (base.month - 1 + i) // 12
-        m = (base.month - 1 + i) % 12 + 1
-        out.append(app_commands.Choice(name=f"{y}年{m}月", value=f"{y}-{m}"))
-    return out
-
-
-def _day_choices(base, count=14, today=None):
-    today = today or _today()
-    out = []
-    for i in range(count):
-        d = base + timedelta(days=i)
-        note = "（今日）" if d == today else "（明日）" if d == today + timedelta(days=1) else ""
-        out.append(app_commands.Choice(name=f"{d.year}/{_md(d)}{note}",
-                                       value=f"{d.year}-{d.month}.{d.day}"))
-    return out
-
-
 # /add の時刻は「時」と「分」を別の欄で選ぶ。
 # 候補は一度に25件までなので、時と分を1つの欄にすると 10:00〜23:00 の30分刻み（27件）すら収まらない。
 # 時は 10〜23時（利用者の指定）、分は 00・15・30・45 の4つ（60通りは上限に収まらない）。
@@ -1385,98 +1362,27 @@ def _calendar_choices():
     return items
 
 
-# /date は入力フォーム（モーダル）を開く。曜日をチェックボックスで自由に選べるようにするため。
-# スラッシュコマンドの欄は1つの値しか持てず、複数選択ができない。
-# フォームに置ける部品は最大5つ（discord.py の制約）なので、
-# 開始の月・終了の月・時間帯・曜日・形式でちょうど使い切る。
+# ===== /date・/add の設定パネル =====
+# どちらも、送った人だけに見える設定パネルを開く。メニューで選ぶたびに上の要約がその場で書き換わる。
+# 日付は「年」「月」「日」を別々のメニューで選ぶ。1つのメニューの選択肢は25件までなので、
+# 日は「1〜15日」と「16〜31日」の2つのメニューに分け、どちらか一方で選ぶ。
+# 入力フォーム（モーダル）は欄が5つまでで、開始と終了の年・月・日を置けない。従来のメッセージ（View）は
+# 5行まで＝選択メニュー5つまでなので、部品を40個まで置ける新しい形式のメッセージ（LayoutView）にしている。
+# 中身は文字のコマンドに組み立てて、既存の処理（_handle_message・parse_add_command など）に渡す。
+
+PANEL_TIMEOUT_SEC = 840                # 14分。応答の書き換えに使う鍵が15分で切れるので、その手前で閉じる
+_NONE = "__none__"                     # 選択肢「なし」「指定なし」の値
+_DAY_HALVES = ((1, 15), (16, 31))      # 日のメニューの分け方（それぞれ25件以内）
 _WEEKDAY_VALUES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
-class DateModal(discord.ui.Modal):
-    """/date で開くフォーム。送信されたら文字のコマンドに組み立てて実行する"""
-
-    def __init__(self, today=None):
-        super().__init__(title="空いている日を調べる")
-        months = _month_choices(today or _today())    # 開くたびに「今月から12か月」を作る
-        self.start = discord.ui.Select(
-            options=[discord.SelectOption(label=c.name, value=c.value, default=(i == 0))
-                     for i, c in enumerate(months)],
-            min_values=1, max_values=1, required=True)
-        self.end = discord.ui.Select(
-            options=[discord.SelectOption(label=c.name, value=c.value) for c in months],
-            placeholder="選ばなければ開始と同じ月",
-            min_values=0, max_values=1, required=False)
-        self.time = discord.ui.RadioGroup(options=[
-            discord.RadioGroupOption(label=c.name, value=c.value, default=(c.value == "day"))
-            for c in TIME_CHOICES], required=True)
-        # 選択肢に「曜」は付けない（月 火 水 木 金 土 日）
-        self.weekday = discord.ui.CheckboxGroup(options=[
-            discord.CheckboxGroupOption(label=WEEKDAY_NAMES[i], value=v)
-            for i, v in enumerate(_WEEKDAY_VALUES)],
-            min_values=0, max_values=7, required=False)  # 既定の max_values は1なので明示する
-        self.fmt = discord.ui.RadioGroup(options=[
-            discord.RadioGroupOption(label=c.name, value=c.value, default=(c.value == "normal"))
-            for c in FORMAT_CHOICES], required=True)
-        self.add_item(discord.ui.Label(text="開始の月", component=self.start))
-        self.add_item(discord.ui.Label(text="終了の月", component=self.end,
-                                       description="選ばなければ開始と同じ月"))
-        self.add_item(discord.ui.Label(text="時間帯", component=self.time))
-        self.add_item(discord.ui.Label(text="曜日", component=self.weekday,
-                                       description="選ばなければすべての曜日"))
-        self.add_item(discord.ui.Label(text="出し方", component=self.fmt))
-
-    def to_command(self):
-        """選ばれた内容から文字のコマンドを組み立てる。誤りがあれば (None, 理由)"""
-        start = self.start.values[0] if self.start.values else None
-        if start is None:
-            return None, "開始の月を選んでください"
-        end = self.end.values[0] if self.end.values else None
-        # 選ばれた順ではなく月→日の順で並べる（結果は同じだが、組み立てる文字列をそろえるため）
-        picked = [v for v in _WEEKDAY_VALUES if v in set(self.weekday.values)]
-        return build_date_command(start, end, self.time.value, ",".join(picked) or None,
-                                  self.fmt.value)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.defer(thinking=True)   # 先に「考え中…」を返す
-        try:
-            text, error = self.to_command()
-            if error:
-                await interaction.followup.send(f"⚠️ {error}")
-                return
-            await _run_as_text_command(interaction, text)
-        except Exception as e:
-            # 返信しないと「考え中…」のまま止まるので、失敗もその場で返す
-            print(f"/date のエラー: {e!r}")
-            await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
-
-
-@tree.command(name="date", description="空いている日を調べる（フォームで月・時間帯・曜日を選ぶ）")
-async def slash_date(interaction: discord.Interaction):
-    # フォームは最初の応答として開く必要がある（先に「考え中…」を返すと開けない）
-    await interaction.response.send_modal(DateModal())
-
-
-# ===== /add の設定パネル =====
-# /add を送ると、送った人だけに見える設定パネルが開く。日付・時刻・追加先をメニューで選ぶと
-# 上の要約がその場で書き換わり、最後に「名前を入れて追加」で名前の入力欄が開く。
-# 欄が8つあり、入力フォーム（上限5つ）にも従来のメッセージ（選択メニューは5つまで）にも
-# 収まらないので、部品を40個まで置ける新しい形式のメッセージ（LayoutView）にしている。
-# 中身は文字のコマンドに組み立てて、既存の parse_add_command・handle_add_command に渡す。
-
-PANEL_TIMEOUT_SEC = 840                # 14分。応答の書き換えに使う鍵が15分で切れるので、その手前で閉じる
-_INPUT = "__input__"                   # 選択肢「ほかの日付を入力…」の値
-_NONE = "__none__"                     # 選択肢「なし」の値
-_DATE_DAYS = 23                        # 日付の一覧に並べる日数（上限25件から入力用と表示中の日付の分を引いた。「なし」がある欄はさらに1日減る）
-
-
-def _day_value(d):
-    return f"{d.year}-{d.month}.{d.day}"
-
-
-def _value_day(v):
-    y, md = v.split("-")
-    mo, d = md.split(".")
-    return date(int(y), int(mo), int(d))
+def _date_error(y, m, d):
+    """年・月・日が実在する日付なら None、しなければ理由（既存の add と同じ言い回し）"""
+    try:
+        date(y, m, d)
+        return None
+    except ValueError:
+        return f"{y}-{m}.{d} は存在しない日付です"
 
 
 def _closed_view(text):
@@ -1486,84 +1392,20 @@ def _closed_view(text):
     return view
 
 
-class AddPanel(discord.ui.LayoutView):
-    """/add の設定パネル。選ばれた内容（状態）を持ち、操作のたびに作り直して表示を更新する"""
+class _Panel(discord.ui.LayoutView):
+    """/date と /add のパネルに共通の部分。選ばれた内容（状態）を持ち、操作のたびに作り直して表示を更新する"""
 
-    def __init__(self, origin, calendars, today=None):
+    def __init__(self, origin, today=None):
         super().__init__(timeout=PANEL_TIMEOUT_SEC)
-        self.origin = origin                   # /add のやり取り。閉じるときにパネルを書き換えるのに使う
+        self.origin = origin                   # 開いたときのやり取り。閉じるときにパネルを書き換えるのに使う
         self.owner_id = origin.user.id
         self.today = today or _today()
-        self.date = _day_value(self.today)     # 最初は今日・終日・先頭のカレンダー
-        self.end_date = None
-        self.start_hour = self.start_minute = None
-        self.end_hour = self.end_minute = None
-        self.calendars = calendars             # 開いた時点の候補を使い続ける（操作のたびに Google に問い合わせない）
-        self.calendar = "1"
-        self.note = None                       # 入力の誤りなど、要約の下に一度だけ出す一言
-        self.render()
+        self.note = None                       # 一度だけ要約の下に出す一言
 
-    # --- 今の選択を文字のコマンドにして確かめる ---
-    def check(self):
-        """(解釈結果 または None, 組み立てた文字列, 誤り または None)"""
-        start, error = _join_time(self.start_hour, self.start_minute, "開始")
-        if not error:
-            end, error = _join_time(self.end_hour, self.end_minute, "終了")
-        if not error:
-            text, error = build_add_command(self.date, start, end, self.end_date, self.calendar)
-        if error:
-            return None, None, error
-        try:
-            return parse_add_command(text), text, None
-        except AddError as e:
-            return None, text, str(e)
-
-    def summary(self):
-        parsed, _text, error = self.check()
-        cal = next((c.name.split(": ", 1)[-1] for c in self.calendars if c.value == self.calendar),
-                   f"{self.calendar}番目のカレンダー")
-        if error:
-            head = f"⚠️ {error}"
-        else:
-            head = f"📅 {format_added_when(parsed)} → {cal}"
-        if self.note:
-            head += f"\n{self.note}"
-        return head, error is None
-
-    # --- 表示を作る ---
-    def _date_options(self, current, base, with_none):
-        opts = []
-        if with_none:
-            opts.append(discord.SelectOption(label="なし（1日だけ）", value=_NONE, default=current is None))
-        days = [base + timedelta(days=i) for i in range(_DATE_DAYS)]
-        if current is not None and _value_day(current) not in days:
-            d = _value_day(current)          # 入力した日付が一覧の外なら、先頭に出して選ばれた状態にする
-            opts.append(discord.SelectOption(label=f"{d.year}/{_md(d)}", value=current, default=True))
-        # 上限25件。「ほかの日付を入力…」が必ず残るよう、並べる日数を前に置いた分だけ減らす
-        days = days[:25 - 1 - len(opts)]
-        for d in days:
-            note = "（今日）" if d == self.today else "（明日）" if d == self.today + timedelta(days=1) else ""
-            opts.append(discord.SelectOption(label=f"{d.year}/{_md(d)}{note}", value=_day_value(d),
-                                             default=(_day_value(d) == current)))
-        opts.append(discord.SelectOption(label="📝 ほかの日付を入力…", value=_INPUT))
-        return opts
-
-    def _hour_select(self, current, placeholder, on_pick):
-        opts = [discord.SelectOption(label="なし（終日）", value=_NONE, default=current is None)]
-        opts += [discord.SelectOption(label=c.name, value=str(c.value), default=(c.value == current))
-                 for c in HOUR_CHOICES]
-        return self._select(opts, placeholder, on_pick)
-
-    def _minute_select(self, hour, current, placeholder, on_pick):
-        opts = [discord.SelectOption(label=c.name, value=str(c.value),
-                                     default=(c.value == (current or 0)))
-                for c in MINUTE_CHOICES]
-        sel = self._select(opts, placeholder, on_pick)
-        sel.disabled = hour is None            # 時を選ぶまでは分を選べない
-        return sel
-
-    def _select(self, options, placeholder, on_pick):
-        sel = discord.ui.Select(options=options, placeholder=placeholder, min_values=1, max_values=1)
+    # --- 部品を作る ---
+    def _select(self, options, placeholder, on_pick, disabled=False):
+        sel = discord.ui.Select(options=options, placeholder=placeholder, min_values=1, max_values=1,
+                                disabled=disabled)
 
         async def callback(interaction):
             await on_pick(interaction, sel.values[0])
@@ -1578,19 +1420,270 @@ class AddPanel(discord.ui.LayoutView):
         btn.callback = callback
         return btn
 
+    def _date_rows(self, y, m, d, on_pick, none_label=None, day_none_label=None):
+        """年・月・日（1〜15）・日（16〜31）の4つのメニューを、1つずつ行に入れて返す。
+        on_pick(interaction, "y"|"m"|"d", 値)。none_label があれば年に「なし」を置き、なしの間は月・日を押せない。
+        day_none_label があれば日に「指定なし」を置く（/date で月単位に調べるため）"""
+        years = [self.today.year, self.today.year + 1]
+        year_opts = []
+        if none_label:
+            year_opts.append(discord.SelectOption(label=none_label, value=_NONE, default=y is None))
+        year_opts += [discord.SelectOption(label=f"{yy}年", value=str(yy), default=(yy == y)) for yy in years]
+        rows = [discord.ui.ActionRow(self._select(year_opts, "年", lambda i, v: on_pick(i, "y", v)))]
+        off = y is None
+        rows.append(discord.ui.ActionRow(self._select(
+            [discord.SelectOption(label=f"{mm}月", value=str(mm), default=(mm == m)) for mm in range(1, 13)],
+            "月", lambda i, v: on_pick(i, "m", v), disabled=off)))
+        # 選んだ年月に実在する日だけを並べ、曜日を添える（月を変えて日が無くなったときは要約で知らせる）
+        last = _calendar.monthrange(y, m)[1] if (y and m) else 31
+        for n, (lo, hi) in enumerate(_DAY_HALVES):
+            opts = []
+            if day_none_label:
+                opts.append(discord.SelectOption(label=day_none_label, value=_NONE,
+                                                 default=(d is None and n == 0)))
+            for dd in range(lo, min(hi, last) + 1):
+                wd = f"({WEEKDAY_NAMES[date(y, m, dd).weekday()]})" if (y and m) else ""
+                opts.append(discord.SelectOption(label=f"{dd}日{wd}", value=str(dd), default=(dd == d)))
+            rows.append(discord.ui.ActionRow(self._select(
+                opts, f"日（{lo}〜{hi}）", lambda i, v: on_pick(i, "d", v), disabled=off)))
+        return rows
+
+    # --- 共通の操作 ---
+    async def _update(self, interaction):
+        self.render()
+        await interaction.response.edit_message(view=self)
+
+    async def interaction_check(self, interaction):
+        return interaction.user.id == self.owner_id   # 開いた本人だけが操作できる
+
+    async def _press_cancel(self, interaction):
+        self.stop()
+        await interaction.response.edit_message(view=_closed_view(self.cancel_text))
+
+    async def finish(self, text):
+        """処理が済んだら、パネルを閉じた表示に書き換える"""
+        self.stop()
+        try:
+            await self.origin.edit_original_response(view=_closed_view(text))
+        except discord.HTTPException as e:
+            print(f"設定パネルを閉じられませんでした: {e}")
+
+    async def on_timeout(self):
+        await self.finish(f"{PANEL_TIMEOUT_SEC // 60}分操作が無かったので閉じました。"
+                          f"もう一度 /{self.command} を送ってください。")
+
+
+# ----- /date：空いている日を調べる -----
+_TIME_LABELS = {c.value: c.name for c in TIME_CHOICES}
+_FORMAT_LABELS = {c.value: c.name for c in FORMAT_CHOICES}
+
+
+class DatePanel(_Panel):
+    command = "date"
+    cancel_text = "空き日の検索を取り消しました。"
+
+    def __init__(self, origin, today=None):
+        super().__init__(origin, today)
+        self.sy, self.sm, self.sd = self.today.year, self.today.month, None   # 最初は今月（1日から）
+        self.ey = self.em = self.ed = None                                     # 終了なし＝開始の月だけ
+        self.time = "day"
+        self.weekdays = set()
+        self.fmt = "normal"
+        self.render()
+
+    @staticmethod
+    def _point(y, m, d):
+        return f"{y}-{m}" + (f".{d}" if d else "")
+
+    def check(self):
+        """(文字のコマンド, 開始日, 終了日, 誤り)。誤りが無ければ 誤り は None"""
+        for y, m, d in ((self.sy, self.sm, self.sd), (self.ey, self.em, self.ed)):
+            if y and d:
+                error = _date_error(y, m, d)
+                if error:
+                    return None, None, None, error
+        start = self._point(self.sy, self.sm, self.sd)
+        end = self._point(self.ey, self.em, self.ed) if self.ey else None
+        picked = [v for v in _WEEKDAY_VALUES if v in self.weekdays]   # 月→日の順にそろえる
+        if len(picked) == len(_WEEKDAY_VALUES):
+            picked = []                        # 7曜日すべて＝指定なし（既存の処理と同じ扱い。コマンドも短くなる）
+        text, error = build_date_command(start, end, self.time, ",".join(picked) or None, self.fmt)
+        if error:
+            return None, None, None, error
+        start_date, end_date, error = check_range(f"{start}:{end}" if end else start)
+        return text, start_date, end_date, error
+
+    def summary(self):
+        text, start_date, end_date, error = self.check()
+        if error:
+            head = f"⚠️ {error}"
+        else:
+            days = "すべての曜日" if len(self.weekdays) in (0, 7) else weekday_label(
+                {_WEEKDAY_VALUES.index(v) for v in self.weekdays})
+            head = (f"📅 {start_date.year}/{_md(start_date)}〜{end_date.year}/{_md(end_date)}\n"
+                    f"{_TIME_LABELS[self.time]}・{days}・{_FORMAT_LABELS[self.fmt]}\n"
+                    f"文字のコマンドでは `{text}`")
+        if self.note:
+            head += f"\n{self.note}"
+        return head, error is None
+
+    def render(self):
+        self.clear_items()
+        head, ok = self.summary()
+        self.note = None
+        week1 = [self._weekday_button(i) for i in range(5)]
+        week2 = [self._weekday_button(i) for i in range(5, 7)]
+        self.add_item(discord.ui.Container(
+            discord.ui.TextDisplay(f"### 空いている日を調べる\n{head}"),
+            discord.ui.TextDisplay("**開始**（日が「指定なし」なら月の1日から）"),
+            *self._date_rows(self.sy, self.sm, self.sd, self._pick_start, day_none_label="指定なし（1日から）"),
+            discord.ui.TextDisplay("**終了**（日が「指定なし」なら月末まで）"),
+            *self._date_rows(self.ey, self.em, self.ed, self._pick_end,
+                             none_label="なし（開始の月・日だけ）", day_none_label="指定なし（月末まで）"),
+            discord.ui.ActionRow(self._select(
+                [discord.SelectOption(label=f"時間帯：{c.name}", value=c.value, default=(c.value == self.time))
+                 for c in TIME_CHOICES], "時間帯", self._pick_time)),
+            discord.ui.TextDisplay("**曜日**（押すと緑になる。選ばなければすべての曜日）"),
+            discord.ui.ActionRow(*week1),
+            discord.ui.ActionRow(*week2),
+            discord.ui.ActionRow(self._select(
+                [discord.SelectOption(label=f"出し方：{c.name}", value=c.value, default=(c.value == self.fmt))
+                 for c in FORMAT_CHOICES], "出し方", self._pick_fmt)),
+            discord.ui.ActionRow(
+                self._button("調べる", discord.ButtonStyle.primary, self._press_run, disabled=not ok),
+                self._button("やめる", discord.ButtonStyle.danger, self._press_cancel),
+            ),
+        ))
+
+    def _weekday_button(self, i):
+        value = _WEEKDAY_VALUES[i]
+        on = value in self.weekdays
+        style = discord.ButtonStyle.success if on else discord.ButtonStyle.secondary
+
+        async def toggle(interaction):
+            self.weekdays.symmetric_difference_update({value})   # 押すたびに選ぶ／外すが切り替わる
+            await self._update(interaction)
+        return self._button(WEEKDAY_NAMES[i], style, toggle)   # 「曜」は付けない
+
+    async def _pick_start(self, interaction, part, value):
+        v = None if value == _NONE else int(value)
+        setattr(self, {"y": "sy", "m": "sm", "d": "sd"}[part], v)
+        await self._update(interaction)
+
+    async def _pick_end(self, interaction, part, value):
+        v = None if value == _NONE else int(value)
+        if part == "y":
+            if v is None:
+                self.ey = self.em = self.ed = None
+            else:
+                if self.ey is None:            # 終了を付けたときは、開始と同じ月の月末から選び直す
+                    self.em, self.ed = self.sm, None
+                self.ey = v
+        else:
+            setattr(self, {"m": "em", "d": "ed"}[part], v)
+        await self._update(interaction)
+
+    async def _pick_time(self, interaction, value):
+        self.time = value
+        await self._update(interaction)
+
+    async def _pick_fmt(self, interaction, value):
+        self.fmt = value
+        await self._update(interaction)
+
+    async def _press_run(self, interaction):
+        await interaction.response.defer(thinking=True)   # 結果はチャンネルに出す（文字のコマンドと同じ）
+        try:
+            text, _s, _e, error = self.check()
+            if error:
+                await interaction.followup.send(f"⚠️ {error}")
+                return
+            await _run_as_text_command(interaction, text)
+            await self.finish("このパネルは閉じました。結果はチャンネルに表示しています。")
+        except Exception as e:
+            # 返信しないと「考え中…」のまま止まるので、失敗もその場で返す
+            print(f"/date のエラー: {e!r}")
+            await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
+
+
+@tree.command(name="date", description="空いている日を調べる（パネルで年・月・日・時間帯・曜日を選ぶ）")
+async def slash_date(interaction: discord.Interaction):
+    panel = DatePanel(interaction)
+    await interaction.response.send_message(view=panel, ephemeral=True)   # 送った人だけに見える
+
+
+# ----- /add：予定を追加する -----
+class AddPanel(_Panel):
+    command = "add"
+    cancel_text = "予定の追加を取り消しました。"
+
+    def __init__(self, origin, calendars, today=None):
+        super().__init__(origin, today)
+        t = self.today
+        self.y, self.m, self.d = t.year, t.month, t.day   # 最初は今日・終日・先頭のカレンダー
+        self.ey = self.em = self.ed = None                 # 最終日なし＝1日だけ
+        self.start_hour = self.start_minute = None
+        self.end_hour = self.end_minute = None
+        self.calendars = calendars             # 開いた時点の候補を使い続ける（操作のたびに Google に問い合わせない）
+        self.calendar = "1"
+        self.render()
+
+    # --- 今の選択を文字のコマンドにして確かめる ---
+    def check(self):
+        """(解釈結果 または None, 組み立てた文字列, 誤り または None)"""
+        error = _date_error(self.y, self.m, self.d)
+        end_date = None
+        if not error and self.ey:
+            if self.ed is None:
+                error = "最終日の日を選んでください（1日だけなら最終日の年を「なし」に）"
+            else:
+                error = _date_error(self.ey, self.em, self.ed)
+                end_date = f"{self.ey}-{self.em}.{self.ed}"
+        start = end = None
+        if not error:
+            start, error = _join_time(self.start_hour, self.start_minute, "開始")
+        if not error:
+            end, error = _join_time(self.end_hour, self.end_minute, "終了")
+        if not error:
+            text, error = build_add_command(f"{self.y}-{self.m}.{self.d}", start, end, end_date, self.calendar)
+        if error:
+            return None, None, error
+        try:
+            return parse_add_command(text), text, None
+        except AddError as e:
+            return None, text, str(e)
+
+    def summary(self):
+        parsed, _text, error = self.check()
+        cal = next((c.name.split(": ", 1)[-1] for c in self.calendars if c.value == self.calendar),
+                   f"{self.calendar}番目のカレンダー")
+        head = f"⚠️ {error}" if error else f"📅 {format_added_when(parsed)} → {cal}"
+        if self.note:
+            head += f"\n{self.note}"
+        return head, error is None
+
+    def _hour_select(self, current, placeholder, on_pick):
+        opts = [discord.SelectOption(label="なし（終日）", value=_NONE, default=current is None)]
+        opts += [discord.SelectOption(label=c.name, value=str(c.value), default=(c.value == current))
+                 for c in HOUR_CHOICES]
+        return self._select(opts, placeholder, on_pick)
+
+    def _minute_select(self, hour, current, placeholder, on_pick):
+        opts = [discord.SelectOption(label=c.name, value=str(c.value), default=(c.value == (current or 0)))
+                for c in MINUTE_CHOICES]
+        return self._select(opts, placeholder, on_pick, disabled=hour is None)   # 時を選ぶまでは分を選べない
+
     def render(self):
         self.clear_items()
         head, ok = self.summary()
         self.note = None                       # 一言は一度出したら消す
-        base_end = _value_day(self.date) + timedelta(days=1)
         all_day = self.start_hour is None and self.end_hour is None
         self.add_item(discord.ui.Container(
             discord.ui.TextDisplay(f"### 予定を追加\n{head}"),
             discord.ui.TextDisplay("**日付**"),
-            discord.ui.ActionRow(self._select(self._date_options(self.date, self.today, False),
-                                              "日付", self._pick_date)),
-            discord.ui.ActionRow(self._select(self._date_options(self.end_date, base_end, True),
-                                              "最終日（複数日の終日にするとき）", self._pick_end_date)),
+            *self._date_rows(self.y, self.m, self.d, self._pick_date),
+            discord.ui.TextDisplay("**最終日**（複数日の終日予定にするときだけ）"),
+            *self._date_rows(self.ey, self.em, self.ed, self._pick_end_date, none_label="なし（1日だけ）"),
             discord.ui.TextDisplay("**開始**"),
             discord.ui.ActionRow(self._hour_select(self.start_hour, "開始の時（なしなら終日）", self._pick_start_hour)),
             discord.ui.ActionRow(self._minute_select(self.start_hour, self.start_minute, "開始の分", self._pick_start_minute)),
@@ -1608,26 +1701,22 @@ class AddPanel(discord.ui.LayoutView):
             ),
         ))
 
-    async def _update(self, interaction):
-        self.render()
-        await interaction.response.edit_message(view=self)
-
     # --- 操作 ---
-    async def interaction_check(self, interaction):
-        return interaction.user.id == self.owner_id   # 開いた本人だけが操作できる
-
-    async def _pick_date(self, interaction, value):
-        if value == _INPUT:
-            await interaction.response.send_modal(DateInputModal(self, "date"))
-            return
-        self.date = value
+    async def _pick_date(self, interaction, part, value):
+        setattr(self, part, int(value))        # part は "y"・"m"・"d"
         await self._update(interaction)
 
-    async def _pick_end_date(self, interaction, value):
-        if value == _INPUT:
-            await interaction.response.send_modal(DateInputModal(self, "end_date"))
-            return
-        self.end_date = None if value == _NONE else value
+    async def _pick_end_date(self, interaction, part, value):
+        v = None if value == _NONE else int(value)
+        if part == "y":
+            if v is None:
+                self.ey = self.em = self.ed = None
+            else:
+                if self.ey is None:            # 最終日を付けたときは、日付と同じ月で日を選んでもらう
+                    self.em, self.ed = self.m, None
+                self.ey = v
+        else:
+            setattr(self, {"m": "em", "d": "ed"}[part], v)
         await self._update(interaction)
 
     async def _pick_start_hour(self, interaction, value):
@@ -1660,44 +1749,6 @@ class AddPanel(discord.ui.LayoutView):
 
     async def _press_add(self, interaction):
         await interaction.response.send_modal(NameModal(self))
-
-    async def _press_cancel(self, interaction):
-        self.stop()
-        await interaction.response.edit_message(view=_closed_view("予定の追加を取り消しました。"))
-
-    async def finish(self, text):
-        """追加が済んだら、パネルを閉じた表示に書き換える"""
-        self.stop()
-        try:
-            await self.origin.edit_original_response(view=_closed_view(text))
-        except discord.HTTPException as e:
-            print(f"設定パネルを閉じられませんでした: {e}")
-
-    async def on_timeout(self):
-        await self.finish(f"{PANEL_TIMEOUT_SEC // 60}分操作が無かったので閉じました。もう一度 /add を送ってください。")
-
-
-class DateInputModal(discord.ui.Modal):
-    """「ほかの日付を入力…」で開く入力欄。一覧に無い先の日付を入れるため"""
-
-    def __init__(self, panel, field):
-        super().__init__(title="日付を入力")
-        self.panel, self.field = panel, field
-        self.text = discord.ui.TextInput(placeholder="例：10/20 または 2026-11.3", max_length=20)
-        self.add_item(discord.ui.Label(
-            text="開始の日付" if field == "date" else "最終日", component=self.text))
-
-    async def on_submit(self, interaction):
-        value = _slash_day(self.text.value)
-        if value is None:
-            self.panel.note = "⚠️ 日付は `10/20` か `2026-11.3` の形で入力してください"
-        else:
-            try:
-                _value_day(value)              # 2/30 のような存在しない日付は、ここで弾く（一覧を作れないため）
-                setattr(self.panel, self.field, value)
-            except ValueError:
-                self.panel.note = f"⚠️ {value} は存在しない日付です"
-        await self.panel._update(interaction)
 
 
 class NameModal(discord.ui.Modal):
