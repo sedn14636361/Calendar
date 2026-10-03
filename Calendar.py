@@ -18,6 +18,15 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError   # Google が返したエラー（403 など）
 from datetime import datetime, timezone, timedelta, date
 from PIL import Image, ImageDraw, ImageFont  # 画像生成の道具（要 Pillow）
+import sys
+
+# print の出力を1行ごとに書き出す。Render のようにログへ流すとき、Python は出力をため込み、
+# ボットのログ程度の量では書き出されないまま残る（「登録しました」などがログに出なくなる）
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(line_buffering=True)
+    except AttributeError:
+        pass                                # 差し替えられた出力先（テストなど）は設定できないのでそのまま
 
 
 # ===== ② 設定値（環境変数から読み込む） =====
