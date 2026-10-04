@@ -267,6 +267,15 @@ macOS / Linux では起きない。
 - `SLASH_COMMANDS=off` なら空の一覧を登録し、Discord 側の登録を消す。以前の版のコードは
   登録に触らないので、コードを戻す前にこれで一度起動しておく（README 16章）
 - 導入前の状態は GitHub のブランチ `backup/before-slash-commands` に残してある
+- **`/purge`** は `purge_messages()` で、新しい方から「残すもの」を飛ばしてちょうど指定の数を削除する。
+  discord.py の `channel.purge(limit=…)` は `limit` が「調べる数」で、飛ばした分だけ消える数が減るため使っていない
+  - 残すのは自動表示のメッセージ（`state["messages"]`。消すと以後の `msg.edit` が毎回失敗し、自動表示が復活しない）、
+    ピン留め、`MessageType.is_deletable()` が偽のもの。さかのぼるのは1000件まで
+  - Discord の一括削除は「14日以内・2〜100件」だけ。境目のものが送るまでに14日を過ぎないよう1時間の余裕をとり、
+    それより古いものと1件だけのときは1件ずつ消す
+  - 使える人は `default_permissions(manage_messages=True)`（一覧の表示）と
+    `checks.has_permissions(manage_messages=True)`（実行時の確認）の両方で絞る。断るときは `slash_purge_error` が本人だけに返す
+  - ログには件数とチャンネル番号だけを残す
 - `print()` の出力は、起動時に `sys.stdout.reconfigure(line_buffering=True)` で1行ごとに書き出す。
   Render のように出力をログへ流すと Python はため込むので、これが無いとボットの `print` がログに出ない
 
