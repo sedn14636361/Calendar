@@ -930,6 +930,7 @@ HELP_TEXT = (
     "■ 選ぶだけで使う（入力欄で / を打つと一覧に出る）\n"
     "/date          パネルで年月日・時間帯・曜日を選んで調べる\n"
     "/add           パネルで年月日・時刻・追加先を選んで追加する\n"
+    "/purge         メッセージを指定した数だけ削除（管理者向け）\n"
     "\n"
     "■ 動作確認（反応がおかしいとき）\n"
     "ping           ボットの状態を表示\n"
@@ -1804,6 +1805,101 @@ async def slash_add(interaction: discord.Interaction):
     panel = AddPanel(interaction, calendars)
     await interaction.response.send_message(view=panel, ephemeral=True)   # 送った人だけに見える
     panel._log("パネルを開きました")
+
+
+# ===== /purge：このチャンネルのメッセージをまとめて削除する =====
+# 新しい方から、指定した数だけ削除する（誰のメッセージかは問わない）。
+# 自動表示のメッセージ（state["messages"]）は必ず残す。消すと以後の書き換えが毎回失敗し、自動表示が復活しないため。
+# ピン留めも残す。残したものは数に含めず、その分さかのぼって指定の数を消す。
+# Discord は「14日以内のメッセージを100件まで」しか一度に消せないので、それより古いものは1件ずつ消す。
+# 使えるのは「メッセージの管理」の権限を持つ人だけ（ほかの人には一覧にも出ない）。
+
+PURGE_MAX = 100                        # 一度に消せる数の上限（利用者の指定。一括削除の上限とも同じ）
+_PURGE_SCAN_MAX = 1000                 # 残すメッセージを飛ばしながら、さかのぼる数の上限
+# 一括削除できるのは14日以内のメッセージだけ。境目ちょうどのものが送るまでに14日を過ぎて
+# 全体が失敗しないよう、1時間の余裕をとり、それより古いものは1件ずつ消す
+_BULK_DELETE_AGE = timedelta(days=14) - timedelta(hours=1)
+
+
+def _purge_keep_reason(message):
+    """残すメッセージなら理由、消してよいなら None"""
+    if any(message.id == m.id for m in state["messages"]):
+        return "自動表示"
+    if message.pinned:
+        return "ピン留め"
+    if not message.type.is_deletable():
+        return "削除できない種類"
+    return None
+
+
+async def purge_messages(channel, count, now=None):
+    """新しい方から、残すべきものを飛ばして count 件削除する。戻り値は (削除した数, {残した理由: 件数})"""
+    now = now or discord.utils.utcnow()
+    targets, kept = [], {}
+    async for message in channel.history(limit=_PURGE_SCAN_MAX):
+        reason = _purge_keep_reason(message)
+        if reason:
+            kept[reason] = kept.get(reason, 0) + 1
+            continue
+        targets.append(message)
+        if len(targets) >= count:
+            break
+    recent = [m for m in targets if now - m.created_at < _BULK_DELETE_AGE]
+    old = [m for m in targets if now - m.created_at >= _BULK_DELETE_AGE]
+    for i in range(0, len(recent), 100):
+        chunk = recent[i:i + 100]
+        if len(chunk) == 1:
+            await chunk[0].delete()            # 一括削除は2件以上から
+        else:
+            await channel.delete_messages(chunk)
+    for message in old:
+        await message.delete()                 # 待ち時間の調整は discord.py が行う
+    return len(targets), kept
+
+
+PURGE_PERMISSION_HELP = ("ボットに「メッセージの管理」と「メッセージ履歴を読む」の権限がありません。\n"
+                         "サーバー設定 →「ロール」→ ボットのロールで、この2つを有効にしてください"
+                         "（チャンネルごとの権限で外されていないかも確認してください。README 3-2）")
+
+
+@tree.command(name="purge", description="このチャンネルの新しいメッセージを指定した数だけ削除する（自動表示とピン留めは残す）")
+@app_commands.describe(count=f"削除する数（1〜{PURGE_MAX}）")
+@app_commands.guild_only()
+@app_commands.default_permissions(manage_messages=True)       # 既定では「メッセージの管理」を持つ人にだけ一覧に出る
+@app_commands.checks.has_permissions(manage_messages=True)    # サーバー設定で広げられても、実行時に本人の権限を確かめる
+async def slash_purge(interaction: discord.Interaction, count: app_commands.Range[int, 1, PURGE_MAX]):
+    await interaction.response.defer(ephemeral=True, thinking=True)   # 消す数が多いと時間がかかる
+    channel = interaction.channel
+    try:
+        deleted, kept = await purge_messages(channel, count)
+    except discord.Forbidden:
+        await interaction.followup.send(f"⚠️ {PURGE_PERMISSION_HELP}", ephemeral=True)
+        return
+    except discord.HTTPException as e:
+        print(f"/purge のエラー（チャンネル {channel.id}）: {e}")
+        await interaction.followup.send(
+            f"⚠️ 削除の途中で失敗しました（{type(e).__name__}）。一部だけ消えている可能性があります", ephemeral=True)
+        return
+    print(f"/purge: {deleted}件削除（チャンネル {channel.id}）")   # 中身や送信者は残さない
+    text = f"🗑️ {deleted}件削除しました"
+    if kept:
+        text += "（" + "・".join(f"{k}{v}件" for k, v in kept.items()) + "はそのまま）"
+    if deleted < count:
+        text += "\n指定より少ないのは、さかのぼれる範囲に消せるメッセージがそれ以上無かったためです"
+    await interaction.followup.send(text, ephemeral=True)
+
+
+@slash_purge.error
+async def slash_purge_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        text = "⚠️ /purge は「メッセージの管理」の権限を持つ人だけが使えます"
+    else:
+        print(f"/purge のエラー: {error!r}")
+        text = f"⚠️ 処理中にエラーが発生しました（{type(error).__name__}）"
+    if interaction.response.is_done():
+        await interaction.followup.send(text, ephemeral=True)
+    else:
+        await interaction.response.send_message(text, ephemeral=True)
 
 
 _slash_synced = False
