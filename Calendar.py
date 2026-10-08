@@ -1322,10 +1322,10 @@ def build_add_command(date_, start=None, end=None, end_date=None, calendar=None)
 
 
 # /add の時刻は「時」と「分」を別の欄で選ぶ。
-# 候補は一度に25件までなので、時と分を1つの欄にすると 10:00〜23:00 の30分刻み（27件）すら収まらない。
-# 時は 10〜23時（利用者の指定）、分は 00・15・30・45 の4つ（60通りは上限に収まらない）。
-# どちらも年月と違って古くならないので、押せばすぐ一覧が出る固定の選択肢にする
-HOUR_CHOICES = [app_commands.Choice(name=f"{h}時", value=h) for h in range(10, 24)]
+# メニューの選択肢は25件までなので、時と分を1つの欄にすると収まらない。
+# 時は 0〜23時（利用者の指定）。パネルでは「なし（終日）」と合わせて25件で、上限ちょうど。
+# 分は 00・15・30・45 の4つ（60通りは上限に収まらない）
+HOUR_CHOICES = [app_commands.Choice(name=f"{h}時", value=h) for h in range(0, 24)]
 MINUTE_CHOICES = [app_commands.Choice(name=f"{m:02d}分", value=m) for m in (0, 15, 30, 45)]
 
 
