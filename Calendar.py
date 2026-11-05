@@ -235,6 +235,7 @@ def build_embeds(events):
 # このボットで埋め込みを使うのは自動表示だけなので、コマンドへの返信や人のメッセージは当たらない
 DISPLAY_COLOR = 0x4285F4               # 自動表示の埋め込みの色（Google カレンダーの青）
 _CLEANUP_SCAN = 200                    # 探す範囲（チャンネルの新しい方から。利用者の指定）
+_CLEANUP_INTERVAL_SEC = 1              # 1通消すごとに空ける秒数（Discord の速さの制限に当たらないように）
 _DISPLAY_FIELD_RE = re.compile(r"\d{1,2}/\d{1,2}（[月火水木金土日]）")
 
 
@@ -262,10 +263,16 @@ async def remove_old_displays(channel):
         print(f"古い自動表示を探せませんでした（{e}）。新しい表示はそのまま送ります")
         return 0
     deleted = kept = 0
+    first = True
     for m in found:
         if m.pinned:                           # ピン留めは利用者が残したいものなので消さない
             kept += 1
             continue
+        if not first:
+            # 続けて消すと Discord から「速すぎる」（429）と返る。discord.py が自動でやり直すが
+            # ログに警告が残るので、送信と同じく1通ごとに1秒空ける
+            await asyncio.sleep(_CLEANUP_INTERVAL_SEC)
+        first = False
         try:
             await m.delete()                   # 自分のメッセージなので「メッセージの管理」は要らない
             deleted += 1
