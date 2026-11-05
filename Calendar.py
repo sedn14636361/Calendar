@@ -75,7 +75,8 @@ SLASH_COMMANDS_ENABLED = os.environ.get("SLASH_COMMANDS", "on").strip().lower() 
 
 
 # ===== ⑤ 前回の状態を覚えておく箱 =====
-state = {"messages": [], "signature": None}
+# cleaned：起動のあと古い自動表示を消し終えたか（起動ごとに1回だけ行う）
+state = {"messages": [], "signature": None, "cleaned": False}
 
 
 # ===== ⑤-A 動作状況の記録（ping と Web の状態表示で使う） =====
@@ -220,11 +221,61 @@ def build_embeds(events):
     for start in range(0, len(all_days), DAYS_PER_MESSAGE):
         chunk = all_days[start:start + DAYS_PER_MESSAGE]
         page = start // DAYS_PER_MESSAGE + 1
-        embed = discord.Embed(color=0x4285F4)
+        embed = discord.Embed(color=DISPLAY_COLOR)
         for name, value in chunk:
             embed.add_field(name=name, value=value, inline=False)
         embeds.append(embed)
     return embeds
+
+
+# ===== ⑦-B 再起動のあとに、前の起動で送った自動表示を消す =====
+# どのメッセージが自動表示かはメモリにしか持っていないので、再起動すると前の表示がチャンネルに残る。
+# 最初に表示を送る直前に、チャンネルの新しい方から探して削除する。
+# 見分け方：ボット自身が送った・本文なし・埋め込み1つ・自動表示の色・項目名がすべて「11/5（木）」の形。
+# このボットで埋め込みを使うのは自動表示だけなので、コマンドへの返信や人のメッセージは当たらない
+DISPLAY_COLOR = 0x4285F4               # 自動表示の埋め込みの色（Google カレンダーの青）
+_CLEANUP_SCAN = 200                    # 探す範囲（チャンネルの新しい方から。利用者の指定）
+_DISPLAY_FIELD_RE = re.compile(r"\d{1,2}/\d{1,2}（[月火水木金土日]）")
+
+
+def is_display_message(message, me):
+    """自動表示のメッセージなら True"""
+    if me is None or message.author.id != me.id or message.content:
+        return False
+    if len(message.embeds) != 1:
+        return False
+    e = message.embeds[0]
+    if e.color is None or e.color.value != DISPLAY_COLOR or not e.fields:
+        return False
+    return all(_DISPLAY_FIELD_RE.fullmatch(f.name or "") for f in e.fields)
+
+
+async def remove_old_displays(channel):
+    """前の起動で送った自動表示を消す。戻り値は消した数。
+    探せない・消せないときはログに残して続ける（新しい表示はそのまま送る）"""
+    found = []
+    try:
+        async for m in channel.history(limit=_CLEANUP_SCAN):
+            if is_display_message(m, client.user):
+                found.append(m)
+    except discord.HTTPException as e:         # 「メッセージ履歴を読む」が無いと Forbidden
+        print(f"古い自動表示を探せませんでした（{e}）。新しい表示はそのまま送ります")
+        return 0
+    deleted = kept = 0
+    for m in found:
+        if m.pinned:                           # ピン留めは利用者が残したいものなので消さない
+            kept += 1
+            continue
+        try:
+            await m.delete()                   # 自分のメッセージなので「メッセージの管理」は要らない
+            deleted += 1
+        except discord.NotFound:
+            pass                               # すでに消されていた
+        except discord.HTTPException as e:
+            print(f"古い自動表示を消せませんでした: {e}")
+    if found:
+        print(f"古い自動表示を{deleted}通削除しました" + (f"（ピン留めの{kept}通は残しました）" if kept else ""))
+    return deleted
 
 
 # ===== ⑧ 定期的に実行される処理（5分ごと） =====
@@ -249,6 +300,10 @@ async def update_calendar():
     channel = client.get_channel(CHANNEL_ID)
     
     if not state["messages"]:
+        if not state["cleaned"]:
+            # 読み取りに成功して新しい表示を送れるときだけ消す（失敗した回は古い表示を残す）
+            state["cleaned"] = True
+            await remove_old_displays(channel)
         for embed in embeds:
             try:
                 msg = await channel.send(embed=embed)
