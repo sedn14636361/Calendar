@@ -868,34 +868,43 @@ def resolve_add_calendar(spec):
     raise AddError(msg)
 
 
+def _writable_target(spec):
+    """追加先を決め、書き込めることを確かめる。戻り値は (カレンダーID, 返信に出す呼び名)。
+    書き込み権限が無いことが分かっているなら、追加を試す前に AddError で理由を返す"""
+    index, cid, name, role = resolve_add_calendar(spec)
+    label = _calendar_label(index, name)
+    if role is not None and role not in _WRITABLE_ROLES:
+        raise AddError(
+            f"{label}には書き込む権限がありません（いまの権限：{role}）。\n"
+            "Google カレンダーの共有設定で、サービスアカウントの権限を"
+            "「すべての予定の詳細の変更や表示ができます」にしてください")
+    return cid, label
+
+
+def _http_error_reason(e):
+    """Google が返したエラー（HttpError）を、利用者向けの理由にする"""
+    status = e.status_code
+    print(f"予定の追加エラー（HTTP {status}）: {e}")
+    if status == 403:
+        return ("カレンダーに書き込む権限がありません。Google カレンダーの共有設定で、"
+                "サービスアカウントの権限を「すべての予定の詳細の変更や表示ができます」にしてください")
+    if status == 404:
+        return "カレンダーが見つかりません。CALENDAR_ID と共有設定を確認してください"
+    return f"Google がエラーを返しました（HTTP {status}）"
+
+
 async def handle_add_command(message, parsed):
     """予定を追加して、結果を返信する"""
     async with message.channel.typing():
         try:
-            index, cid, name, role = resolve_add_calendar(parsed["calendar"])
-            label = _calendar_label(index, name)
-            # 書き込み権限が無いことが分かっているなら、追加を試す前に理由を返す
-            if role is not None and role not in _WRITABLE_ROLES:
-                raise AddError(
-                    f"{label}には書き込む権限がありません（いまの権限：{role}）。\n"
-                    "Google カレンダーの共有設定で、サービスアカウントの権限を"
-                    "「すべての予定の詳細の変更や表示ができます」にしてください")
+            cid, label = _writable_target(parsed["calendar"])
             created = service.events().insert(
                 calendarId=cid, body=build_event_body(parsed)).execute()
         except AddError as e:
             await message.channel.send(f"⚠️ {e}")
             return
         except HttpError as e:
-            status = e.status_code
-            print(f"予定の追加エラー（HTTP {status}）: {e}")
-            if status == 403:
-                reason = ("カレンダーに書き込む権限がありません。Google カレンダーの共有設定で、"
-                          "サービスアカウントの権限を「すべての予定の詳細の変更や表示ができます」にしてください")
-            elif status == 404:
-                reason = "カレンダーが見つかりません。CALENDAR_ID と共有設定を確認してください"
-            else:
-                reason = f"Google がエラーを返しました（HTTP {status}）"
-            await message.channel.send(f"⚠️ 予定を追加できませんでした。{reason}")
+            await message.channel.send(f"⚠️ 予定を追加できませんでした。{_http_error_reason(e)}")
             return
         except Exception as e:
             print(f"予定の追加エラー: {e!r}")
@@ -911,6 +920,78 @@ async def handle_add_command(message, parsed):
     if link:
         lines.append(f"<{link}>")             # < > で囲み、リンクのプレビュー表示を抑える
     await message.channel.send("\n".join(lines))
+
+
+ADD_MAX_DAYS = 31                      # /add のパネルで一度に追加できる日数（利用者の指定）
+
+
+async def handle_add_many(message, parsed_list):
+    """同じ名前・同じ時刻の予定を、日ごとに1件ずつ追加して、結果を1通にまとめて返信する。
+    parsed_list は日ごとの解釈結果（追加先と名前はどれも同じ）。一部が失敗しても残りは続ける"""
+    async with message.channel.typing():
+        try:
+            cid, label = _writable_target(parsed_list[0]["calendar"])   # 追加先の確認は1回だけ
+        except AddError as e:
+            await message.channel.send(f"⚠️ {e}")
+            return
+        except HttpError as e:
+            await message.channel.send(f"⚠️ 予定を追加できませんでした。{_http_error_reason(e)}")
+            return
+        except Exception as e:
+            print(f"予定の追加エラー: {e!r}")
+            await message.channel.send(
+                f"⚠️ 予定を追加できませんでした（{type(e).__name__}）。時間をおいて試してください")
+            return
+        added, failed = [], {}                 # failed は 理由 → 日時の一覧（同じ理由はまとめて1行にする）
+        for p in parsed_list:
+            try:
+                service.events().insert(calendarId=cid, body=build_event_body(p)).execute()
+                added.append(p)
+            except HttpError as e:
+                failed.setdefault(_http_error_reason(e), []).append(p)
+            except Exception as e:
+                print(f"予定の追加エラー: {e!r}")
+                failed.setdefault(f"{type(e).__name__}。時間をおいて試してください", []).append(p)
+            await asyncio.sleep(0)             # 1件ごとに、ほかの処理（自動表示など）に順番を譲る
+
+    total = len(parsed_list)
+    text = _many_reply(parsed_list[0]["name"], total, added, failed, label, compact=False)
+    if len(text) > 2000:                       # 1通の上限を超えるなら、日ごとの行を短い日付の並びにする
+        text = _many_reply(parsed_list[0]["name"], total, added, failed, label, compact=True)
+    await message.channel.send(text)
+
+
+def _start_day(p):
+    s = p["start"]
+    return s.date() if isinstance(s, datetime) else s
+
+
+def _time_only(p):
+    """日付を除いた時刻の部分（例：14:00〜16:00、22:00〜翌2:00、終日）"""
+    s, e = p["start"], p["end"]
+    if not isinstance(s, datetime):
+        return "終日"
+    nxt = "翌" if e.date() > s.date() else ""
+    return f"{s:%H:%M}〜{nxt}{e:%H:%M}"
+
+
+def _many_reply(name, total, added, failed, label, compact):
+    if not added:
+        lines = [f"⚠️ 予定を追加できませんでした（{total}件とも）", f"**{name}**"]
+    elif failed:
+        lines = [f"⚠️ {total}件のうち{len(added)}件を追加しました", f"**{name}**"]
+    else:
+        lines = [f"✅ 予定を{total}件追加しました（1日ずつ別の予定）", f"**{name}**"]
+    if compact and added:
+        lines.append("、".join(f"{_start_day(p).year}/{_md(_start_day(p))}" for p in added))   # 年をまたいでも正しく
+        lines.append(f"時刻：{_time_only(added[0])}")
+    else:
+        lines += [format_added_when(p) for p in added]
+    lines.append(f"追加先：{label}")
+    for reason, ps in failed.items():
+        # 失敗した日は短い日付だけを並べる（同じ理由はまとめて1行）
+        lines.append(f"追加できなかった日（{reason}）：" + "、".join(_md(_start_day(p)) for p in ps))
+    return "\n".join(lines)
 
 
 # ===== ⑧-E コマンド一覧のテキスト ★追加 =====
@@ -929,7 +1010,7 @@ HELP_TEXT = (
     "\n"
     "■ 選ぶだけで使う（入力欄で / を打つと一覧に出る）\n"
     "/date          パネルで年月日・時間帯・曜日を選んで調べる\n"
-    "/add           パネルで年月日・時刻・追加先を選んで追加する\n"
+    "/add           パネルで年月日・時刻・追加先を選んで追加（複数の日も可）\n"
     "/purge         メッセージを指定した数だけ削除（管理者向け）\n"
     "\n"
     "■ 動作確認（反応がおかしいとき）\n"
@@ -1404,16 +1485,18 @@ class _Panel(discord.ui.LayoutView):
         self.note = None                       # 一度だけ要約の下に出す一言
 
     # --- 部品を作る ---
-    def _select(self, options, placeholder, on_pick, disabled=False):
+    def _select(self, options, placeholder, on_pick, disabled=False, multi=False):
+        """選択メニュー。multi なら何件でも（0件も）選べ、on_pick には選んだ値の一覧を渡す"""
         # required=False：discord.py は文字の選択メニューに既定で「必須」の印を付けて送る。
         # 本来フォーム用の印だが、パネルの空のメニュー（日の前半・後半の片方など）まで必須と扱われ、
         # 実行のボタンが押せなくなる症状が出たため外す
-        sel = discord.ui.Select(options=options, placeholder=placeholder, min_values=1, max_values=1,
+        sel = discord.ui.Select(options=options, placeholder=placeholder,
+                                min_values=0 if multi else 1, max_values=len(options) if multi else 1,
                                 disabled=disabled, required=False)
 
         async def callback(interaction):
-            self._log(f"{placeholder} = {sel.values[0]}")
-            await on_pick(interaction, sel.values[0])
+            self._log(f"{placeholder} = {(','.join(sel.values) or '（選択なし）') if multi else sel.values[0]}")
+            await on_pick(interaction, list(sel.values) if multi else sel.values[0])
         sel.callback = callback
         return sel
 
@@ -1430,10 +1513,12 @@ class _Panel(discord.ui.LayoutView):
         """操作がボットに届いたことをログに残す（コマンド名と、選んだ項目・値だけ。利用者名や予定名は残さない）"""
         print(f"パネル操作 /{self.command}: {what}")
 
-    def _date_rows(self, y, m, d, on_pick, none_label=None, day_none_label=None):
+    def _date_rows(self, y, m, d, on_pick, none_label=None, day_none_label=None, multi_days=None):
         """年・月・日（1〜15）・日（16〜31）の4つのメニューを、1つずつ行に入れて返す。
         on_pick(interaction, "y"|"m"|"d", 値)。none_label があれば年に「なし」を置き、なしの間は月・日を押せない。
-        day_none_label があれば日に「指定なし」を置く（/date で月単位に調べるため）"""
+        day_none_label があれば日に「指定なし」を置く（/date で月単位に調べるため）。
+        multi_days（選んだ日の集合）を渡すと、日のメニューは複数選べる形になり、
+        on_pick(interaction, "days", (その組の最初の日, 最後の日, 選んだ値の一覧)) を呼ぶ"""
         years = [self.today.year, self.today.year + 1]
         year_opts = []
         if none_label:
@@ -1453,9 +1538,14 @@ class _Panel(discord.ui.LayoutView):
                                                  default=(d is None and n == 0)))
             for dd in range(lo, min(hi, last) + 1):
                 wd = f"({WEEKDAY_NAMES[date(y, m, dd).weekday()]})" if (y and m) else ""
-                opts.append(discord.SelectOption(label=f"{dd}日{wd}", value=str(dd), default=(dd == d)))
-            rows.append(discord.ui.ActionRow(self._select(
-                opts, f"日（{lo}〜{hi}）", lambda i, v: on_pick(i, "d", v), disabled=off)))
+                on = (date(y, m, dd) in multi_days) if multi_days is not None else (dd == d)
+                opts.append(discord.SelectOption(label=f"{dd}日{wd}", value=str(dd), default=on))
+            if multi_days is not None:
+                pick = (lambda lo_, hi_: lambda i, v: on_pick(i, "days", (lo_, hi_, v)))(lo, hi)
+                sel = self._select(opts, f"日（{lo}〜{hi}）", pick, disabled=off, multi=True)
+            else:
+                sel = self._select(opts, f"日（{lo}〜{hi}）", lambda i, v: on_pick(i, "d", v), disabled=off)
+            rows.append(discord.ui.ActionRow(sel))
         return rows
 
     # --- 共通の操作 ---
@@ -1637,7 +1727,8 @@ class AddPanel(_Panel):
     def __init__(self, origin, calendars, today=None):
         super().__init__(origin, today)
         t = self.today
-        self.y, self.m, self.d = t.year, t.month, t.day   # 最初は今日・終日・先頭のカレンダー
+        self.y, self.m = t.year, t.month       # 日のメニューに出している年月
+        self.days = {t}                        # 選んだ日（複数可。月を切り替えても残る）。最初は今日・終日・先頭のカレンダー
         self.ey = self.em = self.ed = None                 # 最終日なし＝1日だけ
         self.start_hour = self.start_minute = None
         self.end_hour = self.end_minute = None
@@ -1647,11 +1738,19 @@ class AddPanel(_Panel):
 
     # --- 今の選択を文字のコマンドにして確かめる ---
     def check(self):
-        """(解釈結果 または None, 組み立てた文字列, 誤り または None)"""
-        error = _date_error(self.y, self.m, self.d)
-        end_date = None
-        if not error and self.ey:
-            if self.ed is None:
+        """選んだ日ごとに文字のコマンドを組み立て、既存の parse_add_command に通す。
+        戻り値は (解釈結果の一覧 または None, 組み立てた文字列の一覧 または None, 誤り または None)。
+        一覧は日付の順。日ごとに別の予定になる（同じ名前・同じ時刻）"""
+        days = sorted(self.days)
+        error = end_date = None
+        if not days:
+            error = "日付を選んでください"
+        elif len(days) > ADD_MAX_DAYS:
+            error = f"一度に追加できるのは{ADD_MAX_DAYS}日までです（いま{len(days)}日選んでいます）"
+        elif self.ey:
+            if len(days) > 1:
+                error = "複数の日を選んだときは最終日を使えません（最終日の年を「なし」にしてください）"
+            elif self.ed is None:
                 error = "最終日の日を選んでください（1日だけなら最終日の年を「なし」に）"
             else:
                 error = _date_error(self.ey, self.em, self.ed)
@@ -1661,20 +1760,29 @@ class AddPanel(_Panel):
             start, error = _join_time(self.start_hour, self.start_minute, "開始")
         if not error:
             end, error = _join_time(self.end_hour, self.end_minute, "終了")
-        if not error:
-            text, error = build_add_command(f"{self.y}-{self.m}.{self.d}", start, end, end_date, self.calendar)
+        texts = []
+        for d in days if not error else []:
+            text, error = build_add_command(f"{d.year}-{d.month}.{d.day}", start, end, end_date, self.calendar)
+            if error:
+                break
+            texts.append(text)
         if error:
             return None, None, error
         try:
-            return parse_add_command(text), text, None
+            return [parse_add_command(t) for t in texts], texts, None
         except AddError as e:
-            return None, text, str(e)
+            return None, texts, str(e)
 
     def summary(self):
-        parsed, _text, error = self.check()
+        parsed, _texts, error = self.check()
         cal = next((c.name.split(": ", 1)[-1] for c in self.calendars if c.value == self.calendar),
                    f"{self.calendar}番目のカレンダー")
-        head = f"⚠️ {error}" if error else f"📅 {format_added_when(parsed)} → {cal}"
+        if error:
+            head = f"⚠️ {error}"
+        elif len(parsed) == 1:
+            head = f"📅 {format_added_when(parsed[0])} → {cal}"
+        else:                                  # 日ごとに1件ずつ。何件できるかと、それぞれの日時を並べる
+            head = f"📅 {len(parsed)}件（1日ずつ別の予定） → {cal}\n" + "\n".join(format_added_when(p) for p in parsed)
         if self.note:
             head += f"\n{self.note}"
         return head, error is None
@@ -1697,9 +1805,9 @@ class AddPanel(_Panel):
         all_day = self.start_hour is None and self.end_hour is None
         self.add_item(discord.ui.Container(
             discord.ui.TextDisplay(f"### 予定を追加\n{head}"),
-            discord.ui.TextDisplay("**日付**"),
-            *self._date_rows(self.y, self.m, self.d, self._pick_date),
-            discord.ui.TextDisplay("**最終日**（複数日の終日予定にするときだけ）"),
+            discord.ui.TextDisplay(f"**日付**（日は何日でも選べる。月を切り替えても選んだ日は残る。{ADD_MAX_DAYS}日まで）"),
+            *self._date_rows(self.y, self.m, None, self._pick_date, multi_days=self.days),
+            discord.ui.TextDisplay("**最終日**（1日だけ選んで、連続した終日予定にするときだけ）"),
             *self._date_rows(self.ey, self.em, self.ed, self._pick_end_date, none_label="なし（1日だけ）"),
             discord.ui.TextDisplay("**開始**"),
             discord.ui.ActionRow(self._hour_select(self.start_hour, "開始の時（なしなら終日）", self._pick_start_hour)),
@@ -1720,7 +1828,14 @@ class AddPanel(_Panel):
 
     # --- 操作 ---
     async def _pick_date(self, interaction, part, value):
-        setattr(self, part, int(value))        # part は "y"・"m"・"d"
+        if part == "days":                     # 日のメニュー（前半か後半）で選び直した
+            lo, hi, values = value
+            # 今出している年月のその組（1〜15日か16〜31日）の分だけを、選び直した内容に入れ替える
+            self.days = {d for d in self.days
+                         if not (d.year == self.y and d.month == self.m and lo <= d.day <= hi)}
+            self.days |= {date(self.y, self.m, int(v)) for v in values}
+        else:
+            setattr(self, part, int(value))    # part は "y"・"m"。選んだ日はそのまま残す
         await self._update(interaction)
 
     async def _pick_end_date(self, interaction, part, value):
@@ -1730,7 +1845,8 @@ class AddPanel(_Panel):
                 self.ey = self.em = self.ed = None
             else:
                 if self.ey is None:            # 最終日を付けたときは、日付と同じ月で日を選んでもらう
-                    self.em, self.ed = self.m, None
+                    first = min(self.days) if self.days else self.today
+                    self.em, self.ed = first.month, None
                 self.ey = v
         else:
             setattr(self, {"m": "em", "d": "ed"}[part], v)
@@ -1781,16 +1897,20 @@ class NameModal(discord.ui.Modal):
         await interaction.response.defer(thinking=True)   # 結果はチャンネルに出す（文字のコマンドと同じ）
         try:
             name = self.name.value.strip()
-            parsed, text, error = self.panel.check()
+            parsed, texts, error = self.panel.check()
             if not name:
                 await interaction.followup.send("⚠️ 予定の名前を入れてください")
                 return
             if error:
                 await interaction.followup.send(f"⚠️ {error}")
                 return
-            parsed["name"] = name              # 解釈が済んでから本当の名前を入れる
-            print(f"スラッシュコマンド: {text!r}（予定の名前はログに残さない）")
-            await handle_add_command(_SlashMessage(interaction, text), parsed)
+            for p in parsed:
+                p["name"] = name               # 解釈が済んでから本当の名前を入れる
+            print(f"スラッシュコマンド: {texts!r}（予定の名前はログに残さない）")
+            if len(parsed) == 1:               # 1日だけなら、文字の add と同じ処理・同じ返信
+                await handle_add_command(_SlashMessage(interaction, texts[0]), parsed[0])
+            else:
+                await handle_add_many(_SlashMessage(interaction, texts[0]), parsed)
             await self.panel.finish("このパネルは閉じました。結果はチャンネルに表示しています。")
         except Exception as e:
             print(f"/add のエラー: {e!r}")
