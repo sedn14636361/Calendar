@@ -13,6 +13,7 @@ import io                               # 画像をメモリ上で扱う道具
 import math                             # 応答時間が有限かを確かめる道具
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー（同時に応答できる形）
 import secrets                          # 推測できない乱数（カレンダー画面の合言葉）
+import hashlib                          # カレンダー画面のファイルの版の印（中身から作る）
 import aiohttp                          # Discord のログイン確認（discord.py が使っているもの）
 from discord.ext import tasks
 from google.oauth2 import service_account
@@ -2520,10 +2521,19 @@ def _run_on_bot_loop(coro, timeout=120):
     return asyncio.run_coroutine_threadsafe(coro, _bot_loop).result(timeout)
 
 
+def _asset_version(name):
+    """ファイルの中身から作る版の印。iPhone の Discord などは Cache-Control: no-store を守らず
+    古い CSS・JS を使い回すことがあるので、読み込み先に ?v=版 を付け、中身が変わったら別のものとして読ませる"""
+    with open(os.path.join(ACTIVITY_DIR, name), "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()[:12]
+
+
 def _activity_page():
-    """画面の HTML。アプリの ID（公開してよい値）だけを埋め込む"""
+    """画面の HTML。アプリの ID（公開してよい値）と、CSS・JS の版の印を埋め込む"""
     with open(os.path.join(ACTIVITY_DIR, "index.html"), encoding="utf-8") as f:
         html = f.read()
+    html = html.replace('href="app.css"', f'href="app.css?v={_asset_version("app.css")}"')
+    html = html.replace('src="app.js"', f'src="app.js?v={_asset_version("app.js")}"')
     return html.replace("{{CLIENT_ID}}", str(client.application_id or ""))
 
 
@@ -2539,7 +2549,11 @@ def handle_activity_request(method, path, body_bytes):
             return 200, "text/html; charset=utf-8", _activity_page().encode("utf-8")
         if sub in _ACTIVITY_FILES:
             with open(os.path.join(ACTIVITY_DIR, sub), "rb") as f:
-                return 200, _ACTIVITY_FILES[sub], f.read()
+                data = f.read()
+            if sub == "app.js":                # 中で読み込む SDK にも版の印を付ける
+                data = data.replace(b'"./discord-sdk.js"',
+                                    f'"./discord-sdk.js?v={_asset_version("discord-sdk.js")}"'.encode())
+            return 200, _ACTIVITY_FILES[sub], data
         return 404, "text/plain; charset=utf-8", b"not found\n"
     if method != "POST" or not sub.startswith("api/"):
         return 405, "text/plain; charset=utf-8", b"method not allowed\n"

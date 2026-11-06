@@ -324,6 +324,10 @@ macOS / Linux では起きない。
   `asyncio.run_coroutine_threadsafe` でボット本体の処理の流れ（`_bot_loop`、`on_ready` で記録）に渡す（`service` はスレッド間で共有できない）
 - **ログ**：`アクティビティ: …` の行。要求のパス（`?` 以降は除く）と結果の状態だけを残し、合言葉・アクセストークン・クライアントシークレット・予定名は残さない
 - **見せる予定**：`api/data` は最大43日分。予定の名前は自動表示と同じ範囲（今日から `DAYS_TO_SHOW` 日）だけ返し、それより先は名前なし
+- **古いファイルの使い回し**：iPhone の Discord（か Discord の中継）は `Cache-Control: no-store` を守らず、古い `app.css`・`app.js` を使い回すことがあった
+  （新しい HTML に古い CSS が当たり、見た目が崩れた。ログに `GET /activity/app.css` が出ていなかった）。
+  そのため HTML を配るときに `app.css?v=<中身の SHA-256 の先頭12文字>`・`app.js?v=…` に書き換え、`app.js` の中の SDK の読み込みにも同じ印を付ける（`_asset_version`）。
+  中身が変われば読み込み先も変わるので、古いものは使われない。CSS では iPhone の標準のボタンの見た目（`appearance`）と一覧の黒丸も打ち消している
 - 画面に入れる文字はすべて `textContent`（`innerHTML` は使わない）。CSP は `default-src 'self'` ほか。テストでは予定名の `<img onerror>` が動かないことを確かめている
 
 ### コマンドの書式

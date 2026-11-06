@@ -20,7 +20,12 @@ body {
 h1 { font-size: 20px; margin: 4px 0; }
 h2 { font-size: 17px; margin: 0; }
 h3 { font-size: 15px; margin: 0; }
-button { font: inherit; color: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* iPhone の標準の見た目（薄い灰色のボタン）を打ち消す。CSS の読み込みが遅れても読めるように、色もここで決める */
+button {
+  font: inherit; color: var(--text); touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  -webkit-appearance: none; appearance: none; background: var(--line); border: 0; border-radius: 10px;
+}
+ul { list-style: none; padding: 0; }
 .status { margin: 0 0 8px; color: var(--muted); font-size: 14px; white-space: pre-wrap; }
 .status.error { color: var(--sun); }
 .card { background: var(--card); border-radius: 12px; padding: 12px; margin: 0 0 12px; }
