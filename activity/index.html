@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="referrer" content="no-referrer">
+<title>予定を追加</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body data-client-id="{{CLIENT_ID}}">
+<main id="app">
+  <header class="top">
+    <h1>予定を追加</h1>
+    <p id="status" class="status" role="status">準備しています…</p>
+  </header>
+
+  <section id="editor" hidden>
+    <div class="card">
+      <div class="nav">
+        <button type="button" id="prev-month" class="icon" aria-label="前の月">‹</button>
+        <h2 id="month-title"></h2>
+        <button type="button" id="next-month" class="icon" aria-label="次の月">›</button>
+      </div>
+      <div class="weekdays" aria-hidden="true">
+        <span class="sun">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="sat">土</span>
+      </div>
+      <div id="month-grid" class="month" role="grid"></div>
+      <p class="hint">日をタップして選びます（もう一度タップで外れます）。何日でも選べます。</p>
+      <p id="warning" class="warning" hidden></p>
+    </div>
+
+    <div class="card">
+      <h2>時間</h2>
+      <div class="segmented" role="radiogroup">
+        <button type="button" id="mode-allday" role="radio" aria-checked="true">終日</button>
+        <button type="button" id="mode-time" role="radio" aria-checked="false">時間を指定</button>
+      </div>
+      <div id="time-box" hidden>
+        <div class="nav">
+          <button type="button" id="prev-week" class="icon" aria-label="前の週">‹</button>
+          <h3 id="week-title"></h3>
+          <button type="button" id="next-week" class="icon" aria-label="次の週">›</button>
+        </div>
+        <p class="hint">枠を「開始」→「終了」の順にタップします。灰色は登録済みの予定です。</p>
+        <div id="week-head" class="week-head"></div>
+        <div id="week-scroll" class="week-scroll">
+          <div id="week-grid" class="week-grid"></div>
+        </div>
+        <div class="fine">
+          <label>開始 <select id="start-sel"></select></label>
+          <label>終了 <select id="end-sel"></select></label>
+        </div>
+        <p id="overnight" class="hint" hidden>終了が開始より前なので、翌日の終了時刻までの予定になります。</p>
+      </div>
+    </div>
+
+    <div class="card form">
+      <label class="field">予定の名前
+        <input id="name" type="text" maxlength="200" autocomplete="off" enterkeyhint="done" placeholder="例：打ち合わせ">
+      </label>
+      <label class="field">追加先
+        <select id="calendar"></select>
+      </label>
+    </div>
+    <div class="spacer"></div>
+  </section>
+
+  <footer id="bar" class="bar" hidden>
+    <p id="summary" class="summary"></p>
+    <button type="button" id="add" class="primary" disabled>追加する</button>
+  </footer>
+
+  <section id="done" class="card" hidden>
+    <h2>結果</h2>
+    <pre id="result" class="result"></pre>
+    <p class="hint">左上の × でこの画面を閉じてください。続けて追加するときは、もう一度 /add から開いてください。</p>
+  </section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+/* カレンダー画面（Discord のアクティビティ）。スマホで使う前提の作り */
+:root {
+  --bg: #313338; --card: #2b2d31; --line: #3f4147; --text: #dbdee1; --muted: #949ba4;
+  --accent: #5865f2; --accent-weak: rgba(88, 101, 242, .28); --ok: #23a55a; --warn: #f0b232;
+  --busy: #4e5058; --sun: #f38b8b; --sat: #8bb4f3;
+  --safe-top: var(--discord-safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --safe-bottom: var(--discord-safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --safe-left: var(--discord-safe-area-inset-left, env(safe-area-inset-left, 0px));
+  --safe-right: var(--discord-safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --row: 24px;                      /* 週表示の30分ぶんの高さ */
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); }
+body {
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  padding: calc(8px + var(--safe-top)) calc(10px + var(--safe-right)) 0 calc(10px + var(--safe-left));
+  -webkit-text-size-adjust: 100%;
+}
+[hidden] { display: none !important; }
+h1 { font-size: 20px; margin: 4px 0; }
+h2 { font-size: 17px; margin: 0; }
+h3 { font-size: 15px; margin: 0; }
+button { font: inherit; color: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.status { margin: 0 0 8px; color: var(--muted); font-size: 14px; white-space: pre-wrap; }
+.status.error { color: var(--sun); }
+.card { background: var(--card); border-radius: 12px; padding: 12px; margin: 0 0 12px; }
+.hint { color: var(--muted); font-size: 13px; margin: 8px 0 0; }
+.warning { color: var(--warn); font-size: 14px; margin: 8px 0 0; }
+.nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.icon { width: 44px; height: 44px; border: 0; border-radius: 10px; background: var(--line); font-size: 24px; line-height: 1; }
+
+/* 月表示 */
+.weekdays, .month { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.weekdays span { text-align: center; color: var(--muted); font-size: 13px; }
+.weekdays .sun { color: var(--sun); } .weekdays .sat { color: var(--sat); }
+.day {
+  position: relative; min-height: 54px; border: 0; border-radius: 8px; background: #383a40;
+  padding: 4px 2px 6px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.day .num { font-size: 15px; font-weight: 600; }
+.day.other { opacity: .38; }
+.day.past .num { color: var(--muted); }
+.day.today .num { text-decoration: underline; text-underline-offset: 3px; }
+.day.sun .num { color: var(--sun); } .day.sat .num { color: var(--sat); }
+.day.selected { background: var(--accent); }
+.day.selected .num { color: #fff; }
+.day.week { outline: 2px solid var(--accent-weak); }
+.marks { display: flex; gap: 3px; flex-wrap: wrap; justify-content: center; max-width: 100%; }
+.mark { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+.mark.all { width: 14px; border-radius: 3px; }
+.day.selected .mark { background: rgba(255, 255, 255, .8); }
+
+/* 時間 */
+.segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
+.segmented button { min-height: 44px; border: 0; border-radius: 10px; background: var(--line); }
+.segmented button[aria-checked="true"] { background: var(--accent); color: #fff; }
+.week-head, .week-grid { display: grid; grid-template-columns: 40px repeat(7, 1fr); }
+.week-head { gap: 0; margin-bottom: 4px; }
+.week-head .col { text-align: center; font-size: 12px; line-height: 1.25; padding: 4px 0; border-radius: 6px; border: 0; background: none; }
+.week-head .col.selected { background: var(--accent); color: #fff; }
+.week-scroll { max-height: 55vh; overflow-y: auto; border-radius: 8px; background: #383a40; -webkit-overflow-scrolling: touch; }
+.week-grid { position: relative; }
+.hours { grid-column: 1; }
+.hours div { height: calc(var(--row) * 2); font-size: 11px; color: var(--muted); text-align: right; padding-right: 4px; transform: translateY(-7px); }
+.daycol { position: relative; border-left: 1px solid var(--line); }
+.daycol.selected { background: rgba(88, 101, 242, .10); }
+.slot { display: block; width: 100%; height: var(--row); border: 0; border-top: 1px solid rgba(255, 255, 255, .04); background: none; padding: 0; }
+.slot.hour { border-top-color: var(--line); }
+.ev { position: absolute; left: 2px; right: 2px; border-radius: 4px; background: var(--busy); font-size: 10px; line-height: 1.2; overflow: hidden; padding: 1px 2px; color: #cfd2d6; pointer-events: none; }
+.ev.all { background: #5c5f66; }
+.pick { position: absolute; left: 0; right: 0; background: rgba(35, 165, 90, .55); border: 2px solid var(--ok); border-radius: 4px; pointer-events: none; }
+.pick.weak { background: rgba(35, 165, 90, .18); border-style: dashed; }
+.pick.pending { height: var(--row); background: rgba(35, 165, 90, .35); }
+.fine { display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+.fine label { display: flex; align-items: center; gap: 6px; }
+
+/* 入力 */
+select, input[type="text"] {
+  font-size: 16px; min-height: 44px; border-radius: 8px; border: 1px solid var(--line);
+  background: #1e1f22; color: var(--text); padding: 6px 10px;
+}
+.form .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 14px; color: var(--muted); }
+.form .field input, .form .field select { width: 100%; color: var(--text); }
+.spacer { height: 120px; }
+.bar {
+  position: fixed; left: 0; right: 0; bottom: 0; background: #1e1f22; border-top: 1px solid var(--line);
+  padding: 8px calc(12px + var(--safe-right)) calc(8px + var(--safe-bottom)) calc(12px + var(--safe-left));
+}
+.summary { margin: 0 0 6px; font-size: 13px; color: var(--muted); max-height: 3.2em; overflow: hidden; white-space: pre-line; }
+.primary { width: 100%; min-height: 48px; border: 0; border-radius: 10px; background: var(--ok); color: #fff; font-weight: 700; }
+.primary:disabled { background: var(--line); color: var(--muted); }
+.result { white-space: pre-wrap; word-break: break-word; font: inherit; margin: 8px 0 0; }
