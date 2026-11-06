@@ -20,7 +20,12 @@ body {
 h1 { font-size: 20px; margin: 4px 0; }
 h2 { font-size: 17px; margin: 0; }
 h3 { font-size: 15px; margin: 0; }
-button { font: inherit; color: inherit; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* iPhone の標準の見た目（薄い灰色のボタン）を打ち消す。CSS の読み込みが遅れても読めるように、色もここで決める */
+button {
+  font: inherit; color: var(--text); touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  -webkit-appearance: none; appearance: none; background: var(--line); border: 0; border-radius: 10px;
+}
+ul { list-style: none; padding: 0; }
 .status { margin: 0 0 8px; color: var(--muted); font-size: 14px; white-space: pre-wrap; }
 .status.error { color: var(--sun); }
 .card { background: var(--card); border-radius: 12px; padding: 12px; margin: 0 0 12px; }
@@ -70,6 +75,14 @@ button { font: inherit; color: inherit; touch-action: manipulation; -webkit-tap-
 .ev.all { background: #5c5f66; }
 .pick { position: absolute; left: 0; right: 0; background: rgba(35, 165, 90, .55); border: 2px solid var(--ok); border-radius: 4px; pointer-events: none; }
 .pick.pending { height: var(--row); background: rgba(35, 165, 90, .35); }
+/* 決まった帯：真ん中をドラッグで帯ごと、上下のつまみで開始・終了を動かす。この上ではスクロールしない */
+.pick.live { pointer-events: auto; touch-action: none; cursor: grab; z-index: 2; overflow: visible; }
+/* 時刻は上のつまみに隠れないよう、少し下げて「開始〜」「終了」の2行に */
+.picklabel { display: block; font-size: 10px; line-height: 1.2; padding: 10px 2px 0; color: #fff; overflow: hidden; white-space: pre-line; text-align: center; pointer-events: none; }
+.grip { position: absolute; left: 50%; width: 44px; height: 28px; margin-left: -22px; touch-action: none; cursor: ns-resize; z-index: 3; }
+.grip::after { content: ""; position: absolute; left: 50%; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: #fff; border: 3px solid var(--ok); box-sizing: border-box; }
+.grip.top { top: -14px; }
+.grip.bottom { bottom: -14px; }
 .fine { display: flex; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
 .fine select:disabled { opacity: .45; }
 .editing { margin: 8px 0 0; font-size: 14px; font-weight: 600; color: var(--ok); }
