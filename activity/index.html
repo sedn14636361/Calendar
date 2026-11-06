@@ -25,15 +25,23 @@
         <span class="sun">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="sat">土</span>
       </div>
       <div id="month-grid" class="month" role="grid"></div>
-      <p class="hint">日をタップして選びます（もう一度タップで外れます）。何日でも選べます。</p>
+      <p class="hint">予定を追加する日を選んでください。複数選択可能です。</p>
       <p id="warning" class="warning" hidden></p>
     </div>
 
     <div class="card">
       <h2>時間</h2>
-      <div class="segmented" role="radiogroup">
+      <div class="segmented" role="radiogroup" aria-label="時間の決め方">
+        <button type="button" id="apply-same" role="radio" aria-checked="true">全部同じ時間</button>
+        <button type="button" id="apply-each" role="radio" aria-checked="false">日ごとに指定</button>
+      </div>
+      <div id="same-box" class="segmented" role="radiogroup" aria-label="終日か時間か">
         <button type="button" id="mode-allday" role="radio" aria-checked="true">終日</button>
         <button type="button" id="mode-time" role="radio" aria-checked="false">時間を指定</button>
+      </div>
+      <div id="each-box" hidden>
+        <p class="hint">日をタップすると、その日の時間を下の表で指定できます。「終日」を押すとその日は終日になります。</p>
+        <ul id="each-list" class="each-list"></ul>
       </div>
       <div id="time-box" hidden>
         <div class="nav">
@@ -41,7 +49,8 @@
           <h3 id="week-title"></h3>
           <button type="button" id="next-week" class="icon" aria-label="次の週">›</button>
         </div>
-        <p class="hint">枠を「開始」→「終了」の順にタップします。灰色は登録済みの予定です。</p>
+        <p class="hint">時間を指定してください。「開始」→「終了」の順にタップすることで選択できます。表は30分間隔ですが、15分間隔での指定もできます。灰色は既に登録している予定です。</p>
+        <p id="editing" class="editing" hidden></p>
         <div id="week-head" class="week-head"></div>
         <div id="week-scroll" class="week-scroll">
           <div id="week-grid" class="week-grid"></div>
@@ -73,7 +82,7 @@
   <section id="done" class="card" hidden>
     <h2>結果</h2>
     <pre id="result" class="result"></pre>
-    <p class="hint">左上の × でこの画面を閉じてください。続けて追加するときは、もう一度 /add から開いてください。</p>
+    <p class="hint">続けて追加するときは、もう一度 /add から開いてください。</p>
   </section>
 </main>
 <script type="module" src="app.js"></script>
