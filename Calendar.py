@@ -1047,8 +1047,11 @@ def _many_reply(name, total, added, failed, label, compact):
     else:
         lines = [f"✅ 予定を{total}件追加しました（1日ずつ別の予定）", f"**{name}**"]
     if compact and added:
-        lines.append("、".join(f"{_start_day(p).year}/{_md(_start_day(p))}" for p in added))   # 年をまたいでも正しく
-        lines.append(f"時刻：{_time_only(added[0])}")
+        if len({_time_only(p) for p in added}) == 1:     # どの日も同じ時刻なら、時刻は1行にまとめる
+            lines.append("、".join(f"{_start_day(p).year}/{_md(_start_day(p))}" for p in added))   # 年をまたいでも正しく
+            lines.append(f"時刻：{_time_only(added[0])}")
+        else:                                            # 日によって時刻が違うなら、日ごとに添える
+            lines.append("、".join(f"{_start_day(p).year}/{_md(_start_day(p))} {_time_only(p)}" for p in added))
     else:
         lines += [format_added_when(p) for p in added]
     lines.append(f"追加先：{label}")
@@ -1074,7 +1077,7 @@ HELP_TEXT = (
     "\n"
     "■ 選ぶだけで使う（入力欄で / を打つと一覧に出る）\n"
     "/date          パネルで年月日・時間帯・曜日を選んで調べる\n"
-    "/add           パネルで年月日・時刻・追加先を選んで追加（複数の日も可）\n"
+    "/add           カレンダー画面（またはパネル）で選んで追加\n"
     "/purge         メッセージを指定した数だけ削除（管理者向け）\n"
     "\n"
     "■ 動作確認（反応がおかしいとき）\n"
@@ -1871,9 +1874,6 @@ class AddPanel(_Panel):
         all_day = self.start_hour is None and self.end_hour is None
         self.add_item(discord.ui.Container(
             discord.ui.TextDisplay(f"### 予定を追加\n{head}"),
-            *([discord.ui.ActionRow(self._button(
-                "📅 カレンダーで選ぶ（日付と時間をタップ）", discord.ButtonStyle.success, self._press_calendar))]
-              if ACTIVITY_ENABLED else []),
             discord.ui.TextDisplay(f"**日付**（日は何日でも選べる。月を切り替えても選んだ日は残る。{ADD_MAX_DAYS}日まで）"),
             *self._date_rows(self.y, self.m, None, self._pick_date, multi_days=self.days),
             discord.ui.TextDisplay("**最終日**（1日だけ選んで、連続した終日予定にするときだけ）"),
@@ -1952,18 +1952,6 @@ class AddPanel(_Panel):
     async def _press_add(self, interaction):
         await interaction.response.send_modal(NameModal(self))
 
-    async def _press_calendar(self, interaction):
-        """カレンダー画面（アクティビティ）を開く。押した本人とチャンネルを14分（パネルの時間切れまで）だけ記録してから開く"""
-        issue_activity_ticket(self.owner_id, interaction.channel, self, self.calendars)
-        try:
-            await interaction.response.launch_activity()
-        except discord.HTTPException as e:
-            revoke_activity_ticket(self)
-            print(f"カレンダー画面を開けませんでした: {e}")
-            await interaction.response.send_message(
-                "⚠️ カレンダー画面を開けませんでした。Developer Portal でアクティビティが有効になっているか確認してください"
-                "（README 16章）。このパネルからはそのまま追加できます", ephemeral=True)
-
 
 class NameModal(discord.ui.Modal):
     """「名前を入れて追加」で開く入力欄。送信すると予定を追加し、結果をチャンネルに出す"""
@@ -2000,6 +1988,17 @@ class NameModal(discord.ui.Modal):
 
 @tree.command(name="add", description="Google カレンダーに予定を追加する（設定パネルが開く）")
 async def slash_add(interaction: discord.Interaction):
+    if ACTIVITY_ENABLED:
+        # カレンダー画面（アクティビティ）をすぐ開く。送った本人とチャンネルを記録してから開く。
+        # 追加先の一覧は画面を開いたあとに読む（ここで Google に問い合わせると、3秒以内の応答に間に合わないことがある）
+        issue_activity_ticket(interaction.user.id, interaction.channel, None, None)
+        try:
+            await interaction.response.launch_activity()
+            _activity_log("/add からカレンダー画面を開きました")
+            return
+        except discord.HTTPException as e:
+            revoke_activity_ticket_for(interaction.user.id)
+            print(f"カレンダー画面を開けなかったので、パネルを出します: {e}")
     # Google の窓口（service）は複数のスレッドから同時に使えないので、ほかの処理と同じくここで直接呼ぶ。
     # 結果は10分間覚えておくので、問い合わせが起きるのは久しぶりに開いたときだけ
     calendars = _calendar_choices()
@@ -2210,15 +2209,16 @@ def status_report():
 
 
 # ===== ⑨-B アクティビティ（Discord の中で開くカレンダー画面） =====
-# /add のパネルの「📅 カレンダーで選ぶ」を押すと、Discord の中（スマホでも）でカレンダーの画面が開き、
-# 日をタップし、時間の枠を「開始→終了」の順にタップして予定を追加できる。
+# /add を送ると、Discord の中（スマホでも）でカレンダーの画面が開き、日をタップし、
+# 時間の枠を「開始→終了」の順にタップして予定を追加できる（時間は全部の日で同じか、日ごとに指定）。
+# 開けなかったとき（アクティビティが無効・開発チーム以外の人など）は、今までのパネルを出す。
 # 画面のファイルは activity/ にあり、このファイルの Web サーバーが /activity/ の下で配る。
 # Discord の Developer Portal で URL Mappings を「/ → <Render のホスト>/activity」にしておく。
 #
 # 安全のための決まり：
 #   ・開いた人は Discord のログイン確認（OAuth2）で確かめる。画面から届く情報はそのまま信じない
-#   ・追加できるのは、/add のパネルでボタンを押した本人だけ。押したときに「誰が・どのチャンネルで」を
-#     14分（パネルの時間切れまで）だけ記録し（チケット）、ログイン確認の結果と一致したときだけ受け付ける
+#   ・追加できるのは、/add を送った本人だけ。送ったときに「誰が・どのチャンネルで」を
+#     15分だけ記録し（チケット）、ログイン確認の結果と一致したときだけ受け付ける
 #   ・画面とのやり取りに使う合言葉（セッション）は推測できない乱数で、メモリにだけ置き、ログに書かない。
 #     追加に使えるのは1回だけ
 #   ・追加の中身は、パネルと同じく文字のコマンドに組み立てて既存の処理に通す（判定を二重に持たない）
@@ -2227,9 +2227,7 @@ def status_report():
 ACTIVITY_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "").strip()   # 値は表示もログもしない
 ACTIVITY_ENABLED = bool(ACTIVITY_CLIENT_SECRET)
 ACTIVITY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "activity")
-# ボタンを押してから使える時間。利用者の指定は15分だが、/add のパネルは最後の操作から14分で閉じ、
-# 閉じるとチケットも無効にするので、パネルと同じ14分にそろえる（パネルの14分は Discord の応答の鍵の15分から決まる）
-ACTIVITY_TICKET_SEC = PANEL_TIMEOUT_SEC
+ACTIVITY_TICKET_SEC = 900              # /add を送ってから使える時間（15分。利用者の指定）
 _ACTIVITY_MAX_BODY = 16 * 1024         # 画面から受け取る中身の大きさの上限
 _ACTIVITY_MAX_SPAN_DAYS = 43           # 1回に読む予定の期間（月表示の6週＋余り）
 _ACTIVITY_FILES = {                    # 配るファイル（これ以外は配らない）
@@ -2264,6 +2262,15 @@ def issue_activity_ticket(user_id, channel, panel, calendars, now=None):
                                       "panel": panel, "calendars": calendars}
 
 
+def revoke_activity_ticket_for(user_id):
+    """その人のチケットと合言葉を使えなくする"""
+    with _activity_lock:
+        _activity_tickets.pop(user_id, None)
+        for k, s in list(_activity_sessions.items()):
+            if s["user_id"] == user_id:
+                del _activity_sessions[k]
+
+
 def revoke_activity_ticket(panel):
     """パネルが閉じたら、そのパネルのチケットと合言葉を使えなくする"""
     with _activity_lock:
@@ -2288,12 +2295,12 @@ def _session_for(token, now):
         raise ActivityError("画面を開き直してください（確認の情報がありません）", 401)
     s = _activity_sessions.get(token)
     if s is None or s["expires"] <= now:
-        raise ActivityError("時間が経ったため使えなくなりました。Discord の /add のパネルから開き直してください", 401)
+        raise ActivityError("時間が経ったため使えなくなりました。もう一度 /add を送ってください", 401)
     if s["used"]:
-        raise ActivityError("この画面からはもう追加しました。続けて追加するときは、/add からもう一度開いてください", 409)
+        raise ActivityError("この画面からはもう追加しました。続けて追加するときは、もう一度 /add を送ってください", 409)
     t = _valid_ticket(s["user_id"], now)
-    if t is None:
-        raise ActivityError("/add のパネルが閉じたか、時間が経ちました。/add からもう一度開いてください", 401)
+    if t is None or t["calendars"] is None:
+        raise ActivityError("時間が経ちました。もう一度 /add を送ってください", 401)
     return s, t
 
 
@@ -2324,13 +2331,18 @@ async def activity_start(code, now=None):
     access_token, user_id = await _exchange_code(code)
     now = now if now is not None else time.monotonic()
     with _activity_lock:
+        has_ticket = _valid_ticket(user_id, now) is not None
+    if not has_ticket:
+        _activity_log("チケットの無い人が開きました（/add を通さずに開いた）")
+        raise ActivityError("Discord で /add を送って開いてください", 403)
+    calendars = _calendar_choices()             # 追加先の一覧（10分間覚えている）。ボット本体の処理の流れで読む
+    with _activity_lock:
         t = _valid_ticket(user_id, now)
         if t is None:
-            _activity_log("チケットの無い人が開きました（/add のパネルを通さずに開いた）")
-            raise ActivityError("Discord の /add のパネルにある「📅 カレンダーで選ぶ」から開いてください", 403)
+            raise ActivityError("時間が経ちました。もう一度 /add を送ってください", 403)
+        t["calendars"] = calendars
         session = secrets.token_urlsafe(32)     # 256ビットの乱数
         _activity_sessions[session] = {"user_id": user_id, "expires": t["expires"], "used": False}
-        calendars = t["calendars"]
     _activity_log("画面を開きました（本人の確認ができました）")
     today = _today()
     return {"access_token": access_token, "session": session,
@@ -2396,23 +2408,26 @@ async def activity_data(session_token, first_s, last_s, now=None):
             "warning": f"⚠️ {len(failures)}件のカレンダーを読み取れませんでした。表示は不完全です" if failures else None}
 
 
-def build_web_requests(days, start, end, calendar):
-    """画面で選んだ内容を、日ごとの文字のコマンドに組み立てて parse_add_command に通す。
-    戻り値は (解釈結果の一覧, 文字列の一覧, 誤り)。誤りの文言はパネルと同じ"""
-    if not days:
+def build_web_requests(entries, calendar):
+    """画面で選んだ内容（日ごとの (日付, 開始, 終了)。開始・終了が None なら終日）を、日ごとの文字のコマンドに
+    組み立てて parse_add_command に通す。戻り値は (解釈結果の一覧, 文字列の一覧, 誤り)。誤りの文言はパネルと同じ"""
+    if not entries:
         return None, None, "日付を選んでください"
-    if len(days) > ADD_MAX_DAYS:
-        return None, None, f"一度に追加できるのは{ADD_MAX_DAYS}日までです（いま{len(days)}日選んでいます）"
-    texts = []
-    for d in sorted(days):
+    if len(entries) > ADD_MAX_DAYS:
+        return None, None, f"一度に追加できるのは{ADD_MAX_DAYS}日までです（いま{len(entries)}日選んでいます）"
+    many = len(entries) > 1                    # 複数日なら、どの日の誤りかを添える
+    texts, parsed = [], []
+    for d, start, end in sorted(entries, key=lambda x: x[0]):
         text, error = build_add_command(f"{d.year}-{d.month}.{d.day}", start, end, None, calendar)
+        if not error:
+            try:
+                parsed.append(parse_add_command(text))
+            except AddError as e:
+                error = str(e)
         if error:
-            return None, None, error
+            return None, None, f"{_md(d)}：{error}" if many else error
         texts.append(text)
-    try:
-        return [parse_add_command(t) for t in texts], texts, None
-    except AddError as e:
-        return None, texts, str(e)
+    return parsed, texts, None
 
 
 class _ActivityChannel:
@@ -2445,14 +2460,22 @@ _TIME_RE = re.compile(r"(\d{1,2}):(\d{2})")
 async def activity_add(session_token, body, now=None):
     """画面の「追加」。中身を検査し、既存の処理で追加して、結果をチャンネルと画面に返す"""
     now = now if now is not None else time.monotonic()
-    raw_days = body.get("days")
-    if not isinstance(raw_days, list) or len(raw_days) > 400:
+    raw = body.get("entries")
+    if not isinstance(raw, list) or len(raw) > 400:
         raise ActivityError("日付の指定が正しくありません")
-    days = {_parse_iso_day(x) for x in raw_days}
-    start, end = body.get("start"), body.get("end")
-    for t in (start, end):
-        if t is not None and not (isinstance(t, str) and _TIME_RE.fullmatch(t)):
-            raise ActivityError("時刻の形が正しくありません")
+    entries, seen = [], set()
+    for x in raw:                              # 日ごとに {"day", "start", "end"}。開始・終了が無ければ終日
+        if not isinstance(x, dict):
+            raise ActivityError("日付の指定が正しくありません")
+        d = _parse_iso_day(x.get("day"))
+        if d in seen:
+            raise ActivityError("同じ日が2回指定されています")
+        seen.add(d)
+        start, end = x.get("start"), x.get("end")
+        for t in (start, end):
+            if t is not None and not (isinstance(t, str) and _TIME_RE.fullmatch(t)):
+                raise ActivityError("時刻の形が正しくありません")
+        entries.append((d, start, end))
     name = body.get("name")
     if not isinstance(name, str) or not name.strip():
         raise ActivityError("予定の名前を入れてください")
@@ -2464,7 +2487,7 @@ async def activity_add(session_token, body, now=None):
         session, ticket = _session_for(session_token, now)
         if calendar not in {c.value for c in ticket["calendars"]}:
             raise ActivityError("追加先のカレンダーを選び直してください")
-        parsed, texts, error = build_web_requests(days, start, end, calendar)
+        parsed, texts, error = build_web_requests(entries, calendar)
         if error:
             raise ActivityError(error)
         session["used"] = True                 # 二重に押されても1回だけ（ここから先は取り消さない）
@@ -2653,7 +2676,7 @@ async def on_ready():
     global _bot_loop
     _bot_loop = asyncio.get_running_loop()    # カレンダー画面の処理をここで動かす（Web サーバーのスレッドから渡す）
     if ACTIVITY_ENABLED:
-        print("カレンダー画面（アクティビティ）を使えます（/add のパネルに「📅 カレンダーで選ぶ」が出ます）")
+        print("カレンダー画面（アクティビティ）を使えます（/add で開きます）")
     # 処理が止まっていないかの見張り（状態表示で使う）。
     # 再接続のたびに on_ready が呼ばれることがあり、二重に start すると例外になる
     if not loop_heartbeat.is_running():

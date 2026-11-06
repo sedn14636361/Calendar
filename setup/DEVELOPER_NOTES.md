@@ -301,8 +301,8 @@ macOS / Linux では起きない。
 
 ### カレンダー画面（Discord のアクティビティ）
 
-`/add` のパネルの「📅 カレンダーで選ぶ」から、Discord の中（スマホでも）でカレンダーの画面を開いて予定を追加する。
-`DISCORD_CLIENT_SECRET` があるときだけ有効（`ACTIVITY_ENABLED`）。仕様は Discord の公式ドキュメント（docs.discord.com の Activities）で確認した。
+`/add` を送ると、Discord の中（スマホでも）でカレンダーの画面（アクティビティ）をすぐ開き（`launch_activity`）、そこで予定を追加する。
+`DISCORD_CLIENT_SECRET` があるときだけ有効（`ACTIVITY_ENABLED`）。開けなかったとき（無効・開発チーム以外など）は、今までの設定パネルを出す。仕様は Discord の公式ドキュメント（docs.discord.com の Activities）で確認した。
 
 - **画面**：`activity/`（`index.html`・`app.css`・`app.js`）。Web サーバー（`HealthHandler`）が `/activity/` の下で配る。
   配るファイルは `_ACTIVITY_FILES` に書いたものだけ（ファイルの置き場所を外れた読み出しを防ぐ）。
@@ -312,10 +312,12 @@ macOS / Linux では起きない。
   割り当ての付け方（`/activity` の後ろに要求のパスが付くか）がドキュメントに明記されていないため
 - **本人確認**：画面が SDK の `authorize`（scope は `identify` だけ）で得たコードを `api/start` に送り、ボットが
   Discord の `oauth2/token`（クライアントシークレットを使う）と `users/@me` で利用者を確かめる。画面から届く情報は信じない
-- **チケット**：パネルのボタンを押したとき、押した本人・チャンネル・パネル・追加先の候補を14分（パネルの時間切れと同じ）だけ記録する（`issue_activity_ticket`）。
+- **チケット**：`/add` を送ったとき、送った本人とチャンネルを15分だけ記録する（`issue_activity_ticket`）。追加先の候補は `api/start` で読む（`/add` の応答を3秒以内に返すため）。
   `api/start` で確かめた利用者にチケットがあるときだけ、合言葉（`secrets.token_urlsafe(32)`）を渡す。
   合言葉は `api/data`・`api/add` の本文で送られ、URL には載らない（Render のアクセスログに残さないため）。
-  追加は1回だけ（`used` を立ててから追加する。同時に押されても1回）。パネルが閉じたら `revoke_activity_ticket` で無効にする
+  追加は1回だけ（`used` を立ててから追加する。同時に押されても1回）。開けなかったときは `revoke_activity_ticket_for` で消す
+- **時間**：画面は「全部同じ時間」と「日ごとに指定」（終日の日と混在可）を切り替える。送るのは日ごとの `entries`（`{day, start, end}`、開始・終了が無ければ終日）。
+  「日ごとに指定」に切り替えたとき、全部同じ時間で時間を決めていたときだけそれを初期値にし、終日だったときは「未選択」にする（入れ忘れた日が黙って終日にならないように）
 - **追加**：`build_web_requests` で日ごとに文字のコマンドを組み立てて `parse_add_command` に通し、`handle_add_command`／`handle_add_many` に渡す。
   返信先は `_ActivityChannel`（チャンネルに送りつつ控え、画面にも返す。送れなくても追加は済んでいるので画面に伝える）
 - **スレッド**：Web サーバーは `ThreadingHTTPServer`（追加中も監視に応答するため）。Google と Discord への問い合わせは
