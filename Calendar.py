@@ -2088,6 +2088,19 @@ _slash_synced = False
 _sync_task = None
 
 
+ENTRY_POINT_COMMAND_TYPE = 4           # PRIMARY_ENTRY_POINT（アクティビティを開くコマンド）
+# 一括登録に含め直す項目。id などの読み取り専用の項目は送らない（名前と種類で同じコマンドとみなされる）
+_ENTRY_POINT_FIELDS = ("type", "name", "description", "handler", "integration_types", "contexts",
+                       "name_localizations", "description_localizations", "default_member_permissions", "nsfw")
+
+
+async def _entry_point_payloads():
+    """Discord に登録済みの Entry Point コマンドを、一括登録に含められる形にして返す（無ければ空）"""
+    existing = await client.http.get_global_commands(client.application_id)
+    return [{k: c[k] for k in _ENTRY_POINT_FIELDS if c.get(k) is not None}
+            for c in existing if c.get("type") == ENTRY_POINT_COMMAND_TYPE]
+
+
 async def sync_slash_commands():
     """スラッシュコマンドを Discord に登録する（起動ごとに1回だけ）。
     SLASH_COMMANDS=off なら、空の一覧を登録して既存の登録を消す"""
@@ -2098,11 +2111,18 @@ async def sync_slash_commands():
     try:
         if not SLASH_COMMANDS_ENABLED:
             tree.clear_commands(guild=None)
-        synced = await tree.sync()
+        # tree.sync() は使わない。一覧を丸ごと置き換えるため、アクティビティを有効にすると Discord が自動で作る
+        # Entry Point コマンド（「Launch」、種類4）が抜け、Discord に拒否される（error code 50240）。
+        # discord.py 2.7 はこの種類を扱えないので、登録済みのものを読み取り、そのまま一緒に登録し直す
+        payload = [c.to_dict(tree) for c in tree.get_commands()]
+        entry_points = await _entry_point_payloads()
+        data = await client.http.bulk_upsert_global_commands(client.application_id, payload + entry_points)
+        names = [d["name"] for d in data if d.get("type") != ENTRY_POINT_COMMAND_TYPE]
+        kept = "（アクティビティの Entry Point コマンドはそのまま残しました）" if entry_points else ""
         if SLASH_COMMANDS_ENABLED:
-            print("スラッシュコマンドを登録しました: " + ", ".join("/" + c.name for c in synced))
+            print("スラッシュコマンドを登録しました: " + ", ".join("/" + n for n in names) + kept)
         else:
-            print("SLASH_COMMANDS=off のため、スラッシュコマンドの登録を消しました")
+            print("SLASH_COMMANDS=off のため、スラッシュコマンドの登録を消しました" + kept)
     except Exception as e:
         # 登録に失敗しても、文字のコマンドと自動表示はそのまま動く
         print(f"スラッシュコマンドの登録に失敗しました: {e!r}"
