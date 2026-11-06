@@ -23,7 +23,7 @@ const md = (d) => `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})`;
 const mdk = (key) => md(fromIso(key));
 const hm = (min) => (min === 1440 ? "24:00" : `${Math.floor(min / 60)}:${pad(min % 60)}`);
 const weekStart = (d) => addDays(d, -d.getDay());   // 日曜はじまり
-const blank = () => ({ allDay: false, start: null, end: null });
+const allDayTime = () => ({ allDay: true, start: null, end: null });   // 日ごとに指定の、日の初めの状態（終日）
 
 const S = {
   session: null, calendars: [], today: null, maxDays: 31,
@@ -60,7 +60,7 @@ async function api(path, body) {
 const timed = () => S.mode === "each" || !S.same.allDay;   // 週表示を出すか
 function slotOf(key) {                                     // その日の時間（「全部同じ」なら共通の時間）
   if (S.mode === "same") return S.same;
-  if (!S.per.has(key)) S.per.set(key, blank());
+  if (!S.per.has(key)) S.per.set(key, allDayTime());
   return S.per.get(key);
 }
 function timeText(t) {
@@ -484,12 +484,11 @@ async function submit() {
 function setApply(mode) {
   if (S.mode === mode) return;
   if (mode === "each") {
-    // 「全部同じ時間」で時間を決めていたときだけ、それを、まだ決めていない日の初期値にする。
-    // 終日だったときは写さず「未選択」にする（入れ忘れた日が黙って終日で追加されないように）
+    // 「全部同じ時間」で時間を決めていたときは、それを、まだ決めていない日の初期値にする。それ以外は終日から始める
     const t = S.same;
     const copy = !t.allDay && t.start !== null && t.end !== null;
     for (const k of S.days) {
-      if (!S.per.has(k)) S.per.set(k, copy ? { ...t } : blank());
+      if (!S.per.has(k)) S.per.set(k, copy ? { ...t } : allDayTime());
     }
     S.editDay = [...S.days].sort()[0] || null;
     if (S.editDay) S.week = weekStart(fromIso(S.editDay));   // 表も、編集中の日の週にする
