@@ -273,6 +273,10 @@ macOS / Linux では起きない。
   失敗しても必ず返信し、「考え中…」のまま残さない
 - 登録（`tree.sync()`）は `on_ready` から1回だけ、裏のタスクで行う。discord.py の説明に
   「表示させるには必ず呼ぶ」とある
+- ただし `tree.sync()` そのものは使わず、同じ中身（`command.to_dict(tree)` の一覧）を `client.http.bulk_upsert_global_commands()` で送る。
+  アクティビティを有効にすると Discord が Entry Point コマンド（「Launch」、種類4）を自動で作り、一括登録にそれが含まれないと
+  400（error code 50240「You cannot remove this app's Entry Point command in a bulk update operation」）で拒否される。
+  discord.py 2.7 は種類4を扱えないので、`_entry_point_payloads()` で登録済みのものを読み取り、id などを除いて一緒に送り直す
 - `SLASH_COMMANDS=off` なら空の一覧を登録し、Discord 側の登録を消す。以前の版のコードは
   登録に触らないので、コードを戻す前にこれで一度起動しておく（README 16章）
 - 導入前の状態は GitHub のブランチ `backup/before-slash-commands` に残してある
@@ -281,6 +285,7 @@ macOS / Linux では起きない。
   200件（`_CLEANUP_SCAN`）を調べて消す（`state["cleaned"]`）。見分けは `is_display_message()`：ボット自身・本文なし・埋め込み1つ・
   色 `DISPLAY_COLOR`・項目名がすべて「11/5（木）」の形。埋め込みを使うのは自動表示だけなので、返信や人のメッセージは当たらない。
   ピン留めは残す。自分のメッセージなので「メッセージの管理」は不要（探すのに「メッセージ履歴を読む」を使う）。
+  続けて消すと 429（速すぎる）が返り、discord.py の自動のやり直しでログに警告が残るので、1通ごとに1秒空ける（`_CLEANUP_INTERVAL_SEC`）。
   自動表示の見た目（色・項目名の形）を変えるときは、`is_display_message()` も合わせて直すこと。直さないと、変更前の表示を消せなくなる
 - **`/purge`** は `purge_messages()` で、新しい方から「残すもの」を飛ばしてちょうど指定の数を削除する。
   discord.py の `channel.purge(limit=…)` は `limit` が「調べる数」で、飛ばした分だけ消える数が減るため使っていない
