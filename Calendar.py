@@ -11,7 +11,9 @@ import asyncio
 import time                             # 処理が止まっていないかを測る道具
 import io                               # 画像をメモリ上で扱う道具
 import math                             # 応答時間が有限かを確かめる道具
-from http.server import HTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler  # 簡易Webサーバー（同時に応答できる形）
+import secrets                          # 推測できない乱数（カレンダー画面の合言葉）
+import aiohttp                          # Discord のログイン確認（discord.py が使っているもの）
 from discord.ext import tasks
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -1626,11 +1628,13 @@ class _Panel(discord.ui.LayoutView):
 
     async def _press_cancel(self, interaction):
         self.stop()
+        revoke_activity_ticket(self)           # カレンダー画面からも追加できなくする
         await interaction.response.edit_message(view=_closed_view(self.cancel_text))
 
     async def finish(self, text):
         """処理が済んだら、パネルを閉じた表示に書き換える"""
         self.stop()
+        revoke_activity_ticket(self)
         try:
             await self.origin.edit_original_response(view=_closed_view(text))
         except discord.HTTPException as e:
@@ -1867,6 +1871,9 @@ class AddPanel(_Panel):
         all_day = self.start_hour is None and self.end_hour is None
         self.add_item(discord.ui.Container(
             discord.ui.TextDisplay(f"### 予定を追加\n{head}"),
+            *([discord.ui.ActionRow(self._button(
+                "📅 カレンダーで選ぶ（日付と時間をタップ）", discord.ButtonStyle.success, self._press_calendar))]
+              if ACTIVITY_ENABLED else []),
             discord.ui.TextDisplay(f"**日付**（日は何日でも選べる。月を切り替えても選んだ日は残る。{ADD_MAX_DAYS}日まで）"),
             *self._date_rows(self.y, self.m, None, self._pick_date, multi_days=self.days),
             discord.ui.TextDisplay("**最終日**（1日だけ選んで、連続した終日予定にするときだけ）"),
@@ -1944,6 +1951,18 @@ class AddPanel(_Panel):
 
     async def _press_add(self, interaction):
         await interaction.response.send_modal(NameModal(self))
+
+    async def _press_calendar(self, interaction):
+        """カレンダー画面（アクティビティ）を開く。押した本人とチャンネルを14分（パネルの時間切れまで）だけ記録してから開く"""
+        issue_activity_ticket(self.owner_id, interaction.channel, self, self.calendars)
+        try:
+            await interaction.response.launch_activity()
+        except discord.HTTPException as e:
+            revoke_activity_ticket(self)
+            print(f"カレンダー画面を開けませんでした: {e}")
+            await interaction.response.send_message(
+                "⚠️ カレンダー画面を開けませんでした。Developer Portal でアクティビティが有効になっているか確認してください"
+                "（README 16章）。このパネルからはそのまま追加できます", ephemeral=True)
 
 
 class NameModal(discord.ui.Modal):
@@ -2190,6 +2209,345 @@ def status_report():
     return level, body
 
 
+# ===== ⑨-B アクティビティ（Discord の中で開くカレンダー画面） =====
+# /add のパネルの「📅 カレンダーで選ぶ」を押すと、Discord の中（スマホでも）でカレンダーの画面が開き、
+# 日をタップし、時間の枠を「開始→終了」の順にタップして予定を追加できる。
+# 画面のファイルは activity/ にあり、このファイルの Web サーバーが /activity/ の下で配る。
+# Discord の Developer Portal で URL Mappings を「/ → <Render のホスト>/activity」にしておく。
+#
+# 安全のための決まり：
+#   ・開いた人は Discord のログイン確認（OAuth2）で確かめる。画面から届く情報はそのまま信じない
+#   ・追加できるのは、/add のパネルでボタンを押した本人だけ。押したときに「誰が・どのチャンネルで」を
+#     14分（パネルの時間切れまで）だけ記録し（チケット）、ログイン確認の結果と一致したときだけ受け付ける
+#   ・画面とのやり取りに使う合言葉（セッション）は推測できない乱数で、メモリにだけ置き、ログに書かない。
+#     追加に使えるのは1回だけ
+#   ・追加の中身は、パネルと同じく文字のコマンドに組み立てて既存の処理に通す（判定を二重に持たない）
+#   ・Google と Discord への問い合わせは、ボット本体の処理の流れ（_bot_loop）で行う。
+#     Web サーバーは別のスレッドで動くが、Google の窓口（service）はスレッド間で共有できないため
+ACTIVITY_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "").strip()   # 値は表示もログもしない
+ACTIVITY_ENABLED = bool(ACTIVITY_CLIENT_SECRET)
+ACTIVITY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "activity")
+# ボタンを押してから使える時間。利用者の指定は15分だが、/add のパネルは最後の操作から14分で閉じ、
+# 閉じるとチケットも無効にするので、パネルと同じ14分にそろえる（パネルの14分は Discord の応答の鍵の15分から決まる）
+ACTIVITY_TICKET_SEC = PANEL_TIMEOUT_SEC
+_ACTIVITY_MAX_BODY = 16 * 1024         # 画面から受け取る中身の大きさの上限
+_ACTIVITY_MAX_SPAN_DAYS = 43           # 1回に読む予定の期間（月表示の6週＋余り）
+_ACTIVITY_FILES = {                    # 配るファイル（これ以外は配らない）
+    "app.js": "text/javascript; charset=utf-8",
+    "app.css": "text/css; charset=utf-8",
+    "discord-sdk.js": "text/javascript; charset=utf-8",
+}
+_DISCORD_API = "https://discord.com/api"
+_activity_lock = threading.Lock()
+_activity_tickets = {}                 # 利用者ID → {"expires", "channel", "panel", "calendars"}
+_activity_sessions = {}                # 合言葉 → {"user_id", "expires", "used"}
+_bot_loop = None                       # ボット本体の処理の流れ（on_ready で記録）
+
+
+class ActivityError(Exception):
+    """画面に返す、利用者向けの理由"""
+    def __init__(self, message, status=400):
+        super().__init__(message)
+        self.status = status
+
+
+def _activity_log(what):
+    """アクティビティの動きをログに残す（合言葉・ログイン確認の値・予定の名前は残さない）"""
+    print(f"アクティビティ: {what}")
+
+
+def issue_activity_ticket(user_id, channel, panel, calendars, now=None):
+    """パネルのボタンが押されたときに呼ぶ。同じ人の前のチケットは置き換える"""
+    now = now if now is not None else time.monotonic()
+    with _activity_lock:
+        _activity_tickets[user_id] = {"expires": now + ACTIVITY_TICKET_SEC, "channel": channel,
+                                      "panel": panel, "calendars": calendars}
+
+
+def revoke_activity_ticket(panel):
+    """パネルが閉じたら、そのパネルのチケットと合言葉を使えなくする"""
+    with _activity_lock:
+        for uid, t in list(_activity_tickets.items()):
+            if t["panel"] is panel:
+                del _activity_tickets[uid]
+                for k, s in list(_activity_sessions.items()):
+                    if s["user_id"] == uid:
+                        del _activity_sessions[k]
+
+
+def _valid_ticket(user_id, now):
+    t = _activity_tickets.get(user_id)
+    if t is None or t["expires"] <= now:
+        return None
+    return t
+
+
+def _session_for(token, now):
+    """合言葉から、まだ使えるセッションと、その人のチケットを返す。使えなければ ActivityError"""
+    if not isinstance(token, str) or not token:
+        raise ActivityError("画面を開き直してください（確認の情報がありません）", 401)
+    s = _activity_sessions.get(token)
+    if s is None or s["expires"] <= now:
+        raise ActivityError("時間が経ったため使えなくなりました。Discord の /add のパネルから開き直してください", 401)
+    if s["used"]:
+        raise ActivityError("この画面からはもう追加しました。続けて追加するときは、/add からもう一度開いてください", 409)
+    t = _valid_ticket(s["user_id"], now)
+    if t is None:
+        raise ActivityError("/add のパネルが閉じたか、時間が経ちました。/add からもう一度開いてください", 401)
+    return s, t
+
+
+async def _exchange_code(code):
+    """ログイン確認のコードを Discord に渡して、(アクセストークン, 利用者ID) を得る"""
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as http:
+        async with http.post(f"{_DISCORD_API}/oauth2/token", data={
+                "client_id": str(client.application_id), "client_secret": ACTIVITY_CLIENT_SECRET,
+                "grant_type": "authorization_code", "code": code}) as r:
+            if r.status != 200:
+                _activity_log(f"ログイン確認に失敗しました（Discord の応答 HTTP {r.status}）")
+                raise ActivityError("Discord のログイン確認に失敗しました。画面を開き直してください", 502)
+            token = (await r.json()).get("access_token")
+        async with http.get(f"{_DISCORD_API}/users/@me", headers={"Authorization": f"Bearer {token}"}) as r:
+            if r.status != 200:
+                _activity_log(f"利用者の確認に失敗しました（Discord の応答 HTTP {r.status}）")
+                raise ActivityError("Discord のログイン確認に失敗しました。画面を開き直してください", 502)
+            user = await r.json()
+    return token, int(user["id"])
+
+
+async def activity_start(code, now=None):
+    """画面を開いたとき。ログイン確認をして、チケットがあれば合言葉を渡す"""
+    if not ACTIVITY_ENABLED:
+        raise ActivityError("この機能は有効になっていません（DISCORD_CLIENT_SECRET が設定されていません）", 503)
+    if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", code):
+        raise ActivityError("確認の情報が正しくありません。画面を開き直してください")
+    access_token, user_id = await _exchange_code(code)
+    now = now if now is not None else time.monotonic()
+    with _activity_lock:
+        t = _valid_ticket(user_id, now)
+        if t is None:
+            _activity_log("チケットの無い人が開きました（/add のパネルを通さずに開いた）")
+            raise ActivityError("Discord の /add のパネルにある「📅 カレンダーで選ぶ」から開いてください", 403)
+        session = secrets.token_urlsafe(32)     # 256ビットの乱数
+        _activity_sessions[session] = {"user_id": user_id, "expires": t["expires"], "used": False}
+        calendars = t["calendars"]
+    _activity_log("画面を開きました（本人の確認ができました）")
+    today = _today()
+    return {"access_token": access_token, "session": session,
+            "calendars": [{"value": c.value, "label": c.name} for c in calendars],
+            "today": today.isoformat(), "max_days": ADD_MAX_DAYS,
+            "titles_until": (today + timedelta(days=DAYS_TO_SHOW)).isoformat()}
+
+
+def _parse_iso_day(s):
+    if not isinstance(s, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+        raise ActivityError("日付の形が正しくありません")
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        raise ActivityError(f"{s} は存在しない日付です")
+
+
+def _event_segments(events, first, last):
+    """予定を、日ごとの帯（開始・終了の分）に分ける。名前は自動表示と同じ範囲（今日から DAYS_TO_SHOW 日）だけ出す"""
+    today = _today()
+    titles_until = today + timedelta(days=DAYS_TO_SHOW)
+    out = []
+    for e in events:
+        title = e.get("summary") or "(無題)"
+        st, en = e["start"], e["end"]
+        if "dateTime" in st:
+            s = datetime.fromisoformat(st["dateTime"]).astimezone(JST)
+            f = datetime.fromisoformat(en["dateTime"]).astimezone(JST)
+            d = s.date()
+            while d <= f.date() and d <= last:
+                day_start = datetime(d.year, d.month, d.day, tzinfo=JST)
+                a = max(s, day_start)
+                b = min(f, day_start + timedelta(days=1))
+                if b > a and d >= first:
+                    out.append({"date": d.isoformat(), "all_day": False,
+                                "start": int((a - day_start).total_seconds() // 60),
+                                "end": int((b - day_start).total_seconds() // 60),
+                                "title": title if today <= d < titles_until else None})
+                d += timedelta(days=1)
+        else:
+            d = date.fromisoformat(st["date"])
+            end_excl = date.fromisoformat(en["date"])      # 終日の終わりは翌日（含まない）
+            while d < end_excl and d <= last:
+                if d >= first:
+                    out.append({"date": d.isoformat(), "all_day": True, "start": 0, "end": 1440,
+                                "title": title if today <= d < titles_until else None})
+                d += timedelta(days=1)
+    return out
+
+
+async def activity_data(session_token, first_s, last_s, now=None):
+    """画面に出す予定を返す（月表示・週表示の範囲）"""
+    now = now if now is not None else time.monotonic()
+    with _activity_lock:
+        _session_for(session_token, now)
+    first, last = _parse_iso_day(first_s), _parse_iso_day(last_s)
+    if last < first or (last - first).days >= _ACTIVITY_MAX_SPAN_DAYS:
+        raise ActivityError("読み込む期間が正しくありません")
+    start_dt = datetime(first.year, first.month, first.day, tzinfo=JST)
+    end_dt = datetime(last.year, last.month, last.day, tzinfo=JST) + timedelta(days=1)
+    events, failures = fetch_events_multi(start_dt, end_dt)
+    return {"events": _event_segments(events, first, last),
+            "warning": f"⚠️ {len(failures)}件のカレンダーを読み取れませんでした。表示は不完全です" if failures else None}
+
+
+def build_web_requests(days, start, end, calendar):
+    """画面で選んだ内容を、日ごとの文字のコマンドに組み立てて parse_add_command に通す。
+    戻り値は (解釈結果の一覧, 文字列の一覧, 誤り)。誤りの文言はパネルと同じ"""
+    if not days:
+        return None, None, "日付を選んでください"
+    if len(days) > ADD_MAX_DAYS:
+        return None, None, f"一度に追加できるのは{ADD_MAX_DAYS}日までです（いま{len(days)}日選んでいます）"
+    texts = []
+    for d in sorted(days):
+        text, error = build_add_command(f"{d.year}-{d.month}.{d.day}", start, end, None, calendar)
+        if error:
+            return None, None, error
+        texts.append(text)
+    try:
+        return [parse_add_command(t) for t in texts], texts, None
+    except AddError as e:
+        return None, texts, str(e)
+
+
+class _ActivityChannel:
+    """既存の追加処理の返信先。チャンネルに送りつつ、画面にも同じ文を返すため控えておく"""
+    def __init__(self, channel):
+        self.channel = channel
+        self.sent = []
+        self.send_error = None
+
+    def typing(self):
+        return _NoTyping()                     # 入力中の表示は送らない（権限が無いと追加の前に止まるため）
+
+    async def send(self, content=None, **kw):
+        self.sent.append(content)
+        try:
+            await self.channel.send(content, **kw)
+        except discord.HTTPException as e:
+            self.send_error = e                # 予定の追加は済んでいるので、ここで止めずに画面へ伝える
+
+
+class _ActivityMessage:
+    def __init__(self, channel, text):
+        self.content = text
+        self.channel = channel
+
+
+_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})")
+
+
+async def activity_add(session_token, body, now=None):
+    """画面の「追加」。中身を検査し、既存の処理で追加して、結果をチャンネルと画面に返す"""
+    now = now if now is not None else time.monotonic()
+    raw_days = body.get("days")
+    if not isinstance(raw_days, list) or len(raw_days) > 400:
+        raise ActivityError("日付の指定が正しくありません")
+    days = {_parse_iso_day(x) for x in raw_days}
+    start, end = body.get("start"), body.get("end")
+    for t in (start, end):
+        if t is not None and not (isinstance(t, str) and _TIME_RE.fullmatch(t)):
+            raise ActivityError("時刻の形が正しくありません")
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        raise ActivityError("予定の名前を入れてください")
+    name = name.strip()
+    if len(name) > 200:
+        raise ActivityError("予定の名前は200文字までにしてください")
+    calendar = body.get("calendar")
+    with _activity_lock:
+        session, ticket = _session_for(session_token, now)
+        if calendar not in {c.value for c in ticket["calendars"]}:
+            raise ActivityError("追加先のカレンダーを選び直してください")
+        parsed, texts, error = build_web_requests(days, start, end, calendar)
+        if error:
+            raise ActivityError(error)
+        session["used"] = True                 # 二重に押されても1回だけ（ここから先は取り消さない）
+        channel, panel = ticket["channel"], ticket["panel"]
+        del _activity_tickets[session["user_id"]]
+    for p in parsed:
+        p["name"] = name                       # 解釈が済んでから本当の名前を入れる
+    print(f"スラッシュコマンド: {texts!r}（予定の名前はログに残さない。カレンダー画面から）")
+    out = _ActivityChannel(channel)
+    message = _ActivityMessage(out, texts[0])
+    if len(parsed) == 1:
+        await handle_add_command(message, parsed[0])
+    else:
+        await handle_add_many(message, parsed)
+    if panel is not None:
+        await panel.finish("このパネルは閉じました。カレンダー画面から追加し、結果はチャンネルに表示しています。")
+    reply = "\n".join(x for x in out.sent if x)
+    if out.send_error is not None:
+        _activity_log(f"チャンネルへの返信に失敗しました: {out.send_error}")
+        reply += "\n（チャンネルへの返信に失敗しました。ボットの「メッセージを送信」の権限を確認してください）"
+    _activity_log(f"追加の処理をしました（{len(parsed)}件）")
+    return {"ok": True, "message": reply}
+
+
+def _run_on_bot_loop(coro, timeout=120):
+    """Web サーバーのスレッドから、ボット本体の処理の流れで coro を実行して結果を待つ"""
+    if _bot_loop is None:
+        coro.close()
+        raise ActivityError("ボットの起動が終わっていません。少し待ってから開き直してください", 503)
+    return asyncio.run_coroutine_threadsafe(coro, _bot_loop).result(timeout)
+
+
+def _activity_page():
+    """画面の HTML。アプリの ID（公開してよい値）だけを埋め込む"""
+    with open(os.path.join(ACTIVITY_DIR, "index.html"), encoding="utf-8") as f:
+        html = f.read()
+    return html.replace("{{CLIENT_ID}}", str(client.application_id or ""))
+
+
+_ACTIVITY_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+                 "img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'")
+
+
+def handle_activity_request(method, path, body_bytes):
+    """/activity の下へのリクエストを処理し、(状態コード, Content-Type, 中身) を返す"""
+    sub = path[len("/activity"):].lstrip("/")
+    if method in ("GET", "HEAD"):
+        if sub in ("", "index.html"):
+            return 200, "text/html; charset=utf-8", _activity_page().encode("utf-8")
+        if sub in _ACTIVITY_FILES:
+            with open(os.path.join(ACTIVITY_DIR, sub), "rb") as f:
+                return 200, _ACTIVITY_FILES[sub], f.read()
+        return 404, "text/plain; charset=utf-8", b"not found\n"
+    if method != "POST" or not sub.startswith("api/"):
+        return 405, "text/plain; charset=utf-8", b"method not allowed\n"
+    try:
+        if len(body_bytes) > _ACTIVITY_MAX_BODY:
+            raise ActivityError("送られた中身が大きすぎます", 413)
+        try:
+            body = json.loads(body_bytes.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise ActivityError("送られた中身が読めません")
+        if not isinstance(body, dict):
+            raise ActivityError("送られた中身が読めません")
+        if sub == "api/start":
+            result = _run_on_bot_loop(activity_start(body.get("code")))
+        elif sub == "api/data":
+            result = _run_on_bot_loop(activity_data(body.get("session"), body.get("first"), body.get("last")))
+        elif sub == "api/add":
+            result = _run_on_bot_loop(activity_add(body.get("session"), body))
+        else:
+            raise ActivityError("見つかりません", 404)
+        code = 200
+    except ActivityError as e:
+        result, code = {"ok": False, "error": str(e)}, e.status
+    except Exception as e:
+        print(f"アクティビティのエラー: {e!r}")
+        result, code = {"ok": False, "error": f"処理中にエラーが発生しました（{type(e).__name__}）"}, 500
+    if code != 200:
+        _activity_log(f"{sub} → {code}")
+    return code, "application/json; charset=utf-8", json.dumps(result, ensure_ascii=False).encode("utf-8")
+
+
 # ===== ⑨-A ダミーWebサーバー（ここに丸ごと置く） =====
 class HealthHandler(BaseHTTPRequestHandler):
     """Render のポート確認と、UptimeRobot などの監視から叩かれる。
@@ -2217,18 +2575,66 @@ class HealthHandler(BaseHTTPRequestHandler):
         if with_body:
             self.wfile.write(body)
 
+    def _respond_activity(self, method, with_body):
+        """カレンダー画面（アクティビティ）の要求。/activity の下だけを扱う"""
+        path = self.path.split("?", 1)[0]       # ? 以降（Discord が付ける画面の情報）はログにも使わない
+        body = b""
+        if method == "POST":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
+            if length < 0 or length > _ACTIVITY_MAX_BODY:
+                code, ctype, data = 413, "application/json; charset=utf-8", \
+                    json.dumps({"ok": False, "error": "送られた中身が大きすぎます"}, ensure_ascii=False).encode("utf-8")
+                return self._send(code, ctype, data, with_body)
+            body = self.rfile.read(length)
+        code, ctype, data = handle_activity_request(method, path, body)
+        if method != "POST":
+            _activity_log(f"{method} {path} → {code}")   # URL Mappings の確認に使う（合言葉は ? や本文にあり、ここには無い）
+        self._send(code, ctype, data, with_body)
+
+    def _send(self, code, ctype, data, with_body):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        if ctype.startswith("text/html"):
+            self.send_header("Content-Security-Policy", _ACTIVITY_CSP)
+        self.end_headers()
+        if with_body:
+            self.wfile.write(data)
+
+    def _is_activity(self):
+        path = self.path.split("?", 1)[0]
+        return path == "/activity" or path.startswith("/activity/")
+
     def do_GET(self):
+        if self._is_activity():
+            return self._respond_activity("GET", with_body=True)
         self._respond(with_body=True)
 
     def do_HEAD(self):
+        if self._is_activity():
+            return self._respond_activity("HEAD", with_body=False)
         self._respond(with_body=False)
+
+    def do_POST(self):
+        if self._is_activity():
+            return self._respond_activity("POST", with_body=True)
+        self._send(405, "text/plain; charset=utf-8", b"method not allowed\n", True)
 
     def log_message(self, *args):
         pass
 
 def run_web_server():
     port = int(os.environ.get("PORT", 8080))
-    HTTPServer(("0.0.0.0", port), HealthHandler).serve_forever()
+    # 同時に応答できる形。カレンダー画面から予定を追加している間も、監視（UptimeRobot）に応答できるように
+    server = ThreadingHTTPServer(("0.0.0.0", port), HealthHandler)
+    server.daemon_threads = True
+    server.serve_forever()
 
 threading.Thread(target=run_web_server, daemon=True).start()
 
@@ -2244,6 +2650,10 @@ async def loop_heartbeat():
 @client.event
 async def on_ready():
     print(f"ログインしました: {client.user}")
+    global _bot_loop
+    _bot_loop = asyncio.get_running_loop()    # カレンダー画面の処理をここで動かす（Web サーバーのスレッドから渡す）
+    if ACTIVITY_ENABLED:
+        print("カレンダー画面（アクティビティ）を使えます（/add のパネルに「📅 カレンダーで選ぶ」が出ます）")
     # 処理が止まっていないかの見張り（状態表示で使う）。
     # 再接続のたびに on_ready が呼ばれることがあり、二重に start すると例外になる
     if not loop_heartbeat.is_running():

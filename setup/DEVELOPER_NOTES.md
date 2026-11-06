@@ -299,6 +299,31 @@ macOS / Linux では起きない。
 - `print()` の出力は、起動時に `sys.stdout.reconfigure(line_buffering=True)` で1行ごとに書き出す。
   Render のように出力をログへ流すと Python はため込むので、これが無いとボットの `print` がログに出ない
 
+### カレンダー画面（Discord のアクティビティ）
+
+`/add` のパネルの「📅 カレンダーで選ぶ」から、Discord の中（スマホでも）でカレンダーの画面を開いて予定を追加する。
+`DISCORD_CLIENT_SECRET` があるときだけ有効（`ACTIVITY_ENABLED`）。仕様は Discord の公式ドキュメント（docs.discord.com の Activities）で確認した。
+
+- **画面**：`activity/`（`index.html`・`app.css`・`app.js`）。Web サーバー（`HealthHandler`）が `/activity/` の下で配る。
+  配るファイルは `_ACTIVITY_FILES` に書いたものだけ（ファイルの置き場所を外れた読み出しを防ぐ）。
+  Developer Portal の URL Mappings は「`/` → `<ホスト>/activity`」。アクティビティの中からは外部に通信できず（CSP）、
+  外部の配布元から部品を読み込めないので、`@discord/embedded-app-sdk` 2.5.0 を esbuild で1つにまとめた `activity/discord-sdk.js` を同じ場所から配る
+  （中の部品のライセンスは `activity/THIRD_PARTY_LICENSES.txt`）。画面の中のパスは相対パス（`app.js`・`api/start`）にしている。
+  割り当ての付け方（`/activity` の後ろに要求のパスが付くか）がドキュメントに明記されていないため
+- **本人確認**：画面が SDK の `authorize`（scope は `identify` だけ）で得たコードを `api/start` に送り、ボットが
+  Discord の `oauth2/token`（クライアントシークレットを使う）と `users/@me` で利用者を確かめる。画面から届く情報は信じない
+- **チケット**：パネルのボタンを押したとき、押した本人・チャンネル・パネル・追加先の候補を14分（パネルの時間切れと同じ）だけ記録する（`issue_activity_ticket`）。
+  `api/start` で確かめた利用者にチケットがあるときだけ、合言葉（`secrets.token_urlsafe(32)`）を渡す。
+  合言葉は `api/data`・`api/add` の本文で送られ、URL には載らない（Render のアクセスログに残さないため）。
+  追加は1回だけ（`used` を立ててから追加する。同時に押されても1回）。パネルが閉じたら `revoke_activity_ticket` で無効にする
+- **追加**：`build_web_requests` で日ごとに文字のコマンドを組み立てて `parse_add_command` に通し、`handle_add_command`／`handle_add_many` に渡す。
+  返信先は `_ActivityChannel`（チャンネルに送りつつ控え、画面にも返す。送れなくても追加は済んでいるので画面に伝える）
+- **スレッド**：Web サーバーは `ThreadingHTTPServer`（追加中も監視に応答するため）。Google と Discord への問い合わせは
+  `asyncio.run_coroutine_threadsafe` でボット本体の処理の流れ（`_bot_loop`、`on_ready` で記録）に渡す（`service` はスレッド間で共有できない）
+- **ログ**：`アクティビティ: …` の行。要求のパス（`?` 以降は除く）と結果の状態だけを残し、合言葉・アクセストークン・クライアントシークレット・予定名は残さない
+- **見せる予定**：`api/data` は最大43日分。予定の名前は自動表示と同じ範囲（今日から `DAYS_TO_SHOW` 日）だけ返し、それより先は名前なし
+- 画面に入れる文字はすべて `textContent`（`innerHTML` は使わない）。CSP は `default-src 'self'` ほか。テストでは予定名の `<img onerror>` が動かないことを確かめている
+
 ### コマンドの書式
 
 `on_message` 内の正規表現で判定している。
