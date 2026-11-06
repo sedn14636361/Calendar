@@ -492,6 +492,7 @@ function setApply(mode) {
       if (!S.per.has(k)) S.per.set(k, copy ? { ...t } : blank());
     }
     S.editDay = [...S.days].sort()[0] || null;
+    if (S.editDay) S.week = weekStart(fromIso(S.editDay));   // 表も、編集中の日の週にする
   }
   S.mode = mode;
   S.pending = null;
