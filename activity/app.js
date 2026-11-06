@@ -6,6 +6,7 @@ import { DiscordSDK } from "./discord-sdk.js";
 const CLIENT_ID = document.body.dataset.clientId;
 const WD = ["日", "月", "火", "水", "木", "金", "土"];
 const SLOT = 30;                                   // 週表示の1枠（分）
+const STEP = 15;                                   // つまみで動かすきざみ（分）
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -188,7 +189,31 @@ function renderEachList() {
 }
 
 // ---------- 週表示（時間の枠） ----------
-function tapSlot(key, min) {
+const NEAR = 60;                            // 開始・終了から1時間（表の2マス＝48px）以内のタップは「直す」と見なす
+function nearMove(t, m) {
+  // 決まった時間の近くの枠をタップしたら、近い方の端（開始か終了）をその枠まで動かす。動かしたら true。
+  // 開始はタップした枠の始まり、終了はタップした枠の終わりに合わせる（最初に選ぶときと同じ）
+  if (t.allDay || t.start === null || t.end === null) return false;
+  const c = m + SLOT / 2;                   // タップした枠の真ん中
+  const over = t.end <= t.start;            // 日をまたぐ帯（空いているのは 終了〜開始）
+  let which;
+  if (!over) {
+    which = c < t.start ? "start" : c > t.end ? "end" : (c < (t.start + t.end) / 2 ? "start" : "end");
+  } else if (c > t.end && c < t.start) {
+    which = t.start - c < c - t.end ? "start" : "end";
+  } else {
+    which = c >= t.start ? "start" : "end"; // 帯の中：夜側の帯は開始、朝側の帯は終了
+  }
+  if (which === "start") {
+    if (Math.abs(m - t.start) > NEAR) return false;
+    t.start = over ? Math.max(m, t.end + STEP) : m;
+  } else {
+    if (Math.abs(m + SLOT - t.end) > NEAR) return false;
+    t.end = over ? Math.min(m + SLOT, t.start - STEP) : m + SLOT;
+  }
+  return true;
+}
+function tapSlot(key, min, onBand) {
   if (S.done) return;
   if (!S.days.has(key)) {
     setStatus("時間は、選んだ日（色の付いた列）をタップして指定してください", true);
@@ -197,11 +222,18 @@ function tapSlot(key, min) {
   setStatus("");
   const t = slotOf(key);
   if (S.mode === "each") S.editDay = key;
+  const pendingHere = S.pending && (S.mode === "same" || S.pending.day === key);
+  if (!pendingHere && nearMove(t, min)) {    // 決まった時間の近く：つまみをそこへ動かす
+    S.pending = null;
+    render();
+    return;
+  }
+  if (onBand) { render(); return; }          // 帯の中の、端から離れたところ：何もしない
   t.allDay = false;
   const sameDay = S.mode === "same" || (S.pending && S.pending.day === key);
   if (S.pending && sameDay && min >= S.pending.start) {   // 2回目：終了（その枠の終わりまで）
     t.start = S.pending.start; t.end = min + SLOT; S.pending = null;
-  } else {                                                 // 1回目、または開始より前：ここを開始にする
+  } else {                                                 // 1回目・開始より前・離れた枠：ここから選び直す
     S.pending = { day: key, start: min }; t.start = min; t.end = null;
   }
   render();
@@ -211,6 +243,100 @@ function band(col, a, b, cls) {
   p.style.top = `calc(var(--row) * ${a / SLOT})`;
   if (b !== null) p.style.height = `calc(var(--row) * ${(b - a) / SLOT})`;
   col.append(p);
+  return p;
+}
+
+// ---------- 帯のドラッグ（つまみで開始・終了、真ん中で帯ごと。15分きざみ）----------
+let drag = null;                            // ドラッグ中の情報
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+function dragTo(t, kind, s0, e0, dmin) {
+  // 開始と終了が逆転しない・同じにならないようにする。日をまたぐ帯（終了が開始以前）はまたいだまま
+  const over = e0 <= s0;
+  if (kind === "start") {
+    t.start = over ? clamp(s0 + dmin, e0 + STEP, 1440 - STEP) : clamp(s0 + dmin, 0, e0 - STEP);
+  } else if (kind === "end") {
+    t.end = over ? clamp(e0 + dmin, STEP, s0 - STEP) : clamp(e0 + dmin, s0 + STEP, 1440);
+  } else {                                  // 帯ごと：長さを保つ（0:00〜24:00 の外へは出さない範囲で、日をまたぐのは可）
+    const len = over ? e0 + 1440 - s0 : e0 - s0;
+    const ns = clamp(s0 + dmin, 0, 1440 - STEP);
+    t.start = ns;
+    t.end = ns + len <= 1440 ? ns + len : ns + len - 1440;
+  }
+}
+function startDrag(e, key, kind) {
+  if (S.done) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const t = slotOf(key);
+  const col = e.currentTarget.closest(".daycol");
+  const row = col.querySelector(".slot").getBoundingClientRect().height;   // 30分の高さ（px）
+  drag = { key, kind, t, s0: t.start, e0: t.end, y0: e.clientY, row, col, moved: false };
+  if (S.mode === "each") S.editDay = key;
+  col.setPointerCapture(e.pointerId);       // 指が帯から外れても追い続ける（列は描き直さない）
+  col.addEventListener("pointermove", onDragMove);
+  col.addEventListener("pointerup", endDrag);
+  col.addEventListener("pointercancel", endDrag);
+}
+function onDragMove(e) {
+  if (!drag) return;
+  const dmin = Math.round(((e.clientY - drag.y0) / drag.row) * (SLOT / STEP)) * STEP;
+  if (dmin !== 0) drag.moved = true;
+  dragTo(drag.t, drag.kind, drag.s0, drag.e0, dmin);
+  redrawBands();                            // 帯だけを描き直す（列ごと描き直すと指の追跡が切れる）
+  renderSummary();
+  syncFine();
+}
+function endDrag(e) {
+  if (!drag) return;
+  const col = drag.col;
+  col.removeEventListener("pointermove", onDragMove);
+  col.removeEventListener("pointerup", endDrag);
+  col.removeEventListener("pointercancel", endDrag);
+  try { col.releasePointerCapture(e.pointerId); } catch (_) { /* すでに外れている */ }
+  const d = drag;
+  drag = null;
+  if (e.type === "pointerup" && !d.moved && d.kind === "move") {
+    // 帯の上を動かさずにタップした：その位置の枠をタップしたのと同じに扱う（端の近くならつまみが来る）
+    const top = col.getBoundingClientRect().top;
+    const min = clamp(Math.floor((e.clientY - top) / d.row) * SLOT, 0, 1440 - SLOT);
+    tapSlot(d.key, min, true);
+    return;
+  }
+  render();
+}
+function drawBands(col, key) {
+  for (const old of col.querySelectorAll(".pick, .alldayband")) old.remove();
+  if (!S.days.has(key)) return;              // 選んだ時間は、選んだ日の列にだけ出す
+  const t = slotOf(key);
+  if (S.pending && (S.mode === "same" || S.pending.day === key)) {
+    band(col, S.pending.start, null, "pick pending");
+  } else if (t.allDay) {
+    if (S.mode === "each") col.append(el("div", "alldayband", "終日"));
+  } else if (t.start !== null && t.end !== null) {
+    const label = timeText(t).replace("〜", "〜\n");   // 列が狭いので2行に
+    const parts = t.end > t.start ? [[t.start, t.end]] : [[t.start, 1440], [0, t.end]];   // 日をまたぐなら2つ
+    parts.forEach(([a, b], i) => {
+      const p = band(col, a, b, "pick live");
+      p.dataset.day = key;
+      p.append(el("span", "picklabel", label));
+      p.addEventListener("pointerdown", (e) => startDrag(e, key, "move"));
+      if (i === 0) {                         // 開始のつまみは最初の帯の上端
+        const h = el("div", "grip top");
+        h.setAttribute("aria-label", `開始を動かす（${mdk(key)}）`);
+        h.addEventListener("pointerdown", (e) => startDrag(e, key, "start"));
+        p.append(h);
+      }
+      if (i === parts.length - 1) {          // 終了のつまみは最後の帯の下端
+        const h = el("div", "grip bottom");
+        h.setAttribute("aria-label", `終了を動かす（${mdk(key)}）`);
+        h.addEventListener("pointerdown", (e) => startDrag(e, key, "end"));
+        p.append(h);
+      }
+    });
+  }
+}
+function redrawBands() {
+  for (const col of $("week-grid").querySelectorAll(".daycol")) drawBands(col, col.dataset.day);
 }
 function renderWeek() {
   const ws = S.week;
@@ -249,17 +375,7 @@ function renderWeek() {
       box.textContent = e.title || "";        // 名前は文字としてだけ入れる
       col.append(box);
     }
-    if (sel) {                                // 選んだ時間は、選んだ日の列にだけ出す
-      const t = slotOf(key);
-      if (S.pending && (S.mode === "same" || S.pending.day === key)) {
-        band(col, S.pending.start, null, "pick pending");
-      } else if (t.allDay) {
-        if (S.mode === "each") col.append(el("div", "alldayband", "終日"));
-      } else if (t.start !== null && t.end !== null) {
-        if (t.end > t.start) band(col, t.start, t.end, "pick");
-        else { band(col, t.start, 1440, "pick"); band(col, 0, t.end, "pick"); }   // 翌日まで
-      }
-    }
+    drawBands(col, key);
     grid.append(col);
   }
   if (!S.scrolled) {                        // 最初に開いたときは朝8時あたりを見せる
@@ -327,6 +443,10 @@ function render() {
   if (S.mode === "each") renderEachList();
   $("time-box").hidden = !timed();
   if (timed()) renderWeek();
+  syncFine();
+  renderSummary();
+}
+function syncFine() {
   const ft = fineTarget();
   const editing = $("editing");
   editing.hidden = S.mode !== "each";
@@ -336,7 +456,6 @@ function render() {
   $("start-sel").value = ft && ft.start !== null ? String(ft.start) : "";
   $("end-sel").value = ft && ft.end !== null ? String(ft.end) : "";
   $("overnight").hidden = !ft || ft.allDay || ft.start === null || ft.end === null || ft.end > ft.start;
-  renderSummary();
 }
 
 async function submit() {
