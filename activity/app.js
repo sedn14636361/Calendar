@@ -498,7 +498,37 @@ function setApply(mode) {
   setStatus("");
   refreshData();
 }
+// ---------- 名前の入力：キーボードに隠れないように ----------
+// 画面は Discord の中の iframe で動くので、スマホのブラウザが入力欄を自動で見える所まで動かしてくれないことがある。
+// キーボードは画面の下から4〜5割ほどを覆うので、入力中は欄を画面の上から2割の所まで動かし、下の「追加する」バーを隠す
+const TOUCH = new URLSearchParams(location.search).get("platform") === "mobile"
+  || (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+function keepFieldVisible() {
+  const input = $("name");
+  if (document.activeElement !== input) return;
+  const vv = window.visualViewport;          // キーボードの分だけ小さくなる端末では、見えている範囲に合わせる
+  const viewTop = vv ? vv.offsetTop : 0;
+  const viewH = vv ? Math.min(vv.height, window.innerHeight) : window.innerHeight;
+  const top = input.closest(".field").getBoundingClientRect().top;   // 「予定の名前」の見出しごと見せる
+  window.scrollBy(0, top - (viewTop + viewH * 0.2));
+}
+function wireTyping() {
+  if (!TOUCH) return;                        // パソコンではキーボードが画面を覆わないので何もしない
+  const input = $("name");
+  input.addEventListener("focus", () => {
+    document.body.classList.add("typing");   // バーを隠し、下に余白を足す（一番下の欄でも上まで動かせるように）
+    requestAnimationFrame(keepFieldVisible);
+    setTimeout(keepFieldVisible, 300);       // キーボードが出きったあと（端末が自分で動かした分も直す）
+    setTimeout(keepFieldVisible, 700);
+  });
+  input.addEventListener("blur", () => document.body.classList.remove("typing"));
+  input.addEventListener("keydown", (e) => {   // 「完了」でキーボードを閉じる。日本語の変換を確定する Enter では閉じない
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) input.blur();
+  });
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", keepFieldVisible);
+}
 function wire() {
+  wireTyping();
   $("prev-month").addEventListener("click", () => { S.month = new Date(S.month.getFullYear(), S.month.getMonth() - 1, 1); refreshData(); });
   $("next-month").addEventListener("click", () => { S.month = new Date(S.month.getFullYear(), S.month.getMonth() + 1, 1); refreshData(); });
   $("prev-week").addEventListener("click", () => { S.week = addDays(S.week, -7); refreshData(); });
