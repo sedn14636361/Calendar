@@ -118,3 +118,34 @@ body.typing .spacer { height: 75vh; }
 .primary { width: 100%; min-height: 48px; border: 0; border-radius: 10px; background: var(--ok); color: #fff; font-weight: 700; }
 .primary:disabled { background: var(--line); color: var(--muted); }
 .result { white-space: pre-wrap; word-break: break-word; font: inherit; margin: 8px 0 0; }
+
+/* 空き日の画面（/date）：範囲・出力しない日・条件のボタン・結果 */
+.day.inrange { background: rgba(88, 101, 242, .35); }
+.day.offday { background: rgba(88, 101, 242, .14); }
+.day.offday .num { color: var(--muted); }
+.day.skipped { background: #383a40; outline: 2px dashed var(--warn); outline-offset: -2px; }
+.day.skipped .num { color: var(--muted); text-decoration: line-through; }
+/* 開始日・終了日は、曜日の指定や「外す」に関係なく濃い色にする（上の色より後に書いて勝たせる） */
+.day.edge { background: var(--accent); }
+.day.edge .num { color: #fff; }
+.day .tag { font-size: 10px; line-height: 1; color: var(--warn); }
+.tools { display: flex; gap: 6px; margin-top: 10px; }
+.tools button { flex: 1; min-height: 44px; }
+.tools button:disabled { opacity: .45; }
+#cond-card h2 { margin-top: 12px; }
+#cond-card h2:first-child { margin-top: 0; }
+.choices { display: grid; gap: 6px; margin: 8px 0 0; }
+.choices.c2 { grid-template-columns: 1fr 1fr; }
+.choices.c3 { grid-template-columns: repeat(3, 1fr); }
+.choices.c7 { grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.choices button { min-height: 44px; padding: 4px 2px; font-size: 14px; }
+.choices button[aria-checked="true"] { background: var(--accent); color: #fff; }
+.choices button[aria-pressed="true"] { background: var(--ok); color: #fff; }
+.copy-status { margin: 8px 0 0; font-weight: 600; white-space: pre-line; }
+.copy-status.ok { color: var(--ok); }
+.copy-status.ng { color: var(--warn); }
+.free-text {
+  display: block; width: 100%; margin: 8px 0 0; font-family: inherit; font-size: 15px; line-height: 1.5; resize: none;
+  border-radius: 8px; border: 1px solid var(--line); background: #1e1f22; color: var(--text); padding: 8px 10px;
+}
+.secondary { width: 100%; min-height: 44px; margin-top: 8px; }

@@ -1077,7 +1077,7 @@ HELP_TEXT = (
     "add [仕事] 2026-10.5 9-12 定例         追加先をカレンダー名で（番号も可）\n"
     "\n"
     "■ 選ぶだけで使う（入力欄で / を打つと一覧に出る）\n"
-    "/date          パネルで年月日・時間帯・曜日を選んで調べる\n"
+    "/date          カレンダー画面（またはパネル）で選んで調べる\n"
     "/add           カレンダー画面（またはパネル）で選んで追加\n"
     "/purge         メッセージを指定した数だけ削除（管理者向け）\n"
     "\n"
@@ -1189,29 +1189,52 @@ async def _handle_message(message):
                 await message.channel.send("画像の生成に失敗しました")
         return True
 
-    # 先頭が / で、次に n/a/無し、その後ろに範囲文字列、末尾に r または d、
-    # さらに最後に曜日の指定（/sat/sun など）を任意個つけられる。
-    # 範囲文字列に使える文字は数字と - . : だけなので、英字で始まる
-    # 曜日の部分と取り違えることはない。
-    match = re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r|d)?((?:/[^/\s]+)*)", text)
-
-    if not match:
+    # --- /2026-9 など : 空き日程を調べる ---
+    query = parse_free_command(text)
+    if query is None:
         return
+    if query["error"]:
+        await message.channel.send(query["error"])
+        return True
+
+    # 「入力中…」を出して受け付けたことを見せる
+    async with message.channel.typing():
+        free_days, failures, label = free_days_query(query)
+    await message.channel.send(format_free_result(query, free_days, label) + failure_note(failures))
+    return True
+
+
+# ===== ⑧-C2 空き日程のコマンドの解釈・計算・整形 =====
+# 文字のコマンド（_handle_message）と、カレンダー画面の「出力する」（activity_free）の両方がこれを使う。
+# 判定を二重に持たないので、同じ条件なら出力は作りからして同じになる。
+
+# 先頭が / で、次に n/a/無し、その後ろに範囲文字列、末尾に r または d、
+# さらに最後に曜日の指定（/sat/sun など）を任意個つけられる。
+# 範囲文字列に使える文字は数字と - . : だけなので、英字で始まる
+# 曜日の部分と取り違えることはない。
+_FREE_CMD_RE = re.compile(r"/([nau]?)([\d\-\.:]+)(r|d)?((?:/[^/\s]+)*)")
+
+
+def parse_free_command(text):
+    """空き日程のコマンドを解釈する。コマンドに当たらなければ None。
+    当たれば {"mode", "suffix", "weekdays", "start", "end", "error"} を返す。
+    誤りがあれば error に返信の文（そのときほかの値は使わない）"""
+    match = _FREE_CMD_RE.fullmatch(text)
+    if not match:
+        return None
 
     mode = match.group(1)              # "" or "n" or "a" or "u"
     body = match.group(2)              # 例 "2026-8:2026-9"
     suffix = match.group(3) or ""      # "" or "r" or "d"
-    negate = suffix == "r"             # 末尾 r ＝反転（予定がある日）
-    densuke = suffix == "d"            # 末尾 d ＝伝助形式（全モードで使える／r とは排他）
+    query = {"mode": mode, "suffix": suffix, "weekdays": set(),
+             "start": None, "end": None, "error": None}
 
     # 曜日の指定（無ければ空集合＝絞り込みなし）
     wanted_weekdays, unknown_weekdays = parse_weekdays(match.group(4))
     if unknown_weekdays:
-        await message.channel.send(
-            "曜日の指定が分かりません：" + "、".join(unknown_weekdays) + "\n"
-            + WEEKDAY_HELP
-        )
-        return True
+        query["error"] = ("曜日の指定が分かりません：" + "、".join(unknown_weekdays) + "\n"
+                          + WEEKDAY_HELP)
+        return query
 
     # 7曜日すべてが揃った指定は、曜日を書かなかったのと同じ扱いにする。
     # 1日も除外されないので、見出しに「月曜・火曜・…・日曜の」と並べる意味がない。
@@ -1219,35 +1242,43 @@ async def _handle_message(message):
     # 「曜日なし」と「全曜日」の出力が作りからして同じになる。
     if len(wanted_weekdays) == len(WEEKDAY_NAMES):
         wanted_weekdays = set()
+    query["weekdays"] = wanted_weekdays
 
     # 日付への変換と範囲の検査（/date のパネルの要約も同じ関数を使う）
     start_date, end_date, range_error = check_range(body)
     if range_error:
-        await message.channel.send(range_error)
-        return True
+        query["error"] = range_error
+        return query
+    query["start"], query["end"] = start_date, end_date
+    return query
 
-    # モードごとに空き日を求める。
-    # 「入力中…」を出して受け付けたことを見せ、Google への問い合わせは
-    # 別スレッドで行う（応答を待つ間もボット本体を止めないため）
-    async with message.channel.typing():
-        if mode == "n":
-            free_days, failures = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
-            label = "夜が空いている日"
-        elif mode == "a":
-            day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
-            night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
-            free_days = sorted(set(day_free) & set(night_free))
-            failures = merge_failures(day_fail, night_fail)
-            label = "一日空いている日"
-        elif mode == "u":                  # 昼か夜のどちらか（あるいは両方）が空いている日
-            day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
-            night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
-            free_days = sorted(set(day_free) | set(night_free))   # どちらかに含まれる日
-            failures = merge_failures(day_fail, night_fail)
-            label = "昼か夜が空いている日"
-        else:
-            free_days, failures = find_free_days(start_date, end_date, DAY_START, DAY_END)
-            label = "昼が空いている日"
+
+def free_days_query(query):
+    """parse_free_command の結果から、該当する日を求める。
+    戻り値は (日のリスト, 読み取れなかったカレンダーIDのリスト, 見出しの文言)"""
+    mode, start_date, end_date = query["mode"], query["start"], query["end"]
+    negate = query["suffix"] == "r"    # 末尾 r ＝反転（予定がある日）
+    wanted_weekdays = query["weekdays"]
+
+    # モードごとに空き日を求める
+    if mode == "n":
+        free_days, failures = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        label = "夜が空いている日"
+    elif mode == "a":
+        day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        free_days = sorted(set(day_free) & set(night_free))
+        failures = merge_failures(day_fail, night_fail)
+        label = "一日空いている日"
+    elif mode == "u":                  # 昼か夜のどちらか（あるいは両方）が空いている日
+        day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        free_days = sorted(set(day_free) | set(night_free))   # どちらかに含まれる日
+        failures = merge_failures(day_fail, night_fail)
+        label = "昼か夜が空いている日"
+    else:
+        free_days, failures = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        label = "昼が空いている日"
 
     # 末尾に r が付いていたら反転（昼・夜モードのみ対象。a と u には適用しない）
     if negate and mode in ("", "n"):
@@ -1268,15 +1299,14 @@ async def _handle_message(message):
         free_days = filter_by_weekday(free_days, wanted_weekdays)
         # 括弧は既存の「（09/28現在）」で使っているため重ねない
         label = "%sの%s" % (weekday_label(wanted_weekdays), label)
+    return free_days, failures, label
 
-    if densuke:
-        await message.channel.send(format_free_days_densuke(free_days) + failure_note(failures))
-    else:
-        await message.channel.send(
-            format_free_days_range(start_date, end_date, free_days, label)
-            + failure_note(failures)
-        )
-    return True
+
+def format_free_result(query, free_days, label):
+    """結果の文（読み取れなかったカレンダーの注意は含まない）"""
+    if query["suffix"] == "d":         # 末尾 d ＝伝助形式（全モードで使える／r とは排他）
+        return format_free_days_densuke(free_days)
+    return format_free_days_range(query["start"], query["end"], free_days, label)
 
 
 @client.event
@@ -1782,8 +1812,18 @@ class DatePanel(_Panel):
             await interaction.followup.send(f"⚠️ 処理中にエラーが発生しました（{type(e).__name__}）")
 
 
-@tree.command(name="date", description="空いている日を調べる（パネルで年・月・日・時間帯・曜日を選ぶ）")
+@tree.command(name="date", description="空いている日を調べる（カレンダー画面かパネルで期間・時間帯・曜日を選ぶ）")
 async def slash_date(interaction: discord.Interaction):
+    if ACTIVITY_ENABLED:
+        # /add と同じく、カレンダー画面（アクティビティ）をすぐ開く。開けなかったときはパネルを出す
+        issue_activity_ticket(interaction.user.id, interaction.channel, None, None, kind="date")
+        try:
+            await interaction.response.launch_activity()
+            _activity_log("/date からカレンダー画面を開きました")
+            return
+        except discord.HTTPException as e:
+            revoke_activity_ticket_for(interaction.user.id)
+            print(f"カレンダー画面を開けなかったので、パネルを出します: {e}")
     panel = DatePanel(interaction)
     await interaction.response.send_message(view=panel, ephemeral=True)   # 送った人だけに見える
     panel._log("パネルを開きました")
@@ -2212,23 +2252,27 @@ def status_report():
 # ===== ⑨-B アクティビティ（Discord の中で開くカレンダー画面） =====
 # /add を送ると、Discord の中（スマホでも）でカレンダーの画面が開き、日をタップし、
 # 時間の枠を「開始→終了」の順にタップして予定を追加できる（時間は全部の日で同じか、日ごとに指定）。
+# /date を送ると、同じ画面が空き日を調べる形で開く。開始日→終了日の順にタップして範囲を選び、
+# 出力しない日を個別に外し、時間帯・曜日・出し方をボタンで選んで「出力する」と、
+# 結果を画面に出してクリップボードにコピーし、チャンネルにも出す（条件を変えて何度でも出せる）。
 # 開けなかったとき（アクティビティが無効・開発チーム以外の人など）は、今までのパネルを出す。
 # 画面のファイルは activity/ にあり、このファイルの Web サーバーが /activity/ の下で配る。
 # Discord の Developer Portal で URL Mappings を「/ → <Render のホスト>/activity」にしておく。
 #
 # 安全のための決まり：
 #   ・開いた人は Discord のログイン確認（OAuth2）で確かめる。画面から届く情報はそのまま信じない
-#   ・追加できるのは、/add を送った本人だけ。送ったときに「誰が・どのチャンネルで」を
-#     15分だけ記録し（チケット）、ログイン確認の結果と一致したときだけ受け付ける
+#   ・使えるのは、/add・/date を送った本人だけ。送ったときに「誰が・どのチャンネルで・どちらの画面か」を
+#     15分だけ記録し（チケット）、ログイン確認の結果と一致したときだけ受け付ける。
+#     /add の合言葉で空き日を調べる、/date の合言葉で予定を追加する、ということはできない
 #   ・画面とのやり取りに使う合言葉（セッション）は推測できない乱数で、メモリにだけ置き、ログに書かない。
-#     追加に使えるのは1回だけ
+#     追加に使えるのは1回だけ（空き日の出力は読むだけなので、15分の間は何度でも）
 #   ・追加の中身は、パネルと同じく文字のコマンドに組み立てて既存の処理に通す（判定を二重に持たない）
 #   ・Google と Discord への問い合わせは、ボット本体の処理の流れ（_bot_loop）で行う。
 #     Web サーバーは別のスレッドで動くが、Google の窓口（service）はスレッド間で共有できないため
 ACTIVITY_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "").strip()   # 値は表示もログもしない
 ACTIVITY_ENABLED = bool(ACTIVITY_CLIENT_SECRET)
 ACTIVITY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "activity")
-ACTIVITY_TICKET_SEC = 900              # /add を送ってから使える時間（15分。利用者の指定）
+ACTIVITY_TICKET_SEC = 900              # /add・/date を送ってから使える時間（15分。利用者の指定）
 _ACTIVITY_MAX_BODY = 16 * 1024         # 画面から受け取る中身の大きさの上限
 _ACTIVITY_MAX_SPAN_DAYS = 43           # 1回に読む予定の期間（月表示の6週＋余り）
 _ACTIVITY_FILES = {                    # 配るファイル（これ以外は配らない）
@@ -2238,8 +2282,9 @@ _ACTIVITY_FILES = {                    # 配るファイル（これ以外は配
 }
 _DISCORD_API = "https://discord.com/api"
 _activity_lock = threading.Lock()
-_activity_tickets = {}                 # 利用者ID → {"expires", "channel", "panel", "calendars"}
-_activity_sessions = {}                # 合言葉 → {"user_id", "expires", "used"}
+_activity_tickets = {}                 # 利用者ID → {"kind", "expires", "channel", "panel", "calendars"}
+_activity_sessions = {}                # 合言葉 → {"kind", "user_id", "expires", "used"}
+_ACTIVITY_KINDS = ("add", "date")      # どちらの画面か（"add"＝予定の追加、"date"＝空き日の出力）
 _bot_loop = None                       # ボット本体の処理の流れ（on_ready で記録）
 
 
@@ -2255,11 +2300,12 @@ def _activity_log(what):
     print(f"アクティビティ: {what}")
 
 
-def issue_activity_ticket(user_id, channel, panel, calendars, now=None):
-    """パネルのボタンが押されたときに呼ぶ。同じ人の前のチケットは置き換える"""
+def issue_activity_ticket(user_id, channel, panel, calendars, now=None, kind="add"):
+    """/add・/date を送ったときに呼ぶ。同じ人の前のチケットは置き換える（画面の種類が違っても）"""
+    assert kind in _ACTIVITY_KINDS
     now = now if now is not None else time.monotonic()
     with _activity_lock:
-        _activity_tickets[user_id] = {"expires": now + ACTIVITY_TICKET_SEC, "channel": channel,
+        _activity_tickets[user_id] = {"kind": kind, "expires": now + ACTIVITY_TICKET_SEC, "channel": channel,
                                       "panel": panel, "calendars": calendars}
 
 
@@ -2290,18 +2336,23 @@ def _valid_ticket(user_id, now):
     return t
 
 
-def _session_for(token, now):
-    """合言葉から、まだ使えるセッションと、その人のチケットを返す。使えなければ ActivityError"""
+def _session_for(token, now, kind=None):
+    """合言葉から、まだ使えるセッションと、その人のチケットを返す。使えなければ ActivityError。
+    kind を渡すと、その種類の画面の合言葉だけを受け付ける"""
     if not isinstance(token, str) or not token:
         raise ActivityError("画面を開き直してください（確認の情報がありません）", 401)
     s = _activity_sessions.get(token)
     if s is None or s["expires"] <= now:
-        raise ActivityError("時間が経ったため使えなくなりました。もう一度 /add を送ってください", 401)
+        raise ActivityError("時間が経ったため使えなくなりました。もう一度 /add か /date を送ってください", 401)
+    cmd = f"/{s['kind']}"
+    if kind is not None and s["kind"] != kind:
+        raise ActivityError(f"この画面ではできない操作です。{'/add' if kind == 'add' else '/date'} を送って開き直してください", 403)
     if s["used"]:
         raise ActivityError("この画面からはもう追加しました。続けて追加するときは、もう一度 /add を送ってください", 409)
     t = _valid_ticket(s["user_id"], now)
-    if t is None or t["calendars"] is None:
-        raise ActivityError("時間が経ちました。もう一度 /add を送ってください", 401)
+    # 同じ人が別のコマンドを送ると、チケットはそちらに置き換わる（前の画面は使えなくなる）
+    if t is None or t["kind"] != s["kind"] or (s["kind"] == "add" and t["calendars"] is None):
+        raise ActivityError(f"時間が経ったか、別のコマンドを送りました。もう一度 {cmd} を送ってください", 401)
     return s, t
 
 
@@ -2334,19 +2385,22 @@ async def activity_start(code, now=None):
     with _activity_lock:
         has_ticket = _valid_ticket(user_id, now) is not None
     if not has_ticket:
-        _activity_log("チケットの無い人が開きました（/add を通さずに開いた）")
-        raise ActivityError("Discord で /add を送って開いてください", 403)
-    calendars = _calendar_choices()             # 追加先の一覧（10分間覚えている）。ボット本体の処理の流れで読む
+        _activity_log("チケットの無い人が開きました（/add・/date を通さずに開いた）")
+        raise ActivityError("Discord で /add か /date を送って開いてください", 403)
+    with _activity_lock:
+        kind = _activity_tickets[user_id]["kind"]
+    # 追加先の一覧（10分間覚えている）。ボット本体の処理の流れで読む。空き日の画面では使わないので読まない
+    calendars = _calendar_choices() if kind == "add" else []
     with _activity_lock:
         t = _valid_ticket(user_id, now)
-        if t is None:
-            raise ActivityError("時間が経ちました。もう一度 /add を送ってください", 403)
+        if t is None or t["kind"] != kind:
+            raise ActivityError(f"時間が経ったか、別のコマンドを送りました。もう一度 /{kind} を送ってください", 403)
         t["calendars"] = calendars
         session = secrets.token_urlsafe(32)     # 256ビットの乱数
-        _activity_sessions[session] = {"user_id": user_id, "expires": t["expires"], "used": False}
-    _activity_log("画面を開きました（本人の確認ができました）")
+        _activity_sessions[session] = {"kind": kind, "user_id": user_id, "expires": t["expires"], "used": False}
+    _activity_log(f"画面を開きました（/{kind}。本人の確認ができました）")
     today = _today()
-    return {"access_token": access_token, "session": session,
+    return {"access_token": access_token, "session": session, "mode": kind,
             "calendars": [{"value": c.value, "label": c.name} for c in calendars],
             "today": today.isoformat(), "max_days": ADD_MAX_DAYS,
             "titles_until": (today + timedelta(days=DAYS_TO_SHOW)).isoformat()}
@@ -2485,7 +2539,7 @@ async def activity_add(session_token, body, now=None):
         raise ActivityError("予定の名前は200文字までにしてください")
     calendar = body.get("calendar")
     with _activity_lock:
-        session, ticket = _session_for(session_token, now)
+        session, ticket = _session_for(session_token, now, "add")
         if calendar not in {c.value for c in ticket["calendars"]}:
             raise ActivityError("追加先のカレンダーを選び直してください")
         parsed, texts, error = build_web_requests(entries, calendar)
@@ -2511,6 +2565,67 @@ async def activity_add(session_token, body, now=None):
         reply += "\n（チャンネルへの返信に失敗しました。ボットの「メッセージを送信」の権限を確認してください）"
     _activity_log(f"追加の処理をしました（{len(parsed)}件）")
     return {"ok": True, "message": reply}
+
+
+_ACTIVITY_MAX_EXCLUDE = 400            # 出力しない日の数の上限（12か月＋余り）
+
+
+def _copy_text(text):
+    """クリップボードに入れる文。Discord 用の太字（行全体の **…**）だけ外す。伝助などに貼ったときに記号を残さないため"""
+    return re.sub(r"^\*\*(.*)\*\*$", r"\1", text, flags=re.MULTILINE)
+
+
+def build_free_query(first, last, time_, weekdays, fmt):
+    """画面で選んだ内容（開始日・終了日・時間帯・曜日・出し方）を、/date のパネルと同じく文字のコマンドに組み立て、
+    文字のコマンドと同じ解釈を通す。戻り値は (文字のコマンド, 解釈結果)。誤りは ActivityError"""
+    if time_ not in _TIME_TO_MODE:
+        raise ActivityError("時間帯の指定が正しくありません")
+    if fmt not in _FORMAT_TO_SUFFIX:
+        raise ActivityError("出し方の指定が正しくありません")
+    if not isinstance(weekdays, list) or any(w not in _WEEKDAY_VALUES for w in weekdays):
+        raise ActivityError("曜日の指定が正しくありません")
+    picked = [v for v in _WEEKDAY_VALUES if v in weekdays]      # 月→日の順にそろえ、重複を除く
+    if len(picked) == len(_WEEKDAY_VALUES):
+        picked = []                    # 7曜日すべて＝指定なし（文字のコマンドと同じ扱い）
+    text, error = build_date_command(f"{first.year}-{first.month}.{first.day}",
+                                     f"{last.year}-{last.month}.{last.day}",
+                                     time_, ",".join(picked) or None, fmt)
+    if error:
+        raise ActivityError(error)
+    query = parse_free_command(text)
+    if query is None:                  # 組み立てた文字列は必ず当たるはずなので、ここに来たら不具合
+        raise ActivityError("指定を解釈できませんでした", 500)
+    if query["error"]:
+        raise ActivityError(query["error"])
+    return text, query
+
+
+async def activity_free(session_token, body, now=None):
+    """空き日の画面の「出力する」。文字のコマンドと同じ処理で調べ、出力しない日を除いて、チャンネルと画面に返す"""
+    now = now if now is not None else time.monotonic()
+    with _activity_lock:                       # 中身を見る前に、本人の画面かを確かめる
+        _session, ticket = _session_for(session_token, now, "date")
+        channel = ticket["channel"]
+    first, last = _parse_iso_day(body.get("first")), _parse_iso_day(body.get("last"))
+    raw = body.get("exclude", [])
+    if not isinstance(raw, list) or len(raw) > _ACTIVITY_MAX_EXCLUDE:
+        raise ActivityError("出力しない日の指定が正しくありません")
+    exclude = {_parse_iso_day(x) for x in raw}
+    text, query = build_free_query(first, last, body.get("time"), body.get("weekdays"), body.get("fmt"))
+    print(f"スラッシュコマンド: {text!r}（カレンダー画面から。出力しない日 {len(exclude)}日）")
+    days, failures, label = free_days_query(query)
+    excluded = [d for d in days if d in exclude]           # 実際に結果から外れた日（もともと出ない日は数えない）
+    days = [d for d in days if d not in exclude]
+    result = format_free_result(query, days, label)
+    note = failure_note(failures)
+    out = _ActivityChannel(channel)
+    await out.send(result + note)                          # /date と同じく、チャンネルにも出す
+    reply = {"ok": True, "message": result, "copy": _copy_text(result), "command": text,
+             "excluded": len(excluded), "note": note.strip() or None, "posted": out.send_error is None}
+    if out.send_error is not None:
+        _activity_log(f"チャンネルへの返信に失敗しました: {out.send_error}")
+    _activity_log(f"空き日を出力しました（{len(days)}日）")
+    return reply
 
 
 def _run_on_bot_loop(coro, timeout=120):
@@ -2572,6 +2687,8 @@ def handle_activity_request(method, path, body_bytes):
             result = _run_on_bot_loop(activity_data(body.get("session"), body.get("first"), body.get("last")))
         elif sub == "api/add":
             result = _run_on_bot_loop(activity_add(body.get("session"), body))
+        elif sub == "api/free":
+            result = _run_on_bot_loop(activity_free(body.get("session"), body))
         else:
             raise ActivityError("見つかりません", 404)
         code = 200

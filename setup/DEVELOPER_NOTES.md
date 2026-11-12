@@ -302,6 +302,7 @@ macOS / Linux では起きない。
 ### カレンダー画面（Discord のアクティビティ）
 
 `/add` を送ると、Discord の中（スマホでも）でカレンダーの画面（アクティビティ）をすぐ開き（`launch_activity`）、そこで予定を追加する。
+`/date` も同じ画面を空き日の出力の形で開く（下の「/date の画面」）。
 `DISCORD_CLIENT_SECRET` があるときだけ有効（`ACTIVITY_ENABLED`）。開けなかったとき（無効・開発チーム以外など）は、今までの設定パネルを出す。仕様は Discord の公式ドキュメント（docs.discord.com の Activities）で確認した。
 
 - **画面**：`activity/`（`index.html`・`app.css`・`app.js`）。Web サーバー（`HealthHandler`）が `/activity/` の下で配る。
@@ -344,13 +345,43 @@ macOS / Linux では起きない。
   中身が変われば読み込み先も変わるので、古いものは使われない。CSS では iPhone の標準のボタンの見た目（`appearance`）と一覧の黒丸も打ち消している
 - 画面に入れる文字はすべて `textContent`（`innerHTML` は使わない）。CSP は `default-src 'self'` ほか。テストでは予定名の `<img onerror>` が動かないことを確かめている
 
+#### /date の画面（空き日の出力）
+
+`/date` も `/add` と同じく `launch_activity` で同じ画面を開く（開けなければ `DatePanel`）。どちらの画面かは、チケットの `kind`（`"add"`／`"date"`）で決め、
+`api/start` が `mode` として返す。画面（`app.js` の `S.kind`）はそれを見て部品を出し分ける（`setupKind`）。
+
+- **チケットと合言葉の種類**：`issue_activity_ticket(..., kind=)`。合言葉にも `kind` を持たせ、`_session_for(token, now, kind)` で、`api/add` は `"add"`、`api/free` は `"date"` の合言葉だけを受け付ける（違えば 403）。
+  チケットは利用者ごとに1つなので、同じ人がもう一方のコマンドを送ると置き換わり、前の画面の合言葉は使えなくなる（401「別のコマンドを送りました」）。`api/data` はどちらの画面でも使う。
+  空き日の出力は読むだけなので、`used` は立てず、15分の間は何度でも出力できる。追加先の一覧（`_calendar_choices`）は空き日の画面では読まない
+- **判定を二重に持たない**：文字のコマンドの空き日の処理を `parse_free_command`（解釈・検査）・`free_days_query`（計算）・`format_free_result`（整形）に分け、
+  `_handle_message` と `activity_free` の両方から呼ぶ。`activity_free` は `build_free_query` で、`/date` のパネルと同じ `build_date_command` で文字のコマンドを組み立ててから `parse_free_command` に通す。
+  分けたあとも、文字のコマンド288通り（時間帯4×期間6×末尾3×曜日4）の出力が、分ける前と一字一句同じことを確かめた
+- **出力しない日**：`exclude`（日付の一覧）を、`free_days_query` の結果から除く（曜日の絞り込みや `r` の反転の後）。文字のコマンドには無い指定なので、この画面だけの機能。
+  `excluded` には、実際に結果から外れた日の数を返す（もともと出ない日は数えない）
+- **返すもの**：`message`（チャンネルに出す文。注意は含まない）、`copy`（`_copy_text`：行全体の `**…**` を外した文）、`note`（読み取れなかったカレンダーの注意。コピーには入れない）、
+  `command`（同じ条件の文字のコマンド）、`posted`（チャンネルに送れたか）。チャンネルには `message + note` を送る（利用者の指定）
+- **範囲の選び方（画面）**：`tapFree`。1回目＝開始、2回目＝終了（開始より前なら開始を移す。同じ日なら1日だけ）、範囲が決まった後のタップは選び直し。
+  「出力しない日を選ぶ」のときは、範囲の中のタップで `F.skip` を出し入れする。範囲を決め直すと、範囲の外になった除外は捨てる（`pruneSkip`）。
+  12か月の上限は画面でも `limitOf`（`check_range` と同じ決め方）で知らせるが、判定はボットが必ずやり直す。時間帯の最初は夜（利用者の指定）
+- **クリップボード**：アクティビティの SDK にはクリップボードの命令が無く、ブラウザの方法を使う。画面は別オリジンの iframe（`<id>.discordsays.com`）なので、
+  親が `allow="clipboard-write"` を付けていないと `navigator.clipboard` は `NotAllowedError` になる（Discord が付けているかは公式の資料に無い）。
+  また iPhone（WebKit）は、ボタンを押してから `await` した後の書き込みを「操作の外」として断る（WebKit Bug 244812。対策は押したその場で Promise を渡した `ClipboardItem` を書くこと）。そこで `runFree` は次の順に試す：
+  1. 押したその場で `navigator.clipboard.write([new ClipboardItem({"text/plain": 応答を待つ Promise})])`（`clipboardWithPromise`）
+  2. 応答が届いたら、隠した `textarea` ＋ `document.execCommand("copy")`、だめなら `navigator.clipboard.writeText`（`copyText`）
+  3. どれも失敗したら「自動でコピーできませんでした」と出し、「コピーする」ボタン（押したその場で `copyText`）と、選択できる結果の欄を残す。
+     「コピーしました」は成功が返ったときだけ出す
+  - Chromium（Playwright）で確かめた結果：別オリジンの iframe で `clipboard-write` を許すと 1 で書ける。許さないと 1 は `NotAllowedError`、2 の `execCommand` で書ける（クリップボードを読み出して確認）。
+    応答に7秒かかると 2 も失敗し（ボタンを押してからの「操作の中」の扱いが約5秒で切れるため）、3 になり、「コピーする」で書ける。
+    **WebKit（iPhone）と本物の Discord の中では確かめていない**（テストの環境に WebKit が無く、Discord に繋げないため）
+- 似た例：Discord のアクティビティでコピーが効かなかった Godot のゲーム（GitHub `Ryubara/deadnight` の issue 516・PR 533）も、`execCommand` を先に試し、だめなら選択した文を見せる形で直している（そちらも本物の Discord では未確認と書かれている）
+
 ### コマンドの書式
 
 `on_message` 内の正規表現で判定している。
 
 ```python
-re.fullmatch(r"/([nau]?)([\d\-\.:]+)(r|d)?", text)   # 空き日の検索
-re.fullmatch(r"/c(\d{4})-(\d{1,2})", text)            # 月間カレンダー画像
+_FREE_CMD_RE = re.compile(r"/([nau]?)([\d\-\.:]+)(r|d)?((?:/[^/\s]+)*)")   # 空き日の検索（parse_free_command）
+re.fullmatch(r"/c(\d{4})-(\d{1,2})", text)                                # 月間カレンダー画像
 ```
 
 先頭 `n/a/u` が時間帯モード、末尾 `r` が反転、`d` が伝助形式。書式を変えたら、`/cmds` の表示と README 第II部も直す。
