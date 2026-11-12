@@ -55,7 +55,7 @@ const F = {
   time: "night",               // 最初は夜（利用者の指定）
   wd: new Set(),               // 選んだ曜日（空＝すべて）
   fmt: "normal",
-  busy: false, last: null,     // last：最後に出力したときの条件（条件を変えたら知らせる）
+  busy: false,
 };
 
 function setStatus(text, isError) {
@@ -173,7 +173,6 @@ function renderMonth() {
     }
     b.setAttribute("aria-label", label);
     b.append(el("span", "num", String(d.getDate())));
-    if (S.kind === "date" && freeState(key) === "skipped") b.append(el("span", "tag", "外す"));
     const marks = el("span", "marks");
     for (const e of (S.events.get(key) || []).slice(0, 4)) marks.append(el("span", e.all_day ? "mark all" : "mark"));
     b.append(marks);
@@ -243,7 +242,6 @@ function freeBody() {
     exclude: [...F.skip].filter(inRange).sort(),
   };
 }
-const condKey = () => JSON.stringify({ ...freeBody(), session: null });
 function wdText() {
   if (F.wd.size === 0 || F.wd.size === 7) return "すべての曜日";
   return WD_BUTTONS.filter((v) => F.wd.has(v)).map((v) => WD[WD_VALUES.indexOf(v)]).join("・");
@@ -284,16 +282,25 @@ function renderFree() {
   $("clear-range").disabled = F.start === null;
   $("clear-skip").disabled = ![...F.skip].some(inRange);
   choiceButtons("time-btns", TIMES, (v) => v === F.time, (v) => { F.time = v; }, "aria-checked");
-  choiceButtons("wd-btns", WD_BUTTONS.map((v) => [v, WD[WD_VALUES.indexOf(v)]]), (v) => F.wd.has(v),
-    (v) => { if (F.wd.has(v)) F.wd.delete(v); else F.wd.add(v); }, "aria-pressed");
+  renderWeekdayButtons();
   choiceButtons("fmt-btns", FMTS, (v) => v === F.fmt, (v) => { F.fmt = v; }, "aria-checked");
   const problem = freeValid();
   $("summary").textContent = freeSummary() + (problem ? `\n${problem}` : "");
   $("run").disabled = !!problem || F.busy;
-  if (F.last !== null && !$("free-result").hidden) {
-    $("free-meta").dataset.stale = String(F.last !== condKey());
-    renderFreeMeta();
-  }
+}
+function renderWeekdayButtons() {           // カレンダーの見出し（日〜土）を、曜日を選ぶボタンにする
+  const box = $("weekdays");
+  box.removeAttribute("aria-hidden");
+  box.setAttribute("aria-label", "曜日（押すと選ぶ。選ばなければすべての曜日）");
+  box.replaceChildren();
+  WD_VALUES.forEach((v, i) => {
+    const b = el("button", i === 0 ? "sun" : i === 6 ? "sat" : "", WD[i]);
+    b.type = "button";
+    b.dataset.value = v;
+    b.setAttribute("aria-pressed", String(F.wd.has(v)));
+    b.addEventListener("click", () => { if (F.wd.has(v)) F.wd.delete(v); else F.wd.add(v); render(); });
+    box.append(b);
+  });
 }
 
 // ---------- 空き日の画面：出力とクリップボード ----------
@@ -347,24 +354,11 @@ function fitText() {
   ta.style.height = "auto";
   ta.style.height = `${Math.min(ta.scrollHeight + 2, window.innerHeight * 0.5)}px`;
 }
-function renderFreeMeta() {
-  const m = $("free-meta");
-  const j = m._result;
-  if (!j) return;
-  const lines = [];
-  if (j.excluded) lines.push(`出力しない日に選んだ${j.excluded}日を外しました`);
-  lines.push(j.posted ? "チャンネルにも出しました" : "チャンネルへの投稿に失敗しました。ボットの「メッセージを送信」の権限を確認してください");
-  if (j.note) lines.push(j.note);
-  if (m.dataset.stale === "true") lines.push("⚠️ 条件を変えました。もう一度「出力する」を押すと新しい結果になります");
-  m.textContent = lines.join("\n");
-  m.style.whiteSpace = "pre-line";
-}
 async function runFree() {
   if (freeValid() || F.busy) return;
   F.busy = true;
   render();
   setStatus("調べています…");
-  const key = condKey();
   const req = api("api/free", freeBody());
   const clip = clipboardWithPromise(() => req.then((j) => j.copy));   // 押したその場で始める（上の 1）
   let j;
@@ -376,18 +370,18 @@ async function runFree() {
     render();
     return;
   }
-  F.last = key;
   $("free-result").hidden = false;
   $("free-text").value = j.copy;
   fitText();
-  const meta = $("free-meta");
-  meta._result = j;
-  meta.dataset.stale = "false";
-  renderFreeMeta();
   let ok = await clip;
   if (!ok) ok = await copyText(j.copy);
   setCopyStatus(ok);
-  setStatus(ok ? "出力して、クリップボードにコピーしました" : "出力しました（コピーは手で行ってください）", !ok);
+  // 困ったときだけ（カレンダーを読めなかった・チャンネルに出せなかった）、上の状態の行に知らせる
+  const trouble = [];
+  if (j.note) trouble.push(j.note);
+  if (!j.posted) trouble.push("チャンネルへの投稿に失敗しました。ボットの「メッセージを送信」の権限を確認してください");
+  const head = ok ? "出力して、クリップボードにコピーしました" : "出力しました（コピーは手で行ってください）";
+  setStatus([head, ...trouble].join("\n"), !ok || trouble.length > 0);
   F.busy = false;
   render();
   $("free-result").scrollIntoView({ block: "start", behavior: "smooth" });
@@ -812,6 +806,7 @@ function setupKind() {                      // どちらの画面か（api/start
   $("title").textContent = title;
   document.title = title;
   for (const id of ["pick-box", "range-tools", "cond-card", "run"]) $(id).hidden = !date;
+  document.body.classList.toggle("free", date);
   for (const id of ["time-card", "form-card", "add"]) $(id).hidden = date;
 }
 
