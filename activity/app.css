@@ -128,19 +128,26 @@ body.typing .spacer { height: 75vh; }
 /* 開始日・終了日は、曜日の指定や「外す」に関係なく濃い色にする（上の色より後に書いて勝たせる） */
 .day.edge { background: var(--accent); }
 .day.edge .num { color: #fff; }
-.day .tag { font-size: 10px; line-height: 1; color: var(--warn); }
 .tools { display: flex; gap: 6px; margin-top: 10px; }
-.tools button { flex: 1; min-height: 44px; }
+/* 2つのボタンは文字の長さに合わせた幅にし、スマホ幅でも1行に収める（とても狭い画面でだけ折り返す） */
+.tools button { flex: 1 1 auto; min-height: 44px; padding: 0 10px; font-size: 14px; }
 .tools button:disabled { opacity: .45; }
 #cond-card h2 { margin-top: 12px; }
 #cond-card h2:first-child { margin-top: 0; }
 .choices { display: grid; gap: 6px; margin: 8px 0 0; }
 .choices.c2 { grid-template-columns: 1fr 1fr; }
 .choices.c3 { grid-template-columns: repeat(3, 1fr); }
-.choices.c7 { grid-template-columns: repeat(7, 1fr); gap: 4px; }
 .choices button { min-height: 44px; padding: 4px 2px; font-size: 14px; }
 .choices button[aria-checked="true"] { background: var(--accent); color: #fff; }
-.choices button[aria-pressed="true"] { background: var(--ok); color: #fff; }
+/* 曜日：カレンダーの見出しの行をボタンにする（/date の画面だけ）。押すと緑、もう一度押すと外れる。
+   押しやすさの最低基準（WCAG 2.2 の 2.5.8：24px）を満たしつつ、日付のマスより低く 32px にする */
+.weekdays button { min-height: 32px; padding: 0; font-size: 13px; color: var(--text); }
+.weekdays button.sun { color: var(--sun); }
+.weekdays button.sat { color: var(--sat); }
+.weekdays button[aria-pressed="true"] { background: var(--ok); color: #fff; }
+body.free .weekdays { margin-bottom: 4px; }
+/* 結果の欄が、下に固定した「出力する」のバー（要約2行＋ボタン）に近づきすぎないように */
+body.free .spacer { height: 190px; }
 .copy-status { margin: 8px 0 0; font-weight: 600; white-space: pre-line; }
 .copy-status.ok { color: var(--ok); }
 .copy-status.ng { color: var(--warn); }

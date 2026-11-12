@@ -25,14 +25,14 @@
         <h2 id="month-title"></h2>
         <button type="button" id="next-month" class="icon" aria-label="次の月">›</button>
       </div>
-      <div class="weekdays" aria-hidden="true">
+      <div id="weekdays" class="weekdays" aria-hidden="true">
         <span class="sun">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="sat">土</span>
       </div>
       <div id="month-grid" class="month" role="grid"></div>
       <p id="month-hint" class="hint">予定を追加する日を選んでください。複数選択可能です。</p>
       <div id="range-tools" class="tools" hidden>
         <button type="button" id="clear-range">範囲をやり直す</button>
-        <button type="button" id="clear-skip">外した日を戻す</button>
+        <button type="button" id="clear-skip">出力しない日をリセット</button>
       </div>
       <p id="warning" class="warning" hidden></p>
     </div>
@@ -40,11 +40,8 @@
     <div id="cond-card" class="card" hidden>
       <h2>時間帯</h2>
       <div id="time-btns" class="choices c2" role="radiogroup" aria-label="時間帯"></div>
-      <h2>曜日</h2>
-      <p class="hint">押すと選ぶ／外すが切り替わります。選ばなければすべての曜日です。</p>
-      <div id="wd-btns" class="choices c7" aria-label="曜日"></div>
-      <h2>出し方</h2>
-      <div id="fmt-btns" class="choices c3" role="radiogroup" aria-label="出し方"></div>
+      <h2>出力方式</h2>
+      <div id="fmt-btns" class="choices c3" role="radiogroup" aria-label="出力方式"></div>
     </div>
 
     <div id="free-result" class="card" hidden>
@@ -52,7 +49,6 @@
       <p id="copy-status" class="copy-status" role="status"></p>
       <textarea id="free-text" class="free-text" readonly rows="4" aria-label="結果の文"></textarea>
       <button type="button" id="copy" class="secondary">コピーする</button>
-      <p id="free-meta" class="hint"></p>
     </div>
 
     <div id="time-card" class="card">
