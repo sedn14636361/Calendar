@@ -10,12 +10,16 @@
 <body data-client-id="{{CLIENT_ID}}">
 <main id="app">
   <header class="top">
-    <h1>予定を追加</h1>
+    <h1 id="title">予定を追加</h1>
     <p id="status" class="status" role="status">準備しています…</p>
   </header>
 
   <section id="editor" hidden>
     <div class="card">
+      <div id="pick-box" class="segmented" role="radiogroup" aria-label="タップしたときの働き" hidden>
+        <button type="button" id="pick-range" role="radio" aria-checked="true">範囲を選ぶ</button>
+        <button type="button" id="pick-skip" role="radio" aria-checked="false">出力しない日を選ぶ</button>
+      </div>
       <div class="nav">
         <button type="button" id="prev-month" class="icon" aria-label="前の月">‹</button>
         <h2 id="month-title"></h2>
@@ -25,11 +29,33 @@
         <span class="sun">日</span><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="sat">土</span>
       </div>
       <div id="month-grid" class="month" role="grid"></div>
-      <p class="hint">予定を追加する日を選んでください。複数選択可能です。</p>
+      <p id="month-hint" class="hint">予定を追加する日を選んでください。複数選択可能です。</p>
+      <div id="range-tools" class="tools" hidden>
+        <button type="button" id="clear-range">範囲をやり直す</button>
+        <button type="button" id="clear-skip">外した日を戻す</button>
+      </div>
       <p id="warning" class="warning" hidden></p>
     </div>
 
-    <div class="card">
+    <div id="cond-card" class="card" hidden>
+      <h2>時間帯</h2>
+      <div id="time-btns" class="choices c2" role="radiogroup" aria-label="時間帯"></div>
+      <h2>曜日</h2>
+      <p class="hint">押すと選ぶ／外すが切り替わります。選ばなければすべての曜日です。</p>
+      <div id="wd-btns" class="choices c7" aria-label="曜日"></div>
+      <h2>出し方</h2>
+      <div id="fmt-btns" class="choices c3" role="radiogroup" aria-label="出し方"></div>
+    </div>
+
+    <div id="free-result" class="card" hidden>
+      <h2>結果</h2>
+      <p id="copy-status" class="copy-status" role="status"></p>
+      <textarea id="free-text" class="free-text" readonly rows="4" aria-label="結果の文"></textarea>
+      <button type="button" id="copy" class="secondary">コピーする</button>
+      <p id="free-meta" class="hint"></p>
+    </div>
+
+    <div id="time-card" class="card">
       <h2>時間</h2>
       <div class="segmented" role="radiogroup" aria-label="時間の決め方">
         <button type="button" id="apply-same" role="radio" aria-checked="true">全部同じ時間</button>
@@ -63,7 +89,7 @@
       </div>
     </div>
 
-    <div class="card form">
+    <div id="form-card" class="card form">
       <label class="field">予定の名前
         <input id="name" type="text" maxlength="200" autocomplete="off" enterkeyhint="done" placeholder="例：打ち合わせ">
       </label>
@@ -77,6 +103,7 @@
   <footer id="bar" class="bar" hidden>
     <p id="summary" class="summary"></p>
     <button type="button" id="add" class="primary" disabled>追加する</button>
+    <button type="button" id="run" class="primary" disabled hidden>出力する</button>
   </footer>
 
   <section id="done" class="card" hidden>

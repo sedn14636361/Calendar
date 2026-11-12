@@ -1,4 +1,5 @@
-// カレンダー画面（Discord のアクティビティ）。
+// カレンダー画面（Discord のアクティビティ）。/add で開くと予定の追加、/date で開くと空き日の出力。
+// どちらの画面かはボットが決める（/add・/date を送ったときの記録。api/start の mode）。
 // 予定の名前など、外から来た文字はすべて textContent で入れる（HTML として解釈させない）。
 // 判定はボット側でも必ずやり直すので、ここでの検査は使いやすさのためだけ。
 import { DiscordSDK } from "./discord-sdk.js";
@@ -26,6 +27,7 @@ const weekStart = (d) => addDays(d, -d.getDay());   // 日曜はじまり
 const allDayTime = () => ({ allDay: true, start: null, end: null });   // 日ごとに指定の、日の初めの状態（終日）
 
 const S = {
+  kind: "add",                 // "add"＝予定の追加、"date"＝空き日の出力
   session: null, calendars: [], today: null, maxDays: 31,
   month: null,                 // その月の1日
   week: null,                  // 週表示の日曜
@@ -38,6 +40,22 @@ const S = {
   events: new Map(),           // "YYYY-MM-DD" → 帯の一覧
   loaded: [],                  // 読み込んだ期間 [first, last]
   busy: false, done: false, scrolled: false,
+};
+
+// 空き日の画面（/date）の状態
+const WD_VALUES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];    // Date.getDay() の順
+const WD_BUTTONS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];   // ボタンの並び（/date のパネルと同じ月→日）
+const TIMES = [["day", "昼（10〜18時）"], ["night", "夜（18〜24時）"], ["all", "昼夜とも空いている"], ["any", "昼か夜が空いている"]];
+const TIME_SHORT = { day: "昼", night: "夜", all: "昼夜とも", any: "昼か夜" };
+const FMTS = [["normal", "通常"], ["densuke", "伝助形式"], ["busy", "予定がある日"]];
+const F = {
+  start: null, end: null,      // 範囲（"YYYY-MM-DD"）。end が null の間は終了日の待ち
+  skip: new Set(),             // 出力しない日
+  pick: "range",               // タップの働き："range"＝範囲を選ぶ、"skip"＝出力しない日を選ぶ
+  time: "night",               // 最初は夜（利用者の指定）
+  wd: new Set(),               // 選んだ曜日（空＝すべて）
+  fmt: "normal",
+  busy: false, last: null,     // last：最後に出力したときの条件（条件を変えたら知らせる）
 };
 
 function setStatus(text, isError) {
@@ -139,17 +157,240 @@ function renderMonth() {
     if (key === iso(S.today)) b.classList.add("today");
     if (d.getDay() === 0) b.classList.add("sun");
     if (d.getDay() === 6) b.classList.add("sat");
-    if (S.days.has(key)) b.classList.add("selected");
-    if (timed() && iso(weekStart(d)) === wk) b.classList.add("week");
-    b.setAttribute("aria-pressed", S.days.has(key) ? "true" : "false");
-    b.setAttribute("aria-label", `${md(d)}${S.days.has(key) ? "（選択中）" : ""}`);
+    let label = md(d);
+    if (S.kind === "date") {
+      const st = freeState(key);
+      if (st) b.classList.add(st);
+      if (key === F.start || key === F.end) b.classList.add("edge");
+      label += { inrange: "（範囲内）", offday: "（範囲内・曜日の指定で出力しない）", skipped: "（出力しない）" }[st] || "";
+      if (key === F.start) label += "（開始日）";
+      if (key === F.end) label += "（終了日）";
+    } else {
+      if (S.days.has(key)) b.classList.add("selected");
+      if (timed() && iso(weekStart(d)) === wk) b.classList.add("week");
+      b.setAttribute("aria-pressed", S.days.has(key) ? "true" : "false");
+      if (S.days.has(key)) label += "（選択中）";
+    }
+    b.setAttribute("aria-label", label);
     b.append(el("span", "num", String(d.getDate())));
+    if (S.kind === "date" && freeState(key) === "skipped") b.append(el("span", "tag", "外す"));
     const marks = el("span", "marks");
     for (const e of (S.events.get(key) || []).slice(0, 4)) marks.append(el("span", e.all_day ? "mark all" : "mark"));
     b.append(marks);
-    b.addEventListener("click", () => toggleDay(key));
+    b.addEventListener("click", () => (S.kind === "date" ? tapFree(key) : toggleDay(key)));
     grid.append(b);
   }
+}
+
+// ---------- 空き日の画面：範囲と出力しない日 ----------
+const rangeDone = () => F.start !== null && F.end !== null;
+const inRange = (key) => rangeDone() && F.start <= key && key <= F.end;
+const wdOk = (key) => F.wd.size === 0 || F.wd.has(WD_VALUES[fromIso(key).getDay()]);
+function freeState(key) {                   // 月表示の色分け
+  if (F.start !== null && F.end === null) return key === F.start ? "inrange" : null;
+  if (!inRange(key)) return null;
+  if (F.skip.has(key)) return "skipped";
+  return wdOk(key) ? "inrange" : "offday";
+}
+function pruneSkip() {                      // 範囲の外になった「出力しない日」は捨てる（後で範囲を広げても復活させない）
+  for (const k of [...F.skip]) if (!inRange(k)) F.skip.delete(k);
+}
+function tapFree(key) {
+  setStatus("");
+  if (F.pick === "skip") {
+    if (!inRange(key)) {
+      setStatus(rangeDone() ? "範囲の外の日です。色の付いた範囲の中の日をタップしてください"
+        : "先に「範囲を選ぶ」で開始日と終了日を選んでください", true);
+      return;
+    }
+    if (F.skip.has(key)) F.skip.delete(key); else F.skip.add(key);
+  } else if (F.start === null || F.end !== null) {   // 1回目、または範囲が決まった後：ここから選び直し
+    F.start = key; F.end = null;
+  } else if (key < F.start) {                         // 開始より前：そこを開始にする
+    F.start = key;
+  } else {                                            // 2回目：終了日（同じ日なら1日だけ）
+    F.end = key;
+    pruneSkip();
+  }
+  render();
+}
+function limitOf(startKey) {                // 開始日の12か月後（ボットの check_range と同じ決め方。日は月末までに丸める）
+  const s = fromIso(startKey);
+  const y = s.getFullYear() + 1, m = s.getMonth();
+  const last = new Date(y, m + 1, 0).getDate();
+  return iso(new Date(y, m, Math.min(s.getDate(), last)));
+}
+function freeTargets() {                    // 範囲のうち、曜日の指定に合い、外していない日の数
+  if (!rangeDone()) return 0;
+  let n = 0;
+  for (let d = fromIso(F.start); iso(d) <= F.end; d = addDays(d, 1)) {
+    const k = iso(d);
+    if (wdOk(k) && !F.skip.has(k)) n++;
+  }
+  return n;
+}
+function freeValid() {
+  if (F.start === null) return "開始日をタップしてください";
+  if (F.end === null) return "終了日をタップしてください（同じ日をもう一度タップすると1日だけ）";
+  if (F.end > limitOf(F.start)) return "指定できる範囲は最大12か月までです";
+  if (F.fmt === "busy" && (F.time === "all" || F.time === "any")) return "「予定がある日」は、時間帯が「昼」か「夜」のときだけ使えます";
+  return null;
+}
+function freeBody() {
+  return {
+    session: S.session, first: F.start, last: F.end, time: F.time, fmt: F.fmt,
+    weekdays: WD_BUTTONS.filter((v) => F.wd.has(v)),
+    exclude: [...F.skip].filter(inRange).sort(),
+  };
+}
+const condKey = () => JSON.stringify({ ...freeBody(), session: null });
+function wdText() {
+  if (F.wd.size === 0 || F.wd.size === 7) return "すべての曜日";
+  return WD_BUTTONS.filter((v) => F.wd.has(v)).map((v) => WD[WD_VALUES.indexOf(v)]).join("・");
+}
+function freeSummary() {
+  let range;
+  if (F.start === null) range = "範囲が未選択";
+  else if (F.end === null) range = `${mdk(F.start)}〜（終了日をタップ）`;
+  else {
+    const days = Math.round((fromIso(F.end) - fromIso(F.start)) / 86400000) + 1;
+    const skip = [...F.skip].filter(inRange).length;
+    range = `${mdk(F.start)}〜${mdk(F.end)}（${days}日${skip ? `・${skip}日は出力しない` : ""}）`;
+  }
+  const fmt = FMTS.find(([v]) => v === F.fmt)[1];
+  return `${range}\n${TIME_SHORT[F.time]}・${wdText()}・${fmt}`;
+}
+function choiceButtons(boxId, items, isOn, onPick, attr) {
+  const box = $(boxId);
+  box.replaceChildren();
+  for (const [value, text] of items) {
+    const b = el("button", "", text);
+    b.type = "button";
+    b.dataset.value = value;
+    if (attr === "aria-checked") b.setAttribute("role", "radio");
+    b.setAttribute(attr, String(isOn(value)));
+    b.addEventListener("click", () => { onPick(value); render(); });
+    box.append(b);
+  }
+}
+function renderFree() {
+  $("pick-range").setAttribute("aria-checked", String(F.pick === "range"));
+  $("pick-skip").setAttribute("aria-checked", String(F.pick === "skip"));
+  $("month-hint").textContent = F.pick === "skip"
+    ? "範囲の中で、出力しない日をタップしてください。もう一度タップすると戻ります。"
+    : F.start === null || F.end !== null
+      ? "開始日をタップし、続けて終了日をタップしてください。月をまたぐときは ‹ › で月を移ってからタップします。"
+      : "終了日をタップしてください。同じ日をもう一度タップすると1日だけになります。";
+  $("clear-range").disabled = F.start === null;
+  $("clear-skip").disabled = ![...F.skip].some(inRange);
+  choiceButtons("time-btns", TIMES, (v) => v === F.time, (v) => { F.time = v; }, "aria-checked");
+  choiceButtons("wd-btns", WD_BUTTONS.map((v) => [v, WD[WD_VALUES.indexOf(v)]]), (v) => F.wd.has(v),
+    (v) => { if (F.wd.has(v)) F.wd.delete(v); else F.wd.add(v); }, "aria-pressed");
+  choiceButtons("fmt-btns", FMTS, (v) => v === F.fmt, (v) => { F.fmt = v; }, "aria-checked");
+  const problem = freeValid();
+  $("summary").textContent = freeSummary() + (problem ? `\n${problem}` : "");
+  $("run").disabled = !!problem || F.busy;
+  if (F.last !== null && !$("free-result").hidden) {
+    $("free-meta").dataset.stale = String(F.last !== condKey());
+    renderFreeMeta();
+  }
+}
+
+// ---------- 空き日の画面：出力とクリップボード ----------
+// Discord の画面は別のオリジンの iframe の中で動くので、ブラウザがクリップボードへの書き込みを止めることがある。
+// また iPhone は、ボタンを押してから応答を待つと「押した操作の中」と見なさず、書き込みを断る。そこで：
+//   1. 押したその場で、応答を待つ Promise を渡した ClipboardItem で書き込みを始める（iPhone 向け）
+//   2. だめなら、応答が届いたあとで、隠したテキスト欄＋execCommand("copy")、navigator.clipboard.writeText の順に試す
+//   3. どれもだめなら、「コピーする」ボタンと、選択できる結果の欄で、手でコピーしてもらう
+// 「コピーしました」と出すのは、書き込みが成功したと返ってきたときだけ
+function clipboardWithPromise(makeText) {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.write || typeof ClipboardItem === "undefined") return Promise.resolve(false);
+    const item = new ClipboardItem({ "text/plain": makeText().then((t) => new Blob([t], { type: "text/plain" })) });
+    return navigator.clipboard.write([item]).then(() => true, () => false);
+  } catch (_) {
+    return Promise.resolve(false);
+  }
+}
+function execCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;";
+  const keep = document.activeElement;
+  document.body.append(ta);
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (_) { ok = false; }
+  ta.remove();
+  if (keep && keep.focus) keep.focus({ preventScroll: true });
+  return ok;
+}
+async function copyText(text) {
+  if (execCopy(text)) return true;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; }
+  } catch (_) { /* 下で false */ }
+  return false;
+}
+function setCopyStatus(ok) {
+  const st = $("copy-status");
+  st.classList.toggle("ok", ok);
+  st.classList.toggle("ng", !ok);
+  st.textContent = ok ? "📋 クリップボードにコピーしました"
+    : "自動でコピーできませんでした。「コピーする」を押すか、下の文を長押ししてコピーしてください";
+}
+function fitText() {
+  const ta = $("free-text");
+  ta.style.height = "auto";
+  ta.style.height = `${Math.min(ta.scrollHeight + 2, window.innerHeight * 0.5)}px`;
+}
+function renderFreeMeta() {
+  const m = $("free-meta");
+  const j = m._result;
+  if (!j) return;
+  const lines = [];
+  if (j.excluded) lines.push(`出力しない日に選んだ${j.excluded}日を外しました`);
+  lines.push(j.posted ? "チャンネルにも出しました" : "チャンネルへの投稿に失敗しました。ボットの「メッセージを送信」の権限を確認してください");
+  if (j.note) lines.push(j.note);
+  if (m.dataset.stale === "true") lines.push("⚠️ 条件を変えました。もう一度「出力する」を押すと新しい結果になります");
+  m.textContent = lines.join("\n");
+  m.style.whiteSpace = "pre-line";
+}
+async function runFree() {
+  if (freeValid() || F.busy) return;
+  F.busy = true;
+  render();
+  setStatus("調べています…");
+  const key = condKey();
+  const req = api("api/free", freeBody());
+  const clip = clipboardWithPromise(() => req.then((j) => j.copy));   // 押したその場で始める（上の 1）
+  let j;
+  try {
+    j = await req;
+  } catch (e) {
+    setStatus(e.message, true);
+    F.busy = false;
+    render();
+    return;
+  }
+  F.last = key;
+  $("free-result").hidden = false;
+  $("free-text").value = j.copy;
+  fitText();
+  const meta = $("free-meta");
+  meta._result = j;
+  meta.dataset.stale = "false";
+  renderFreeMeta();
+  let ok = await clip;
+  if (!ok) ok = await copyText(j.copy);
+  setCopyStatus(ok);
+  setStatus(ok ? "出力して、クリップボードにコピーしました" : "出力しました（コピーは手で行ってください）", !ok);
+  F.busy = false;
+  render();
+  $("free-result").scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 // ---------- 日ごとの一覧 ----------
@@ -434,6 +675,7 @@ function renderSummary() {
 }
 function render() {
   renderMonth();
+  if (S.kind === "date") { renderFree(); return; }
   $("apply-same").setAttribute("aria-checked", String(S.mode === "same"));
   $("apply-each").setAttribute("aria-checked", String(S.mode === "each"));
   $("same-box").hidden = S.mode !== "same";
@@ -547,6 +789,30 @@ function wire() {
   });
   $("name").addEventListener("input", renderSummary);
   $("add").addEventListener("click", submit);
+  // 空き日の画面
+  $("pick-range").addEventListener("click", () => { F.pick = "range"; setStatus(""); render(); });
+  $("pick-skip").addEventListener("click", () => {
+    if (!rangeDone()) { setStatus("先に開始日と終了日をタップして、範囲を選んでください", true); return; }
+    F.pick = "skip"; setStatus(""); render();
+  });
+  $("clear-range").addEventListener("click", () => { F.start = F.end = null; F.skip.clear(); F.pick = "range"; setStatus(""); render(); });
+  $("clear-skip").addEventListener("click", () => { F.skip.clear(); setStatus(""); render(); });
+  $("run").addEventListener("click", runFree);
+  $("copy").addEventListener("click", async () => {
+    const text = $("free-text").value;
+    if (!text) return;
+    const ok = await copyText(text);
+    setCopyStatus(ok);
+    if (!ok) { const ta = $("free-text"); ta.focus(); ta.select(); }
+  });
+}
+function setupKind() {                      // どちらの画面か（api/start の mode）に合わせて、部品を出し分ける
+  const date = S.kind === "date";
+  const title = date ? "空いている日を調べる" : "予定を追加";
+  $("title").textContent = title;
+  document.title = title;
+  for (const id of ["pick-box", "range-tools", "cond-card", "run"]) $(id).hidden = !date;
+  for (const id of ["time-card", "form-card", "add"]) $(id).hidden = date;
 }
 
 async function main() {
@@ -566,6 +832,8 @@ async function main() {
   const st = await api("api/start", { code });
   await sdk.commands.authenticate({ access_token: st.access_token });
   S.session = st.session;
+  S.kind = st.mode === "date" ? "date" : "add";
+  setupKind();
   S.today = fromIso(st.today);
   S.maxDays = st.max_days;
   S.month = new Date(S.today.getFullYear(), S.today.getMonth(), 1);
