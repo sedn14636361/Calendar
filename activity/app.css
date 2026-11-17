@@ -59,6 +59,8 @@ ul { list-style: none; padding: 0; }
 .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0; }
 .segmented button { min-height: 44px; border: 0; border-radius: 10px; background: var(--line); }
 .segmented button[aria-checked="true"] { background: var(--accent); color: #fff; }
+.segmented .wide { grid-column: 1 / -1; }   /* /date の「範囲を選ぶ」は1行を全部使う */
+#pick-box button { padding: 0 2px; font-size: 14px; }   /* 幅 320px でも「出力する日を選ぶ」「出力しない日を選ぶ」を1行に収める */
 .week-head, .week-grid { display: grid; grid-template-columns: 40px repeat(7, 1fr); }
 .week-head { gap: 0; margin-bottom: 4px; }
 .week-head .col { text-align: center; font-size: 12px; line-height: 1.25; padding: 4px 0; border-radius: 6px; border: 0; background: none; }
@@ -132,6 +134,10 @@ body.typing .spacer { height: 75vh; }
 /* 2つのボタンは文字の長さに合わせた幅にし、スマホ幅でも1行に収める（とても狭い画面でだけ折り返す） */
 .tools button { flex: 1 1 auto; min-height: 44px; padding: 0 10px; font-size: 14px; }
 .tools button:disabled { opacity: .45; }
+.tools button[aria-expanded="true"] { outline: 2px solid var(--accent); outline-offset: -2px; }
+.reset-menu { margin-top: 8px; }
+.reset-menu .hint { margin: 0; }
+.reset-menu button:disabled { opacity: .45; }
 #cond-card h2 { margin-top: 12px; }
 #cond-card h2:first-child { margin-top: 0; }
 .choices { display: grid; gap: 6px; margin: 8px 0 0; }
@@ -146,8 +152,10 @@ body.typing .spacer { height: 75vh; }
 .weekdays button.sat { color: var(--sat); }
 .weekdays button[aria-pressed="true"] { background: var(--ok); color: #fff; }
 body.free .weekdays { margin-bottom: 4px; }
-/* 結果の欄が、下に固定した「出力する」のバー（要約2行＋ボタン）に近づきすぎないように */
-body.free .spacer { height: 190px; }
+/* 「出力する」は下に固定せず、結果の欄の上に置く（要約は省略せず全部見せる） */
+.run-box { margin: 0 0 12px; }
+.run-box .summary { max-height: none; }
+body.free .spacer { height: 40px; }
 .copy-status { margin: 8px 0 0; font-weight: 600; white-space: pre-line; }
 .copy-status.ok { color: var(--ok); }
 .copy-status.ng { color: var(--warn); }

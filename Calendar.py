@@ -426,17 +426,10 @@ def check_range(body):
     return start_date, end_date, None
 
 
-def format_free_days_range(start_date, end_date, free_days, label):
-    now = datetime.now(JST)
-    stamp = now.strftime("%m/%d現在")
-    period = f"{start_date.year}/{start_date.month}/{start_date.day}〜" \
-             f"{end_date.year}/{end_date.month}/{end_date.day}"
-    header = f"**{period}**\n{label}（{stamp}）"
-
-
+def _month_lines(free_days):
+    """日のリストを、月ごとに1行の文にする。例）9/1, 3, 5"""
     if not free_days:
-        return f"{header}\n該当する日はありません"
-
+        return ["該当する日はありません"]
     lines = []                         # 月ごとの1行を貯める
     current = []                       # 今の月の日にちを貯める
     prev_month = None
@@ -449,8 +442,22 @@ def format_free_days_range(start_date, end_date, free_days, label):
         else:                          # 同じ月なら日にちだけ足す
             current.append(str(d.day))
     lines.append(", ".join(current))   # 最後の月の分を確定
+    return lines
 
-    return header + "\n" + "\n".join(lines)
+
+def format_free_days_range(start_date, end_date, sections, label):
+    """期間の見出しのあとに、組（見出し, 日のリスト）ごとの結果を並べる。
+    組の見出しが None のときは見出しを出さない（昼か夜以外の、組が1つのとき）"""
+    now = datetime.now(JST)
+    stamp = now.strftime("%m/%d現在")
+    period = f"{start_date.year}/{start_date.month}/{start_date.day}〜" \
+             f"{end_date.year}/{end_date.month}/{end_date.day}"
+    lines = [f"**{period}**", f"{label}（{stamp}）"]
+    for heading, days in sections:
+        if heading:
+            lines.append(heading)
+        lines.extend(_month_lines(days))
+    return "\n".join(lines)
 
 
 # ===== ⑦-B 曜日での絞り込み =====
@@ -509,12 +516,19 @@ def filter_by_weekday(days, wanted):
     return [d for d in days if d.weekday() in wanted]
 
 
-def format_free_days_densuke(free_days):
-    """伝助用：1日1行・曜日付きで出力する。例）9/9(水)"""
-    if not free_days:
-        return "該当する日はありません"
-    lines = [f"{d.month}/{d.day}({WEEKDAY_NAMES[d.weekday()]})" for d in free_days]
-    return "\n".join(lines)
+def format_free_days_densuke(sections):
+    """伝助用：1日1行・曜日付きで出力する。例）9/9(水)
+    組が2つ（昼か夜）のときは、組ごとに見出しを付け、空行で区切る。
+    伝助の候補の欄は1行が1候補なので、組が1つのときは見出しを付けない（今までと同じ）"""
+    blocks = []
+    for heading, days in sections:
+        lines = [heading] if heading else []
+        if days:
+            lines += [f"{d.month}/{d.day}({WEEKDAY_NAMES[d.weekday()]})" for d in days]
+        else:
+            lines.append("該当する日はありません")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 def format_free_days(year, month, free_days, label):
     """結果を見やすい文章に整える"""
@@ -1199,8 +1213,8 @@ async def _handle_message(message):
 
     # 「入力中…」を出して受け付けたことを見せる
     async with message.channel.typing():
-        free_days, failures, label = free_days_query(query)
-    await message.channel.send(format_free_result(query, free_days, label) + failure_note(failures))
+        sections, failures, label = free_days_query(query)
+    await message.channel.send(format_free_result(query, sections, label) + failure_note(failures))
     return True
 
 
@@ -1253,9 +1267,15 @@ def parse_free_command(text):
     return query
 
 
+# 「昼か夜」（u）の結果は、昼と夜に分けて出す。昼も夜も空いている日は両方に出る
+DAY_HEADING = "昼が空いている日"
+NIGHT_HEADING = "夜が空いている日"
+
+
 def free_days_query(query):
     """parse_free_command の結果から、該当する日を求める。
-    戻り値は (日のリスト, 読み取れなかったカレンダーIDのリスト, 見出しの文言)"""
+    戻り値は (組のリスト, 読み取れなかったカレンダーIDのリスト, 見出しの文言)。
+    組は (組の見出し, 日のリスト)。昼か夜（u）は昼と夜の2組、それ以外は見出しが None の1組"""
     mode, start_date, end_date = query["mode"], query["start"], query["end"]
     negate = query["suffix"] == "r"    # 末尾 r ＝反転（予定がある日）
     wanted_weekdays = query["weekdays"]
@@ -1263,50 +1283,52 @@ def free_days_query(query):
     # モードごとに空き日を求める
     if mode == "n":
         free_days, failures = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
+        sections = [(None, free_days)]
         label = "夜が空いている日"
     elif mode == "a":
         day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
         night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
-        free_days = sorted(set(day_free) & set(night_free))
+        sections = [(None, sorted(set(day_free) & set(night_free)))]
         failures = merge_failures(day_fail, night_fail)
         label = "一日空いている日"
-    elif mode == "u":                  # 昼か夜のどちらか（あるいは両方）が空いている日
+    elif mode == "u":                  # 昼か夜のどちらか（あるいは両方）が空いている日。昼と夜に分けて出す
         day_free, day_fail = find_free_days(start_date, end_date, DAY_START, DAY_END)
         night_free, night_fail = find_free_days(start_date, end_date, NIGHT_START, NIGHT_END)
-        free_days = sorted(set(day_free) | set(night_free))   # どちらかに含まれる日
+        sections = [(DAY_HEADING, day_free), (NIGHT_HEADING, night_free)]
         failures = merge_failures(day_fail, night_fail)
         label = "昼か夜が空いている日"
     else:
         free_days, failures = find_free_days(start_date, end_date, DAY_START, DAY_END)
+        sections = [(None, free_days)]
         label = "昼が空いている日"
 
     # 末尾に r が付いていたら反転（昼・夜モードのみ対象。a と u には適用しない）
     if negate and mode in ("", "n"):
-        free_set = set(free_days)
+        free_set = set(sections[0][1])
         all_days = []
         d = start_date
         while d <= end_date:
             if d not in free_set:      # 空き日でない日＝予定がある日
                 all_days.append(d)
             d += timedelta(days=1)
-        free_days = all_days
+        sections = [(None, all_days)]
         label = "夜に予定がある日" if mode == "n" else "昼に予定がある日"
 
     # 曜日で絞る。r の反転を適用した「後」に行う。
     # こうすると /2026-9r/mon は「月曜で予定がある日」になる。
     # 先に絞ってから反転すると、月曜以外が予定のある日として並んでしまう。
     if wanted_weekdays:
-        free_days = filter_by_weekday(free_days, wanted_weekdays)
+        sections = [(h, filter_by_weekday(days, wanted_weekdays)) for h, days in sections]
         # 括弧は既存の「（09/28現在）」で使っているため重ねない
         label = "%sの%s" % (weekday_label(wanted_weekdays), label)
-    return free_days, failures, label
+    return sections, failures, label
 
 
-def format_free_result(query, free_days, label):
+def format_free_result(query, sections, label):
     """結果の文（読み取れなかったカレンダーの注意は含まない）"""
     if query["suffix"] == "d":         # 末尾 d ＝伝助形式（全モードで使える／r とは排他）
-        return format_free_days_densuke(free_days)
-    return format_free_days_range(query["start"], query["end"], free_days, label)
+        return format_free_days_densuke(sections)
+    return format_free_days_range(query["start"], query["end"], sections, label)
 
 
 @client.event
@@ -2613,10 +2635,12 @@ async def activity_free(session_token, body, now=None):
     exclude = {_parse_iso_day(x) for x in raw}
     text, query = build_free_query(first, last, body.get("time"), body.get("weekdays"), body.get("fmt"))
     print(f"スラッシュコマンド: {text!r}（カレンダー画面から。出力しない日 {len(exclude)}日）")
-    days, failures, label = free_days_query(query)
-    excluded = [d for d in days if d in exclude]           # 実際に結果から外れた日（もともと出ない日は数えない）
-    days = [d for d in days if d not in exclude]
-    result = format_free_result(query, days, label)
+    sections, failures, label = free_days_query(query)
+    # 実際に結果から外れた日（もともと出ない日は数えない。昼か夜で両方に出る日も1日と数える）
+    excluded = {d for _h, days in sections for d in days if d in exclude}
+    sections = [(h, [d for d in days if d not in exclude]) for h, days in sections]
+    shown = {d for _h, days in sections for d in days}
+    result = format_free_result(query, sections, label)
     note = failure_note(failures)
     out = _ActivityChannel(channel)
     await out.send(result + note)                          # /date と同じく、チャンネルにも出す
@@ -2624,7 +2648,7 @@ async def activity_free(session_token, body, now=None):
              "excluded": len(excluded), "note": note.strip() or None, "posted": out.send_error is None}
     if out.send_error is not None:
         _activity_log(f"チャンネルへの返信に失敗しました: {out.send_error}")
-    _activity_log(f"空き日を出力しました（{len(days)}日）")
+    _activity_log(f"空き日を出力しました（{len(shown)}日）")
     return reply
 
 

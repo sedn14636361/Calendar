@@ -50,8 +50,10 @@ const TIME_SHORT = { day: "昼", night: "夜", all: "昼夜とも", any: "昼か
 const FMTS = [["normal", "通常"], ["densuke", "伝助形式"], ["busy", "予定がある日"]];
 const F = {
   start: null, end: null,      // 範囲（"YYYY-MM-DD"）。end が null の間は終了日の待ち
-  skip: new Set(),             // 出力しない日
-  pick: "range",               // タップの働き："range"＝範囲を選ぶ、"skip"＝出力しない日を選ぶ
+  add: new Set(),              // 1日ずつ選んだ「出力する日」（範囲の外でもよい）
+  skip: new Set(),             // 出力しない日（範囲の中の日か、add の日だけを持つ）
+  pick: "range",               // タップの働き："range"＝範囲、"add"＝出力する日、"skip"＝出力しない日
+  resetOpen: false,            // 「リセット」の選択肢を出しているか
   time: "night",               // 最初は夜（利用者の指定）
   wd: new Set(),               // 選んだ曜日（空＝すべて）
   fmt: "normal",
@@ -162,7 +164,8 @@ function renderMonth() {
       const st = freeState(key);
       if (st) b.classList.add(st);
       if (key === F.start || key === F.end) b.classList.add("edge");
-      label += { inrange: "（範囲内）", offday: "（範囲内・曜日の指定で出力しない）", skipped: "（出力しない）" }[st] || "";
+      label += { inrange: "（出力する）", offday: "（曜日の指定で出力しない）", skipped: "（出力しない）" }[st] || "";
+      if (F.add.has(key) && !inRange(key)) label += "（個別に選んだ日）";
       if (key === F.start) label += "（開始日）";
       if (key === F.end) label += "（終了日）";
     } else {
@@ -181,36 +184,63 @@ function renderMonth() {
   }
 }
 
-// ---------- 空き日の画面：範囲と出力しない日 ----------
+// ---------- 空き日の画面：範囲・出力する日・出力しない日 ----------
+// 出力の対象＝（範囲の中の日 ＋ 1日ずつ選んだ日）− 出力しない日。曜日の指定はボットが結果から絞る
 const rangeDone = () => F.start !== null && F.end !== null;
 const inRange = (key) => rangeDone() && F.start <= key && key <= F.end;
+const included = (key) => (inRange(key) || F.add.has(key)) && !F.skip.has(key);
 const wdOk = (key) => F.wd.size === 0 || F.wd.has(WD_VALUES[fromIso(key).getDay()]);
+const dayDiff = (a, b) => Math.round((fromIso(b) - fromIso(a)) / 86400000);   // a から b までの日数
 function freeState(key) {                   // 月表示の色分け
-  if (F.start !== null && F.end === null) return key === F.start ? "inrange" : null;
-  if (!inRange(key)) return null;
   if (F.skip.has(key)) return "skipped";
+  if (F.end === null && key === F.start) return "inrange";   // 開始日だけ選んだところ
+  if (!included(key)) return null;
   return wdOk(key) ? "inrange" : "offday";
 }
-function pruneSkip() {                      // 範囲の外になった「出力しない日」は捨てる（後で範囲を広げても復活させない）
-  for (const k of [...F.skip]) if (!inRange(k)) F.skip.delete(k);
+function pruneSkip() {                      // 範囲にも「出力する日」にも無くなった「出力しない日」は捨てる（後で範囲を広げても復活させない）
+  for (const k of [...F.skip]) if (!inRange(k) && !F.add.has(k)) F.skip.delete(k);
+}
+function tapRange(key) {
+  if (F.start === null) {                             // 1回目：開始日
+    F.start = key; F.end = null;
+  } else if (F.end === null) {                        // 2回目：終了日（同じ日なら1日だけ）。開始より前ならそこを開始にする
+    if (key < F.start) F.start = key; else F.end = key;
+  } else if (key > F.end) {                           // 範囲が決まった後：終了日より後なら、範囲をそこまで伸ばす
+    F.end = key;
+  } else if (key < F.start) {                         // 開始日より前なら、開始日をそこへ移す
+    F.start = key;
+  } else if (dayDiff(F.start, key) < dayDiff(key, F.end)) {   // 範囲の中なら、近い方の端をそこへ動かす（同じ距離なら終了日）
+    F.start = key;
+  } else {
+    F.end = key;
+  }
 }
 function tapFree(key) {
   setStatus("");
-  if (F.pick === "skip") {
-    if (!inRange(key)) {
-      setStatus(rangeDone() ? "範囲の外の日です。色の付いた範囲の中の日をタップしてください"
-        : "先に「範囲を選ぶ」で開始日と終了日を選んでください", true);
+  if (F.pick === "add") {
+    if (F.skip.has(key)) {                            // 出力しないにしていた日：出力に戻す
+      F.skip.delete(key);
+      if (!inRange(key)) F.add.add(key);
+    } else if (inRange(key)) {
+      setStatus("範囲の中の日は、もう出力する日に入っています");
+      return;
+    } else if (F.add.has(key)) {                      // もう一度タップ：外す
+      F.add.delete(key);
+    } else {
+      F.add.add(key);
+    }
+  } else if (F.pick === "skip") {
+    if (F.skip.has(key)) F.skip.delete(key);          // もう一度タップ：戻す
+    else if (inRange(key)) F.skip.add(key);
+    else if (F.add.has(key)) F.add.delete(key);       // 範囲の外で1日ずつ選んだ日は、選んだのを取り消す
+    else {
+      setStatus("出力する日ではありません。色の付いた日をタップしてください", true);
       return;
     }
-    if (F.skip.has(key)) F.skip.delete(key); else F.skip.add(key);
-  } else if (F.start === null || F.end !== null) {   // 1回目、または範囲が決まった後：ここから選び直し
-    F.start = key; F.end = null;
-  } else if (key < F.start) {                         // 開始より前：そこを開始にする
-    F.start = key;
-  } else {                                            // 2回目：終了日（同じ日なら1日だけ）
-    F.end = key;
-    pruneSkip();
+  } else {
+    tapRange(key);
   }
+  pruneSkip();
   render();
 }
 function limitOf(startKey) {                // 開始日の12か月後（ボットの check_range と同じ決め方。日は月末までに丸める）
@@ -219,27 +249,37 @@ function limitOf(startKey) {                // 開始日の12か月後（ボッ�
   const last = new Date(y, m + 1, 0).getDate();
   return iso(new Date(y, m, Math.min(s.getDate(), last)));
 }
-function freeTargets() {                    // 範囲のうち、曜日の指定に合い、外していない日の数
-  if (!rangeDone()) return 0;
-  let n = 0;
-  for (let d = fromIso(F.start); iso(d) <= F.end; d = addDays(d, 1)) {
-    const k = iso(d);
-    if (wdOk(k) && !F.skip.has(k)) n++;
-  }
-  return n;
+function span() {                           // 範囲と1日ずつ選んだ日を合わせた、最初の日と最後の日。何も無ければ null
+  const keys = [...F.add];
+  if (rangeDone()) keys.push(F.start, F.end);
+  if (!keys.length) return null;
+  keys.sort();
+  return [keys[0], keys[keys.length - 1]];
 }
+function spanDays() {                       // span の中の日を順に並べる
+  const sp = span();
+  const out = [];
+  if (!sp) return out;
+  for (let d = fromIso(sp[0]); iso(d) <= sp[1]; d = addDays(d, 1)) out.push(iso(d));
+  return out;
+}
+const addedOutside = () => [...F.add].filter((k) => !inRange(k) && !F.skip.has(k)).length;
 function freeValid() {
-  if (F.start === null) return "開始日をタップしてください";
-  if (F.end === null) return "終了日をタップしてください（同じ日をもう一度タップすると1日だけ）";
-  if (F.end > limitOf(F.start)) return "指定できる範囲は最大12か月までです";
+  if (F.start !== null && F.end === null) return "終了日をタップしてください（同じ日をもう一度タップすると1日だけ）";
+  const sp = span();
+  if (!sp) return "範囲を選ぶか、「出力する日を選ぶ」で日をタップしてください";
+  if (sp[1] > limitOf(sp[0])) return "指定できるのは、最初の日から12か月までです";
+  if (!spanDays().some(included)) return "出力する日がありません";
   if (F.fmt === "busy" && (F.time === "all" || F.time === "any")) return "「予定がある日」は、時間帯が「昼」か「夜」のときだけ使えます";
   return null;
 }
 function freeBody() {
+  // ボットには、最初の日〜最後の日と、その間で出力しない日（範囲の外の日・出力しない日）を送る
+  const sp = span();
   return {
-    session: S.session, first: F.start, last: F.end, time: F.time, fmt: F.fmt,
+    session: S.session, first: sp[0], last: sp[1], time: F.time, fmt: F.fmt,
     weekdays: WD_BUTTONS.filter((v) => F.wd.has(v)),
-    exclude: [...F.skip].filter(inRange).sort(),
+    exclude: spanDays().filter((k) => !included(k)),
   };
 }
 function wdText() {
@@ -248,13 +288,12 @@ function wdText() {
 }
 function freeSummary() {
   let range;
-  if (F.start === null) range = "範囲が未選択";
+  if (F.start === null) range = "範囲なし";
   else if (F.end === null) range = `${mdk(F.start)}〜（終了日をタップ）`;
-  else {
-    const days = Math.round((fromIso(F.end) - fromIso(F.start)) / 86400000) + 1;
-    const skip = [...F.skip].filter(inRange).length;
-    range = `${mdk(F.start)}〜${mdk(F.end)}（${days}日${skip ? `・${skip}日は出力しない` : ""}）`;
-  }
+  else range = `${mdk(F.start)}〜${mdk(F.end)}（${dayDiff(F.start, F.end) + 1}日）`;
+  const added = addedOutside();
+  if (added) range += `・個別に${added}日`;
+  if (F.skip.size) range += `・${F.skip.size}日は出力しない`;
   const fmt = FMTS.find(([v]) => v === F.fmt)[1];
   return `${range}\n${TIME_SHORT[F.time]}・${wdText()}・${fmt}`;
 }
@@ -272,20 +311,28 @@ function choiceButtons(boxId, items, isOn, onPick, attr) {
   }
 }
 function renderFree() {
-  $("pick-range").setAttribute("aria-checked", String(F.pick === "range"));
-  $("pick-skip").setAttribute("aria-checked", String(F.pick === "skip"));
-  $("month-hint").textContent = F.pick === "skip"
-    ? "範囲の中で、出力しない日をタップしてください。もう一度タップすると戻ります。"
-    : F.start === null || F.end !== null
-      ? "開始日をタップし、続けて終了日をタップしてください。月をまたぐときは ‹ › で月を移ってからタップします。"
-      : "終了日をタップしてください。同じ日をもう一度タップすると1日だけになります。";
-  $("clear-range").disabled = F.start === null;
-  $("clear-skip").disabled = ![...F.skip].some(inRange);
+  for (const v of ["range", "add", "skip"]) $(`pick-${v}`).setAttribute("aria-checked", String(F.pick === v));
+  $("month-hint").textContent = F.pick === "add"
+    ? "出力したい日を1日ずつタップしてください（範囲の外でも選べます）。もう一度タップすると外れます。"
+    : F.pick === "skip"
+      ? "出力しない日をタップしてください。もう一度タップすると戻ります。"
+      : F.start === null
+        ? "開始日をタップし、続けて終了日をタップしてください。月をまたぐときは ‹ › で月を移ってからタップします。"
+        : F.end === null
+          ? "終了日をタップしてください。同じ日をもう一度タップすると1日だけになります。"
+          : "範囲より後の日をタップすると範囲が伸び、前の日をタップすると開始日が移ります。範囲の中の日をタップすると、近い方の端がそこへ動きます。";
+  const hasDays = F.add.size > 0 || F.skip.size > 0;
+  $("reset").disabled = F.start === null && !hasDays;
+  if ($("reset").disabled) F.resetOpen = false;
+  $("reset").setAttribute("aria-expanded", String(F.resetOpen));
+  $("reset-menu").hidden = !F.resetOpen;
+  $("reset-range").disabled = F.start === null;
+  $("reset-days").disabled = !hasDays;
   choiceButtons("time-btns", TIMES, (v) => v === F.time, (v) => { F.time = v; }, "aria-checked");
   renderWeekdayButtons();
   choiceButtons("fmt-btns", FMTS, (v) => v === F.fmt, (v) => { F.fmt = v; }, "aria-checked");
   const problem = freeValid();
-  $("summary").textContent = freeSummary() + (problem ? `\n${problem}` : "");
+  $("free-summary").textContent = freeSummary() + (problem ? `\n${problem}` : "");
   $("run").disabled = !!problem || F.busy;
 }
 function renderWeekdayButtons() {           // カレンダーの見出し（日〜土）を、曜日を選ぶボタンにする
@@ -785,12 +832,19 @@ function wire() {
   $("add").addEventListener("click", submit);
   // 空き日の画面
   $("pick-range").addEventListener("click", () => { F.pick = "range"; setStatus(""); render(); });
+  $("pick-add").addEventListener("click", () => { F.pick = "add"; setStatus(""); render(); });
   $("pick-skip").addEventListener("click", () => {
-    if (!rangeDone()) { setStatus("先に開始日と終了日をタップして、範囲を選んでください", true); return; }
+    if (!rangeDone() && F.add.size === 0) { setStatus("先に範囲か、出力する日を選んでください", true); return; }
     F.pick = "skip"; setStatus(""); render();
   });
-  $("clear-range").addEventListener("click", () => { F.start = F.end = null; F.skip.clear(); F.pick = "range"; setStatus(""); render(); });
-  $("clear-skip").addEventListener("click", () => { F.skip.clear(); setStatus(""); render(); });
+  // リセット：押すと「範囲」「個別に選んだ日」「すべて」を選べる
+  $("reset").addEventListener("click", () => { F.resetOpen = !F.resetOpen; render(); });
+  const resetDone = (what) => { F.resetOpen = false; setStatus(`${what}をリセットしました`); render(); };
+  $("reset-range").addEventListener("click", () => { F.start = F.end = null; pruneSkip(); resetDone("範囲"); });
+  $("reset-days").addEventListener("click", () => { F.add.clear(); F.skip.clear(); resetDone("個別の選択（出力する日・出力しない日）"); });
+  $("reset-all").addEventListener("click", () => {
+    F.start = F.end = null; F.add.clear(); F.skip.clear(); F.pick = "range"; resetDone("範囲と個別に選んだ日");
+  });
   $("run").addEventListener("click", runFree);
   $("copy").addEventListener("click", async () => {
     const text = $("free-text").value;
@@ -805,7 +859,7 @@ function setupKind() {                      // どちらの画面か（api/start
   const title = date ? "空いている日を調べる" : "予定を追加";
   $("title").textContent = title;
   document.title = title;
-  for (const id of ["pick-box", "range-tools", "cond-card", "run"]) $(id).hidden = !date;
+  for (const id of ["pick-box", "range-tools", "cond-card", "run-box"]) $(id).hidden = !date;
   document.body.classList.toggle("free", date);
   for (const id of ["time-card", "form-card", "add"]) $(id).hidden = date;
 }
@@ -835,7 +889,8 @@ async function main() {
   S.week = weekStart(S.today);
   const cal = $("calendar");
   for (const c of st.calendars) cal.append(new Option(c.label, c.value));
-  $("editor").hidden = false; $("bar").hidden = false;
+  $("editor").hidden = false;
+  $("bar").hidden = S.kind === "date";       // /date の「出力する」は下のバーではなく、結果の欄の上に置く
   setStatus("");
   await refreshData();
 }
