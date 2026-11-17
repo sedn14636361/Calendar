@@ -17,7 +17,8 @@
   <section id="editor" hidden>
     <div class="card">
       <div id="pick-box" class="segmented" role="radiogroup" aria-label="タップしたときの働き" hidden>
-        <button type="button" id="pick-range" role="radio" aria-checked="true">範囲を選ぶ</button>
+        <button type="button" id="pick-range" class="wide" role="radio" aria-checked="true">範囲を選ぶ</button>
+        <button type="button" id="pick-add" role="radio" aria-checked="false">出力する日を選ぶ</button>
         <button type="button" id="pick-skip" role="radio" aria-checked="false">出力しない日を選ぶ</button>
       </div>
       <div class="nav">
@@ -31,8 +32,15 @@
       <div id="month-grid" class="month" role="grid"></div>
       <p id="month-hint" class="hint">予定を追加する日を選んでください。複数選択可能です。</p>
       <div id="range-tools" class="tools" hidden>
-        <button type="button" id="clear-range">範囲をやり直す</button>
-        <button type="button" id="clear-skip">出力しない日をリセット</button>
+        <button type="button" id="reset" aria-expanded="false" aria-controls="reset-menu">リセット</button>
+      </div>
+      <div id="reset-menu" class="reset-menu" hidden>
+        <p class="hint">リセットするものを選んでください</p>
+        <div class="choices c3">
+          <button type="button" id="reset-range">範囲</button>
+          <button type="button" id="reset-days">個別の選択</button>
+          <button type="button" id="reset-all">すべて</button>
+        </div>
       </div>
       <p id="warning" class="warning" hidden></p>
     </div>
@@ -42,6 +50,12 @@
       <div id="time-btns" class="choices c2" role="radiogroup" aria-label="時間帯"></div>
       <h2>出力方式</h2>
       <div id="fmt-btns" class="choices c3" role="radiogroup" aria-label="出力方式"></div>
+    </div>
+
+    <!-- 出力のボタンは、画面の下に固定せず、結果の欄のすぐ上に置く -->
+    <div id="run-box" class="run-box" hidden>
+      <p id="free-summary" class="summary"></p>
+      <button type="button" id="run" class="primary" disabled>出力する</button>
     </div>
 
     <div id="free-result" class="card" hidden>
@@ -99,7 +113,6 @@
   <footer id="bar" class="bar" hidden>
     <p id="summary" class="summary"></p>
     <button type="button" id="add" class="primary" disabled>追加する</button>
-    <button type="button" id="run" class="primary" disabled hidden>出力する</button>
   </footer>
 
   <section id="done" class="card" hidden>
