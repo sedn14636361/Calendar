@@ -96,7 +96,44 @@ health = {
     "loop_tick": None,         # イベントループが最後に動いた時刻（time.monotonic）
     "calendar_ok_at": None,    # カレンダーを最後に全件読めた時刻
     "calendar_error": None,    # 直近の読み取り失敗 (時刻, 説明)。全件読めたら消す
+    "discord_wait": None,      # Discord に締め出されて待っているとき、次に接続し直す時刻
 }
+
+
+# ===== ⑤-A2 メモリの見張り =====
+# あわせ暦を入れてから、Render のメモリ（無料プランは 512MB）が増え続けて強制終了したことがあるため、
+# 使用量を状態表示に出し、増えたときはログにも残す（何をしたときに増えたかを、前後のログと照らして調べられるように）
+def memory_mb():
+    """このプロセスの実メモリ（RSS、MB）。読めない環境では None"""
+    try:
+        with open("/proc/self/status", encoding="ascii") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+MEMORY_WARN_MB = 400                   # 無料プランの上限 512MB に近づいたら、状態表示で知らせる
+MEMORY_DEBUG = os.environ.get("DEBUG_MEMORY", "").strip() in ("1", "on", "true")
+if MEMORY_DEBUG:                       # 原因を探すときだけ。どこでメモリを取ったかを記録する（少し重くなる）
+    import tracemalloc
+    tracemalloc.start(10)
+
+
+def _memory_watch():
+    """10分ごとにメモリを測り、前回の記録から 20MB 以上変わったらログに残す"""
+    last = None
+    while True:
+        mb = memory_mb()
+        if mb is not None and (last is None or abs(mb - last) >= 20):
+            print(f"メモリ: {mb}MB（スレッド {threading.active_count()}）")
+            last = mb
+        time.sleep(600)
+
+
+threading.Thread(target=_memory_watch, daemon=True).start()
 
 # イベントループの見張り。LOOP_TICK_SEC ごとに時刻を記録し、
 # LOOP_STALL_SEC 以上記録が途絶えたら「固まっている」と判断する。
@@ -2275,7 +2312,9 @@ def status_report():
     lines = []
 
     # --- Discord との接続 ---
-    if client.is_closed():
+    if health["discord_wait"] is not None:
+        errors.append(f"Discord に一時的に締め出されています。{_fmt_time(health['discord_wait'])} に接続し直します")
+    elif client.is_closed():
         errors.append("Discord との接続が切れています")
     elif not client.is_ready():
         errors.append("Discord にまだ接続できていません（起動中か、締め出されています）")
@@ -2315,6 +2354,12 @@ def status_report():
     body += [f"⚠️ {x}" for x in warnings]
     body += lines
     body.append(f"起動: {_fmt_time(health['started_at'])}")
+    mb = memory_mb()
+    if mb is not None:
+        body.append(f"メモリ: {mb}MB（スレッド {threading.active_count()}）" + ("　⚠️ 上限 512MB に近づいています" if mb >= MEMORY_WARN_MB else ""))
+    if MEMORY_DEBUG:                           # どこでメモリを取っているか（ファイルと行。値は含まない）
+        top = tracemalloc.take_snapshot().statistics("lineno")[:8]
+        body += [f"  {st.size // 1024}KB {st.traceback[0].filename.rsplit('/', 1)[-1]}:{st.traceback[0].lineno}" for st in top]
     return level, body
 
 
@@ -2972,4 +3017,33 @@ async def on_ready():
 
 
 # ===== ⑩ ボットを起動する =====
-client.run(DISCORD_BOT_TOKEN)
+# Discord に 429（締め出し）で断られたとき、すぐ落ちると Render が再起動をくり返し、ログインの要求が重なって
+# 締め出しが長引く。そこで、間をあけて（5分→10分→…→最大60分）接続し直す。待つ間も Web サーバー
+# （状態表示・あわせ暦のページ）は動かし続ける。429 以外のエラーは今までどおり落として Render に知らせる
+DISCORD_RETRY_FIRST_SEC = 300
+DISCORD_RETRY_MAX_SEC = 3600
+
+
+def run_bot_with_retry(run=None, sleep=time.sleep, now=lambda: datetime.now(JST)):
+    run = run or (lambda: client.run(DISCORD_BOT_TOKEN))
+    wait = DISCORD_RETRY_FIRST_SEC
+    while True:
+        try:
+            run()
+            return
+        except discord.HTTPException as e:
+            if e.status != 429 or client.is_ready():
+                raise                           # 動いている途中の 429 は discord.py が自分で待つので、ここには来ない
+            health["discord_wait"] = now() + timedelta(seconds=wait)
+            print(f"Discord に一時的に締め出されています（429）。{wait // 60}分後に接続し直します")
+            sleep(wait)
+            health["discord_wait"] = None
+            wait = min(wait * 2, DISCORD_RETRY_MAX_SEC)
+            client.clear()                      # 閉じた接続の状態を消して、もう一度使えるようにする
+            # discord.py はログインのたびに通信の部品（connector）を使い回すが、1回目の失敗で閉じられたまま残る。
+            # 空にしておくと、次のログインで作り直される（discord/http.py の static_login）
+            client.http.connector = discord.utils.MISSING
+
+
+if __name__ == "__main__":
+    run_bot_with_retry()

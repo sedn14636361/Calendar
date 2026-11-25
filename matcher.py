@@ -906,7 +906,18 @@ _LATIN_FONTS = [
 ]
 
 
+_FONT_CACHE = {}
+
+
 def _font(size, jp=False):
+    """フォントは大きさごとに1回だけ読み込む（画像を作るたびに読み込まない）"""
+    key = (size, jp)
+    if key not in _FONT_CACHE:
+        _FONT_CACHE[key] = _load_font(size, jp)
+    return _FONT_CACHE[key]
+
+
+def _load_font(size, jp=False):
     from PIL import ImageFont
     for path in (_JP_FONTS if jp else []) + _LATIN_FONTS:
         try:
@@ -1031,6 +1042,10 @@ def render_png(event, people):
 
 
 # ---------- Web（/m の下） ----------
+from concurrent.futures import ThreadPoolExecutor
+_RENDER_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="matcher-render")
+
+
 class Matcher:
     """Calendar.py の Web サーバーから呼ばれる窓口"""
     def __init__(self, store=None, use_ai=True, public_url=""):
@@ -1130,13 +1145,15 @@ class Matcher:
         if not self.enabled:
             raise MatcherError("この機能の準備ができていません", 503)
         event, people = self.store.get(eid)
-        stamp = json.dumps([p.get("updated") for p in people] + [len(people)])
+        stamp = json.dumps([event.get("edited"), event.get("slots")] + [p.get("updated") for p in people] + [len(people)])
         cached = self._img_cache.get(eid)
         if cached and cached[0] == stamp:
             png = cached[1]
         else:
-            png = render_png(event, people)
-            if len(self._img_cache) > 200:
+            # 画像は決まったスレッド1つで作る。Web サーバーは要求ごとに別のスレッドで動くので、そのまま作ると
+            # スレッドごとに大きな作業用のメモリが残り、プロセス全体のメモリが膨らむことがある
+            png = _RENDER_POOL.submit(render_png, event, people).result(timeout=60)
+            if len(self._img_cache) > 50:
                 self._img_cache.clear()
             self._img_cache[eid] = (stamp, png)
         return 200, "image/png", png, {"Cache-Control": "public, max-age=60"}
