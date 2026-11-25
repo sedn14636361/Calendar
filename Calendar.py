@@ -2134,8 +2134,9 @@ PURGE_PERMISSION_HELP = ("ボットに「メッセージの管理」と「メッ
                          "（チャンネルごとの権限で外されていないかも確認してください。README 3-2）")
 
 
-def match_announcement(event, url):
-    """日程あわせを作ったときにチャンネルへ出す文（タイトル・期間・概要の冒頭・URL）"""
+def match_announcement(event, url, admin_url=None):
+    """日程あわせを作ったときにチャンネルへ出す文（タイトル・期間・概要の冒頭・URL・作った人用のリンク）。
+    作った人用のリンクもチャンネルに出す（利用者の指定）。チャンネルを見られる人は誰でも管理できるようになる"""
     first, last = date.fromisoformat(event["first"]), date.fromisoformat(event["last"])
     lines = [f"📅 **{discord.utils.escape_markdown(event['title'])}** の日程あわせ（{first.month}/{first.day}〜{last.month}/{last.day}）"]
     desc = (event.get("description") or "").strip()
@@ -2143,6 +2144,8 @@ def match_announcement(event, url):
         head = desc if len(desc) <= 300 else desc[:300] + "…"
         lines += ["> " + discord.utils.escape_markdown(line) for line in head.splitlines()[:6]]
     lines += [url, "URL を開いて、名前を入れて参加してください（ボットのいないサーバーに貼っても使えます）"]
+    if admin_url:                              # <> で囲み、Discord のリンクのプレビューを出さない
+        lines += [f"🔑 管理用（参加者・候補日・日程あわせの削除ができます）：<{admin_url}>"]
     return "\n".join(lines)
 
 
@@ -2720,7 +2723,7 @@ async def activity_match(session_token, body, now=None):
         raise
     url = MATCHER.url_for(event["id"])
     out = _ActivityChannel(channel)
-    await out.send(match_announcement(event, url), allowed_mentions=discord.AllowedMentions.none())
+    await out.send(match_announcement(event, url, f"{url}#a={admin}"), allowed_mentions=discord.AllowedMentions.none())
     if out.send_error is not None:
         _activity_log(f"チャンネルへの返信に失敗しました: {out.send_error}")
     _activity_log("日程あわせを作りました")
