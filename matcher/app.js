@@ -421,7 +421,7 @@ function renderBest() {
     ol.append(el("li", {}, el("button", { type: "button", class: "best-item" + (all ? " all" : ok ? " ok" : ""), onclick: () => selectDay(b.day) },
       el("span", { class: "when", text: `${md(b.day)} ${SLOT_TEXT[b.slot]}` }),
       el("span", { class: "counts" }, countChip("o", b.o), countChip("t", b.t), countChip("x", b.x), b["-"] ? el("span", { class: "c none", text: `未${b["-"]}` }) : null),
-      all ? el("span", { class: "badge", text: "★ 全員 ○" }) : ok ? el("span", { class: "badge soft", text: "✕なし" }) : null)));
+      !all && ok ? el("span", { class: "badge soft", text: "✕なし" }) : null)));   // 「★ 全員 ○」は出さない（利用者の指定）
   }
 }
 const countChip = (m, v) => el("span", { class: `c m-${m}`, text: `${MARK_TEXT[m]}${v}` });
