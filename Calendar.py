@@ -62,6 +62,12 @@ creds = service_account.Credentials.from_service_account_info(
 )
 service = build("calendar", "v3", credentials=creds)
 
+# あわせ暦（日程あわせのページ /m）。入力は MATCHER_SHEET_ID のスプレッドシートに保存する。
+# 未設定なら、ページは「準備ができていません」と出し、ほかの機能はそのまま動く
+import matcher
+MATCHER = matcher.setup(service_account_info, os.environ.get("MATCHER_SHEET_ID", ""),
+                        public_url=(os.environ.get("PUBLIC_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").strip())
+
 
 # ===== ④ Discordへの接続準備 =====
 intents = discord.Intents.default()
@@ -1115,6 +1121,9 @@ HELP_TEXT = (
     "■ 月間カレンダー画像\n"
     "/c2026-9       その月のカレンダー画像\n"
     "\n"
+    "■ 日程あわせ（ボットのいないサーバーでも URL で使える）\n"
+    "/match         シナリオ名と期間を選んで URL を作る\n"
+    "\n"
     "■ 期間の指定（: で範囲、. で日にち）\n"
     "/2026-8:2026-9         月単位の範囲\n"
     "/2026-8.15:2026-9.30   日単位の範囲\n"
@@ -2125,6 +2134,48 @@ PURGE_PERMISSION_HELP = ("ボットに「メッセージの管理」と「メッ
                          "（チャンネルごとの権限で外されていないかも確認してください。README 3-2）")
 
 
+@tree.command(name="match", description="日程あわせ（あわせ暦）の URL を作る。ボットのいないサーバーでも URL から入力できる")
+@app_commands.describe(title="シナリオ名（配色もここから作る）", start="開始日（例：12/1 か 2026-12-1）",
+                       end="終了日（例：12/14。開始から62日まで）")
+async def slash_match(interaction: discord.Interaction, title: app_commands.Range[str, 1, matcher.MAX_TITLE],
+                      start: str, end: str):
+    first, last = matcher.parse_day_input(start), matcher.parse_day_input(end)
+    if first is None or last is None:
+        await interaction.response.send_message("⚠️ 日付を読み取れませんでした。`12/1` か `2026-12-1` の形で入れてください",
+                                                ephemeral=True)
+        return
+    try:
+        matcher.check_period(first, last)       # 入力の誤りは、本人にだけ見える形で返す
+    except matcher.MatcherError as e:
+        await interaction.response.send_message(f"⚠️ {e}", ephemeral=True)
+        return
+    if not MATCHER.public_url:
+        await interaction.response.send_message(
+            "⚠️ ページのアドレスが分かりません。Render の Environment に `PUBLIC_URL`（例：https://xxxx.onrender.com）を入れてください",
+            ephemeral=True)
+        return
+    # 配色づくり（ことばパレット）とスプレッドシートへの保存に数秒〜30秒かかるので、先に「考え中」を出す
+    await interaction.response.defer(thinking=True)
+    try:
+        event, admin = await asyncio.to_thread(MATCHER.create, title, first, last, f"discord:{interaction.user.id}")
+    except matcher.MatcherError as e:
+        await interaction.followup.send(f"⚠️ {e}")
+        return
+    except Exception as e:
+        print(f"/match のエラー: {e!r}")
+        await interaction.followup.send(f"⚠️ 作れませんでした（{type(e).__name__}）")
+        return
+    url = MATCHER.url_for(event["id"])
+    await interaction.followup.send(
+        f"📅 **{discord.utils.escape_markdown(event['title'])}** の日程あわせ"
+        f"（{first.month}/{first.day}〜{last.month}/{last.day}）\n{url}\n"
+        "URL を開いて、名前を入れて参加してください（ボットのいないサーバーに貼っても使えます）",
+        allowed_mentions=discord.AllowedMentions.none())
+    await interaction.followup.send(
+        f"🔑 作った人用のリンクです（参加者の削除や、日程あわせの削除ができます。ほかの人に渡さないでください）\n<{url}#a={admin}>",
+        ephemeral=True)
+
+
 @tree.command(name="purge", description="このチャンネルの新しいメッセージを指定した数だけ削除する（自動表示とピン留めは残す）")
 @app_commands.describe(count=f"削除する数（1〜{PURGE_MAX}）")
 @app_commands.guild_only()
@@ -2680,6 +2731,12 @@ _ACTIVITY_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; conne
                  "img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'")
 
 
+# あわせ暦のページ：自分のサーバーのファイルと、ことばパレットと同じ Google Fonts だけを読む
+_MATCHER_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; "
+                "font-src https://fonts.gstatic.com; connect-src 'self'; img-src 'self' data:; "
+                "base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'")
+
+
 def handle_activity_request(method, path, body_bytes):
     """/activity の下へのリクエストを処理し、(状態コード, Content-Type, 中身) を返す"""
     sub = path[len("/activity"):].lstrip("/")
@@ -2789,19 +2846,59 @@ class HealthHandler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         return path == "/activity" or path.startswith("/activity/")
 
+    def _is_matcher(self):
+        path = self.path.split("?", 1)[0]
+        return path == "/m" or path.startswith("/m/")
+
+    def _respond_matcher(self, method, with_body):
+        """あわせ暦（日程あわせのページ）の要求。/m の下だけを扱う"""
+        path = self.path.split("?", 1)[0]
+        body = b""
+        if method == "POST":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                length = -1
+            if length < 0 or length > matcher.MAX_BODY:
+                return self._send(413, "application/json; charset=utf-8",
+                                  json.dumps({"ok": False, "error": "送られた中身が大きすぎます"},
+                                             ensure_ascii=False).encode("utf-8"), with_body)
+            body = self.rfile.read(length)
+        headers = {k: self.headers.get(k) for k in ("Host", "X-Forwarded-For", "X-Forwarded-Proto")}
+        headers["_peer"] = self.client_address[0] if self.client_address else "?"
+        code, ctype, data, extra = MATCHER.handle(method, path, headers, body)
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", extra.get("Cache-Control", "no-store"))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        if ctype.startswith("text/html"):
+            self.send_header("Content-Security-Policy", _MATCHER_CSP)
+            self.send_header("X-Frame-Options", "DENY")
+        self.end_headers()
+        if with_body:
+            self.wfile.write(data)
+
     def do_GET(self):
         if self._is_activity():
             return self._respond_activity("GET", with_body=True)
+        if self._is_matcher():
+            return self._respond_matcher("GET", with_body=True)
         self._respond(with_body=True)
 
     def do_HEAD(self):
         if self._is_activity():
             return self._respond_activity("HEAD", with_body=False)
+        if self._is_matcher():
+            return self._respond_matcher("HEAD", with_body=False)
         self._respond(with_body=False)
 
     def do_POST(self):
         if self._is_activity():
             return self._respond_activity("POST", with_body=True)
+        if self._is_matcher():
+            return self._respond_matcher("POST", with_body=True)
         self._send(405, "text/plain; charset=utf-8", b"method not allowed\n", True)
 
     def log_message(self, *args):

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{{TITLE}}</title>
+{{OG}}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/m/static/app.css?v={{VER_CSS}}">
+</head>
+<body data-event="{{EVENT_ID}}">
+<div class="wrap">
+  <header class="top">
+    <p class="brand"><a href="/m">あわせ暦</a></p>
+    <h1 id="title">あわせ暦</h1>
+    <p class="lead" id="lead">URL を送るだけで、みんなの空いている日をカレンダーで見比べられる日程あわせです。</p>
+    <div class="palette" id="palette" hidden></div>
+  </header>
+
+  <p class="status" id="status" role="status"></p>
+
+  <!-- 作るページ（/m） -->
+  <section id="create" hidden>
+    <form class="box" id="createForm">
+      <h2 class="cap">新しい日程あわせを作る</h2>
+      <label class="field"><span>シナリオ名</span>
+        <input id="cTitle" maxlength="60" required placeholder="例：雪山の山荘殺人事件" autocomplete="off"></label>
+      <div class="row">
+        <label class="field"><span>開始日</span><input id="cFirst" type="date" required></label>
+        <label class="field"><span>終了日</span><input id="cLast" type="date" required></label>
+      </div>
+      <p class="note">期間は62日まで。シナリオ名から「ことばパレット」で配色を作ります（そのためにシナリオ名だけを送ります）。</p>
+      <div class="row"><button class="primary" id="cGo" type="submit">作る</button></div>
+    </form>
+    <section class="box" id="history" hidden>
+      <h2 class="cap">このブラウザで開いた日程あわせ</h2>
+      <ul class="hist" id="histList"></ul>
+    </section>
+  </section>
+
+  <!-- 調整のページ（/m/<id>） -->
+  <section id="event" hidden>
+    <section class="box" id="bestBox">
+      <h2 class="cap">候補</h2>
+      <ol class="best" id="best"></ol>
+      <p class="note" id="bestNote"></p>
+    </section>
+
+    <section class="box">
+      <div class="head-row">
+        <h2 class="cap">みんなの空き</h2>
+        <div class="row">
+          <button type="button" class="hov" id="copyUrl">URL をコピー</button>
+          <a class="btn hov" id="saveImg" download>画像を保存</a>
+        </div>
+      </div>
+      <p class="legend"><span class="lg-half">上＝昼（10〜18時）</span><span class="lg-half">下＝夜（18〜24時）</span>
+        <span>✕ がある枠は白・入力した人の ○ が多いほど濃い</span><span>★＝全員 ○</span></p>
+      <div id="overview" class="months"></div>
+      <section id="day" class="day" hidden aria-live="polite"></section>
+    </section>
+
+    <section class="box" id="mine">
+      <h2 class="cap">あなたの入力</h2>
+      <div class="tabs" id="myTabs" role="tablist"></div>
+      <form id="joinForm" class="join">
+        <label class="field"><span>名前</span><input id="jName" maxlength="20" required autocomplete="nickname" placeholder="例：たなか"></label>
+        <fieldset class="field"><legend>入力のしかた</legend>
+          <div class="seg">
+            <label><input type="radio" name="jMode" value="rough" checked><span>大雑把入力<small>日ごとに ○△✕ を付ける</small></span></label>
+            <label><input type="radio" name="jMode" value="detail"><span>詳細入力<small>予定の時間から ○✕ を自動で付ける</small></span></label>
+          </div>
+        </fieldset>
+        <div class="row"><button class="primary" type="submit">参加する</button>
+          <button type="button" id="jCancel" hidden>やめる</button></div>
+      </form>
+      <div id="editor" hidden></div>
+    </section>
+
+    <section class="box">
+      <h2 class="cap">参加者</h2>
+      <ul class="people" id="people"></ul>
+      <div class="row" id="adminRow" hidden>
+        <button type="button" class="danger" id="removeEvent">この日程あわせを削除</button>
+      </div>
+    </section>
+  </section>
+
+  <footer class="foot">
+    <p>予定の名前はこのページの外に出ません。詳細入力では、読み込んだ予定を時間だけにしてから送ります。</p>
+    <p>編集できるのは、その参加者を追加したブラウザと、日程あわせを作った人だけです。期間の最終日から90日たつと自動で消えます。</p>
+  </footer>
+</div>
+<script src="/m/static/app.js?v={{VER_JS}}"></script>
+</body>
+</html>
