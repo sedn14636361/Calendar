@@ -249,3 +249,15 @@ details.box > summary { cursor: pointer; }
 .slot-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .slot-row .lbl { min-width: 2em; font-size: 14px; }
 .slot-row select { padding: 4px 8px; }
+
+/* 日の詳細：名前はそのまま、昼・夜は記号を中央にそろえ、縦の罫線で分ける */
+.dtable { gap: 0; column-gap: 0; row-gap: 0; }
+.dtable > * { padding: 5px 12px; }
+.dtable .nm { padding-left: 0; }
+.dtable .th.c, .dtable .mk { text-align: center; border-left: 1px solid var(--rule); min-width: 3.2em; }
+/* 保存のバー（画面の下に留める） */
+.savebar { position: sticky; bottom: 0; z-index: 3; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  background: var(--sheet); border-top: 1px solid var(--rule); padding: 10px 0; }
+.savebar.unsaved .status { color: var(--warn); font-weight: 700; }
+.bulk button.small.on { background: var(--ai); color: var(--ai-ink); border-color: var(--ai); }
+.dtable { grid-template-columns: minmax(5em, max-content) 3.6em 3.6em; }
