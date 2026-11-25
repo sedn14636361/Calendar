@@ -35,6 +35,7 @@
         <div id="cCal" class="picker"></div>
         <p class="pick-sum" id="cSum"></p>
       </div>
+      <div class="field"><span>昼と夜の時間帯</span><div id="cSlots" class="slots"></div></div>
       <p class="note">タイトルから「ことばパレット」で配色を作ります（そのためにタイトルだけを送ります）。</p>
       <div class="row"><button class="primary" id="cGo" type="submit">作る</button></div>
     </form>
@@ -60,7 +61,7 @@
           <a class="btn hov" id="saveImg" download>画像を保存</a>
         </div>
       </div>
-      <p class="legend"><span class="lg-half">上＝昼（10〜18時）</span><span class="lg-half">下＝夜（18〜24時）</span></p>
+      <p class="legend"><span class="lg-half" id="lgD"></span><span class="lg-half" id="lgN"></span></p>
       <div id="overview" class="months"></div>
       <section id="day" class="day" hidden aria-live="polite"></section>
     </section>
@@ -87,6 +88,8 @@
       <form id="editForm" class="edit">
         <label class="field"><span>タイトル</span><input id="eTitle" required autocomplete="off"></label>
         <label class="field"><span>概要</span><textarea id="eDesc" rows="3"></textarea></label>
+        <div class="field"><span>昼と夜の時間帯</span><div id="eSlots" class="slots"></div>
+          <p class="note">変えると、詳細入力の人の自動の ○✕ は新しい時間帯で計算し直されます。</p></div>
         <div class="field"><span>候補日を足す</span>
           <p class="note" id="eNote">足したい日をタップしてください（もう一度タップで取り消し）。</p>
           <div id="eCal" class="picker"></div>

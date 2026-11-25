@@ -124,12 +124,15 @@ function initCreate() {
         : `${md(C.start)}〜${md(C.end)}（${daysBetween(dateOf(C.start), dateOf(C.end)) + 1}日）`;
   };
   C.redraw();
+  const getSlots = slotPicker($("cSlots"), { d: [600, 1080], n: [1260, 1440] });   // 初期値：昼 10〜18時、夜 21〜24時
   $("createForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     if (C.start === null || C.end === null) { setStatus("カレンダーで開始日と終了日をタップしてください", true); return; }
     const btn = $("cGo"); btn.disabled = true; setStatus("配色を作っています…（30秒ほどかかることがあります）");
     try {
-      const d = await api("/m/api/create", { title: $("cTitle").value, description: $("cDesc").value, first: C.start, last: C.end });
+      const sl = getSlots();
+      if (sl.d[0] >= sl.d[1] || sl.n[0] >= sl.n[1]) { setStatus("時間帯の終わりは、始まりより後にしてください", true); btn.disabled = false; return; }
+      const d = await api("/m/api/create", { title: $("cTitle").value, description: $("cDesc").value, first: C.start, last: C.end, slots: sl });
       saveKeys(d.id, { people: {}, admin: d.admin });
       location.href = `/m/${d.id}`;
     } catch (e) { setStatus(e.message, true); btn.disabled = false; }
@@ -279,7 +282,26 @@ function unionBusy(a, b) {
 }
 
 /* ---------- ○△✕ の判定（サーバーの busy_mark / resolve_mark と同じ） ---------- */
-let SLOT_RANGE = { d: [600, 1080], n: [1080, 1440] };
+let SLOT_RANGE = { d: [600, 1080], n: [1260, 1440] };   // 日程あわせごとの昼・夜（サーバーから受け取って置き換える）
+const slotHours = (slot) => `${SLOT_RANGE[slot][0] / 60}〜${SLOT_RANGE[slot][1] / 60}時`;
+const slotLabel = (slot) => `${SLOT_TEXT[slot]}（${slotHours(slot)}）`;
+const isFixed = (p, iso, slot) => !!((p.fixed || {})[iso] || {})[slot];
+/* 昼・夜の時間帯を選ぶ欄（1時間きざみ）。box に4つのメニューを描き、値を返す関数を返す */
+function slotPicker(box, slots, onChange) {
+  box.textContent = "";
+  const sel = (val, lo, hi, label) => {
+    const s = el("select", { "aria-label": label, onchange: onChange || null },
+      ...Array.from({ length: hi - lo + 1 }, (_, i) => lo + i).map((h) => el("option", { value: h * 60, selected: h * 60 === val, text: `${h}時` })));
+    return s;
+  };
+  const rows = {};
+  for (const slot of ["d", "n"]) {
+    const a = sel(slots[slot][0], 0, 23, `${SLOT_TEXT[slot]}の始まり`), b = sel(slots[slot][1], 1, 24, `${SLOT_TEXT[slot]}の終わり`);
+    rows[slot] = [a, b];
+    box.append(el("div", { class: "slot-row" }, el("span", { class: "lbl", text: SLOT_TEXT[slot] }), a, el("span", { text: "〜" }), b));
+  }
+  return () => ({ d: rows.d.map((x) => Number(x.value)), n: rows.n.map((x) => Number(x.value)) });
+}
 const busyMark = (ivs, slot) => (ivs || []).some(([s, e]) => s < SLOT_RANGE[slot][1] && e > SLOT_RANGE[slot][0]) ? "x" : "o";
 function autoMark(p, iso, slot) { return p.mode === "detail" && p.busy_set ? busyMark(p.busy[iso], slot) : null; }
 function resolveMark(p, iso, slot) { return (p.marks[iso] || {})[slot] || autoMark(p, iso, slot); }
@@ -343,6 +365,7 @@ function accept(d) {
   const mine = me();
   const pendingMarks = mine && Object.keys(S.dirty).length ? mine.marks : null;
   S.data = d; SLOT_RANGE = d.slots || SLOT_RANGE;
+  $("lgD").textContent = `上＝${slotLabel("d")}`; $("lgN").textContent = `下＝${slotLabel("n")}`;
   const ev = d.event;
   // 鍵を持っているのに、もういない参加者（削除された）は忘れる
   for (const pid of Object.keys(S.keys.people)) if (!d.people.some((p) => p.id === pid)) delete S.keys.people[pid];
@@ -440,7 +463,10 @@ function renderDay() {
 const E = { month: null, add: new Set(), rm: new Set(), dirty: false };
 function renderEdit() {
   const ev = S.data.event, admin = !!S.keys.admin && S.data.admin;
-  if (!E.dirty) { $("eTitle").value = ev.title; $("eDesc").value = ev.description || ""; }
+  if (!E.dirty) {
+    $("eTitle").value = ev.title; $("eDesc").value = ev.description || "";
+    E.getSlots = slotPicker($("eSlots"), S.data.slots, () => { E.dirty = true; });
+  }
   if (!E.month) { const f = dateOf(ev.first); E.month = new Date(f.getFullYear(), f.getMonth(), 1); }
   $("eNote").textContent = admin
     ? "足したい日をタップしてください。今の候補日（色の付いた日）をタップすると、消す日になります。もう一度タップで取り消し。"
@@ -469,7 +495,9 @@ async function onSaveEdit(ev) {
   ev.preventDefault();
   if (E.rm.size && !confirm(`${E.rm.size}日の候補日を消します。その日の全員の入力も見えなくなります。`)) return;
   try {
-    const d = await api(`/m/api/event/${S.eid}/edit`, { title: $("eTitle").value, description: $("eDesc").value,
+    const sl = E.getSlots();
+    if (sl.d[0] >= sl.d[1] || sl.n[0] >= sl.n[1]) { setStatus("時間帯の終わりは、始まりより後にしてください", true); return; }
+    const d = await api(`/m/api/event/${S.eid}/edit`, { title: $("eTitle").value, description: $("eDesc").value, slots: sl,
       add_days: [...E.add], remove_days: [...E.rm], admin: S.keys.admin });
     E.dirty = false; E.add.clear(); E.rm.clear();
     accept(d); setStatus("保存しました");
@@ -511,6 +539,7 @@ async function onJoin(ev) {
     const d = await api(`/m/api/event/${S.eid}/join`, { name: $("jName").value, mode, admin: S.keys.admin });
     S.keys.people[d.joined] = d.key; saveKeys(S.eid, S.keys);
     S.current = d.joined; S.joining = false; $("jName").value = "";
+    document.querySelector('input[name="jMode"][value="rough"]').checked = true;   // 「もう1人追加」のときは大雑把入力から
     accept(d); setStatus(mode === "rough" ? "参加しました。ペンを選んで、日の「昼」「夜」をタップしてください" : "参加しました。予定を読み込んでください");
   } catch (e) { setStatus(e.message, true); }
 }
@@ -558,8 +587,8 @@ function renderEditor() {
   const preset = (label, list) => el("button", { type: "button", class: "small", text: label,
     onclick: () => { S.bulkDays = new Set(list); renderEditor(); } });
   const slotBtns = ["d", "n"].map((slot) => el("button", { type: "button", class: "tg" + (S.bulkSlots.has(slot) ? " on" : ""),
-    "aria-pressed": String(S.bulkSlots.has(slot)), onclick: () => { toggleSet(S.bulkSlots, slot); renderEditor(); } }, `${SLOT_TEXT[slot]}（${slot === "d" ? "10〜18時" : "18〜24時"}）`));
-  const targets = bulkTargets();
+    "aria-pressed": String(S.bulkSlots.has(slot)), onclick: () => { toggleSet(S.bulkSlots, slot); renderEditor(); } }, slotLabel(slot)));
+  const { targets, skipped } = bulkTargets();
   const wdText = S.bulkDays.size === 7 ? "全部の曜日" : [...S.bulkDays].sort().map((i) => WD[i]).join("・");
   const bulk = el("div", { class: "bulk" },
     el("p", { class: "cap", text: "まとめて選択" }),
@@ -567,14 +596,16 @@ function renderEditor() {
       el("div", { class: "tgs" }, preset("全部", [0, 1, 2, 3, 4, 5, 6]), preset("平日", [1, 2, 3, 4, 5]), preset("土日", [0, 6]),
         preset("解除", []))),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "時間帯" }), el("div", { class: "tgs" }, ...slotBtns)),
-    el("p", { class: "note", text: targets.length ? `${wdText}の${[...S.bulkSlots].sort().map((x) => SLOT_TEXT[x]).join("と")}を選んでいます（${targets.length}枠）`
+    el("p", { class: "note", text: targets.length || skipped
+      ? `${wdText}の${[...S.bulkSlots].sort().map((x) => SLOT_TEXT[x]).join("と")}を選んでいます（${targets.length}枠）`
+        + (skipped ? `。ほかの${skipped}枠は、手で選んだか予定があるので変えません` : "")
       : !S.bulkDays.size ? "曜日を選んでください" : "時間帯を選んでください" }),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "選んだ枠に" }),
       el("div", { class: "tgs" }, ...[["o", "○"], ["t", "△"], ["x", "✕"], ["clear", clearName]].map(([k, label]) =>
         el("button", { type: "button", class: `apply pen-${k}`, disabled: !targets.length, onclick: () => paintBulk(k) }, label)))));
   box.append(el("p", { class: "note", text: p.mode === "detail"
-    ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。手で選んだ印は、自動の判定より優先されます。"
-    : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。" }));
+    ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。メニューで選んだ枠（太字・枠付き）は、自動の判定より優先され、まとめて選択でも変わりません。"
+    : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。メニューで選んだ枠（太字・枠付き）は、まとめて選択でも変わりません。" }));
   box.append(bulk);
 
   // 自分のカレンダー
@@ -585,14 +616,21 @@ function renderEditor() {
     // 枠ごとのプルダウンメニュー（利用者の指定）。詳細入力では「自動」（予定から決まった ○✕）も選べる
     const halves = ["d", "n"].map((slot) => {
       const manual = (p.marks[iso] || {})[slot], auto = autoMark(p, iso, slot), m = manual || auto;
-      const picked = S.bulkSlots.has(slot) && S.bulkDays.has(wd);   // まとめて選択で選んでいる枠
-      const first = p.mode === "detail" ? [["", auto ? `自動${MARK_TEXT[auto]}` : "自動"]] : [["", "−"]];
-      const sel = el("select", { class: `mark m-${m || "none"}` + (manual ? " manual" : ""), "aria-label": `${md(iso)} ${SLOT_TEXT[slot]}`,
+      const fixed = isFixed(p, iso, slot);
+      const picked = S.bulkSlots.has(slot) && S.bulkDays.has(wd) && !protectedSlot(p, iso, slot);   // まとめて選択で変わる枠
+      const autoText = p.mode === "detail" ? (auto ? `自動${MARK_TEXT[auto]}` : "自動") : "−";
+      // メニュー：固定していない枠は、今の状態（自動・まとめて付けた印・未入力）を先頭に出す。○△✕ を選ぶと固定になる
+      const opts = [];
+      if (!fixed) opts.push(["", manual ? `${MARK_TEXT[manual]}（まとめて）` : autoText]);
+      opts.push(["o", "○"], ["t", "△"], ["x", "✕"]);
+      if (manual) opts.push(["clear", p.mode === "detail" ? `${autoText}に戻す` : "−（消す）"]);
+      const sel = el("select", { class: `mark m-${m || "none"}`, "aria-label": `${md(iso)} ${SLOT_TEXT[slot]}`,
         onchange: (e) => setMark(iso, slot, e.target.value) },
-      ...[...first, ["o", "○"], ["t", "△"], ["x", "✕"]].map(([v, t]) => el("option", { value: v, selected: (manual || "") === v, text: t })));
+      ...opts.map(([v, t]) => el("option", { value: v, selected: fixed ? v === manual : v === "", text: t })));
       // 見た目は印だけを出し、メニューは透明にして枠いっぱいに重ねる（狭い枠でも選んだ印が読めるように）
-      // 「manual」（太字・枠・「・」）は、自動の判定と見分ける必要がある詳細入力のときだけ付ける
-      return el("label", { class: `paint m-${m || "none"}` + (manual ? (p.mode === "detail" ? " manual" : "") : m ? " auto" : "") + (picked ? " picked" : "") },
+      // fixed（太字・枠）＝プルダウンで手で選んだ枠、auto（細字）＝予定から自動
+      return el("label", { class: `paint m-${m || "none"}` + (fixed ? " fixed" : manual ? "" : m ? " auto" : "") + (picked ? " picked" : ""),
+        title: fixed ? "手で選んだ枠（まとめて選択では変わりません）" : "" },
         el("small", { text: SLOT_TEXT[slot] }), el("b", { "aria-hidden": "true", text: m ? MARK_TEXT[m] : "−" }), sel);
     });
     return el("div", { class: "cell in" + (wd === 0 ? " sun" : wd === 6 ? " sat" : "") }, el("span", { class: "dn", text: d }), ...halves);
@@ -609,26 +647,38 @@ function renderEditor() {
   if (focusId && $(focusId)) $(focusId).focus();
 }
 
-function setMark(iso, slot, mark) {          // 枠のメニューで選んだ印（"" は未入力、詳細入力では自動に戻す）
-  const p = me(); if (!p) return;
-  const row = { ...(p.marks[iso] || {}) };
-  if (!mark) delete row[slot]; else row[slot] = mark;
+function setMark(iso, slot, mark) {          // 枠のメニューで選んだ印。○△✕ は「固定」（まとめて選択で変えない）、"clear" は印と固定を外す
+  const p = me(); if (!p || !mark) return;
+  const row = { ...(p.marks[iso] || {}) }, fx = { ...((p.fixed || {})[iso] || {}) };
+  if (mark === "clear") { delete row[slot]; delete fx[slot]; } else { row[slot] = mark; fx[slot] = true; }
   if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
+  p.fixed = p.fixed || {};
+  if (Object.keys(fx).length) p.fixed[iso] = fx; else delete p.fixed[iso];
   queueMarks(); renderEditor();
 }
 function toggleSet(set, v) { if (set.has(v)) set.delete(v); else set.add(v); }
 /* まとめて塗る対象の枠：選んだ曜日（選ばなければ全部）× 選んだ時間帯 */
-function bulkTargets() {                     // 選んだ曜日 × 選んだ時間帯の枠（曜日を何も選んでいなければ無し）
-  const out = [];
+/* まとめて選択の対象：選んだ曜日 × 選んだ時間帯の枠（曜日を何も選んでいなければ無し）。
+   ただし、プルダウンで個別に選んだ枠と、詳細入力で予定があって ✕ になっている枠は変えない（利用者の指定） */
+function protectedSlot(p, iso, slot) {
+  return isFixed(p, iso, slot) || autoMark(p, iso, slot) === "x";
+}
+function bulkTargets() {
+  const p = me(), targets = [];
+  let skipped = 0;
+  if (!p) return { targets, skipped };
   for (const iso of S.data.event.days) {
     if (!S.bulkDays.has(dateOf(iso).getDay())) continue;
-    for (const slot of ["d", "n"]) if (S.bulkSlots.has(slot)) out.push([iso, slot]);
+    for (const slot of ["d", "n"]) {
+      if (!S.bulkSlots.has(slot)) continue;
+      if (protectedSlot(p, iso, slot)) skipped++; else targets.push([iso, slot]);
+    }
   }
-  return out;
+  return { targets, skipped };
 }
 function paintBulk(mark) {
   const p = me(); if (!p) return;
-  for (const [iso, slot] of bulkTargets()) {
+  for (const [iso, slot] of bulkTargets().targets) {
     const row = { ...(p.marks[iso] || {}) };
     if (mark === "clear") delete row[slot]; else row[slot] = mark;
     if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
@@ -643,7 +693,7 @@ function queueMarks() {
 async function flush() {
   if (S.saving) { S.saveTimer = setTimeout(flush, 400); return; }
   const p = me(); if (!p || !S.dirty.marks) return;
-  S.dirty = {}; await saveNow({ marks: p.marks });
+  S.dirty = {}; await saveNow({ marks: p.marks, fixed: p.fixed || {} });
 }
 async function saveNow(changes) {
   const p = me(); if (!p) return;

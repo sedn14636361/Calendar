@@ -438,6 +438,17 @@ async function runFree() {
 
 // ---------- 日程あわせを作る画面（/match） ----------
 const M = { busy: false, done: false, maxDays: 120 };
+// 昼・夜の時間帯（1時間きざみ）。初期値は昼 10〜18時、夜 21〜24時（利用者の指定）
+const SLOT_DEFAULT = { "slot-d-start": 10, "slot-d-end": 18, "slot-n-start": 21, "slot-n-end": 24 };
+function fillSlotSelects() {
+  for (const [id, def] of Object.entries(SLOT_DEFAULT)) {
+    const s = $(id), end = id.endsWith("end");
+    for (let h = end ? 1 : 0; h <= (end ? 24 : 23); h++) s.append(new Option(`${h}時`, String(h * 60), false, h === def));
+    s.addEventListener("change", render);
+  }
+}
+const matchSlots = () => ({ d: [Number($("slot-d-start").value), Number($("slot-d-end").value)],
+  n: [Number($("slot-n-start").value), Number($("slot-n-end").value)] });
 function rangeHint() {
   return F.start === null
     ? "開始日をタップし、続けて終了日をタップしてください。月をまたぐときは ‹ › で月を移ってからタップします。"
@@ -451,6 +462,9 @@ function matchValid() {
   if (dayDiff(F.start, F.end) + 1 > M.maxDays) return "期間が長すぎます。短くしてください";
   if (F.end < iso(S.today)) return "終了日が過ぎています";
   if (!$("match-title").value.trim()) return "タイトルを入れてください";
+  const sl = matchSlots();
+  if (sl.d[0] >= sl.d[1]) return "昼の終わりは、始まりより後にしてください";
+  if (sl.n[0] >= sl.n[1]) return "夜の終わりは、始まりより後にしてください";
   return null;
 }
 function renderMatch() {
@@ -477,7 +491,7 @@ async function makeMatch() {
   render();
   setStatus("作っています…（配色を作るので、30秒ほどかかることがあります）");
   const req = api("api/match", { session: S.session, first: F.start, last: F.end,
-    title: $("match-title").value, description: $("match-desc").value });
+    title: $("match-title").value, description: $("match-desc").value, slots: matchSlots() });
   const clip = clipboardWithPromise(() => req.then((j) => j.url));   // 押したその場でコピーを始める（iPhone 向け）
   let j;
   try {
@@ -959,6 +973,7 @@ function setupKind() {                      // どの画面か（api/start の m
 
 async function main() {
   fillTimeSelects();
+  fillSlotSelects();
   wire();
   if (!CLIENT_ID || CLIENT_ID.startsWith("{{")) {
     setStatus("ボットの準備が終わっていません。少し待ってから開き直してください", true);
