@@ -192,6 +192,8 @@ button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; 
 .foot-row { border-top: 1px solid var(--rule); padding-top: 10px; }
 .foot { font-size: 12px; color: var(--ink-soft); }
 .foot p { margin: 0 0 4px; }
+.privacy summary { cursor: pointer; }
+.privacy ul { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 4px; }
 
 /* 概要・メモ（改行をそのまま出す） */
 .desc { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; border-left: 3px solid var(--deco); padding: 2px 0 2px 10px; }
