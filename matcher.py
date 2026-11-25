@@ -14,8 +14,8 @@
 #
 # 安全のための決まり：
 #   ・予定の名前はサーバーに送らない（画面の中で時間だけにしてから送る）
-#   ・編集できるのは、その参加者を追加したブラウザ（編集の鍵を持つ人）と、調整を作った人だけ。
-#     鍵はサーバーには SHA-256 の値でしか残さない
+#   ・参加者の入力は、伝助と同じく誰でも編集・削除できる（ブラウザの記録を消しても直せるように）。
+#     日程あわせ全体の削除と候補日の削除は、作った人（作った人用の鍵）だけ。鍵はサーバーに SHA-256 の値でしか残さない
 #   ・作る・参加するの回数に上限を設ける（短い時間に大量に作られないように）
 #
 # このファイルは Discord を使わない。Calendar.py が Web サーバーの /m の下をここへ回す。
@@ -372,32 +372,66 @@ def heat_base(colors, sheet):
     return base
 
 
+TEXT_MIN_CONTRAST = 4.5                # 文字と地のコントラスト比の下限（WCAG 2.1 達成基準 1.4.3、通常の文字）
+
+
+def ensure_contrast(fg, bgs, ratio=TEXT_MIN_CONTRAST):
+    """文字色 fg を、地の色 bgs のどれに対してもコントラスト比 ratio 以上になるまで、
+    色合いを保ったまま黒か白に寄せる（地が明るければ黒、暗ければ白の側へ）"""
+    if all(contrast(fg, b) >= ratio for b in bgs):
+        return fg
+    target = "#000000" if contrast(bgs[0], "#000000") >= contrast(bgs[0], "#ffffff") else "#ffffff"
+    for i in range(1, 21):
+        c = mix(fg, target, i / 20)
+        if all(contrast(c, b) >= ratio for b in bgs):
+            return c
+    return target
+
+
 def build_theme(palette):
-    """画面と画像で使う色をまとめて決める（CSS の変数名で返す）"""
+    """画面と画像で使う色をまとめて決める（CSS の変数名で返す）。
+    文字の色は、置かれる地の色（paper・sheet）に対してコントラスト比 4.5 以上になるようにする"""
     t = theme_assign(palette["colors"])
     bg, ink = t["bg"], t["ink"]
     dark = contrast(bg, "#000000") < contrast(bg, "#ffffff")
+    # 地の色が中くらいの明るさだと、どんな文字色でも 4.5 に届かないことがある。
+    # 明るい地は黒い文字と、暗い地は白い文字とコントラスト比 7 以上になるまで、色合いを保って地のほうを寄せる
+    bg = ensure_contrast(bg, ["#ffffff" if dark else "#000000"], 7)
     sheet = mix(bg, "#ffffff", 0.06 if dark else 0.55)
-    ink_soft = mix(ink, bg, 0.3)
-    if min(contrast(ink_soft, bg), contrast(ink_soft, sheet)) < 4.5:
-        ink_soft = ink                 # 薄めた文字色が読みにくくなるなら、薄めない
+    grounds = [bg, sheet]                                  # 文字が置かれる地（ページの地と、欄の地）
+    ink = ensure_contrast(ink, grounds)
+    ink_soft = ensure_contrast(mix(ink, bg, 0.3), grounds)  # 薄めた文字色も、読める濃さまでしか薄めない
 
     def edge(h):
         return mix(ink, bg, 0.3) if contrast(h, bg) < 1.5 else h
 
-    def readable(h, fallback):
-        return h if contrast(h, sheet) >= 3 else fallback
+    def readable(h):
+        return ensure_contrast(h, grounds)
 
-    heat = [mix(sheet, heat_base(palette["colors"], sheet), s) for s in HEAT_STEPS]
+    def on(h):
+        """文字を載せる地の色 h と、その上の文字色（白か黒）。中くらいの明るさだと白でも黒でも 4.5 に届かないので、
+        地の色のほうを、色合いを保ったまま文字と反対の側へ寄せて 4.5 以上にする"""
+        ink_ = text_on(h)
+        return ensure_contrast(h, [ink_]), ink_
+
+    btn, btn_ink = on(t["btn"])
+    go, go_ink = on(t["goHover"])
+    hov, hov_ink = on(t["hovHover"])
+    # 濃さ 0（白い枠）は欄の地そのものなので、文字は 4.5 以上を確かめた通常の文字色（ink）にする
+    heat_pairs = [on(mix(sheet, heat_base(palette["colors"], sheet), s)) if s else (sheet, ink) for s in HEAT_STEPS]
+    heat = [h for h, _ in heat_pairs]
     return {
         "--paper": bg, "--sheet": sheet, "--ink": ink, "--ink-soft": ink_soft, "--rule": mix(ink, bg, 0.8),
-        "--ai": t["btn"], "--ai-ink": text_on(t["btn"]), "--ai-edge": edge(t["btn"]),
-        "--second": t["goHover"], "--second-ink": text_on(t["goHover"]), "--second-edge": edge(t["goHover"]),
-        "--accent": t["hovHover"], "--accent-ink": text_on(t["hovHover"]), "--accent-edge": edge(t["hovHover"]),
+        "--ai": btn, "--ai-ink": btn_ink, "--ai-edge": edge(btn),
+        "--second": go, "--second-ink": go_ink, "--second-edge": edge(go),
+        "--accent": hov, "--accent-ink": hov_ink, "--accent-edge": edge(hov),
         "--deco": t["deco"],
-        "--ok": readable(t["btn"], ink), "--maybe": readable(t["goHover"], ink_soft), "--ng": ink_soft,
+        "--ok": readable(t["btn"]), "--maybe": readable(t["goHover"]), "--ng": ink_soft,
+        # 日曜の赤・土曜の青・注意の赤も、地に対して読める濃さにする（配色に関係なく固定の色だと、暗い地で読めない）
+        "--sun": readable("#e0443a" if dark else "#c62f24"), "--sat": readable("#6f9cf0" if dark else "#2f5fc4"),
+        "--warn": readable("#f08a70" if dark else "#a1361f"),
         **{f"--heat{i}": c for i, c in enumerate(heat)},
-        **{f"--heat-ink{i}": text_on(c) for i, c in enumerate(heat)},
+        **{f"--heat-ink{i}": ink_ for i, (_, ink_) in enumerate(heat_pairs)},
         "color-scheme": "dark" if dark else "light",
     }
 
@@ -759,16 +793,12 @@ class Store:
             raise MatcherError("この参加者は見つかりません（削除された可能性があります）", 404)
         return e
 
-    def _can_edit(self, eid, entry, key, admin):
-        return _key_ok(key, entry["data"].get("key")) or (admin and self.is_admin(eid, admin))
-
     def save(self, eid, pid, key, changes, admin=None, now=None):
         with self.lock:
             self._require()
             self.get(eid)
+            # 誰でも、どの参加者の入力も編集できる（利用者の指定。ブラウザの記録を消しても直せるように。誰が直したかは残さない）
             entry = self._person_entry(eid, pid)
-            if not self._can_edit(eid, entry, key, admin):
-                raise MatcherError("この参加者を編集できるのは、追加したブラウザだけです", 403)
             data = dict(entry["data"])
             data.update(changes)
             data["updated"] = (now or datetime.now(JST)).isoformat(timespec="seconds")
@@ -779,9 +809,7 @@ class Store:
         with self.lock:
             self._require()
             self.get(eid)
-            entry = self._person_entry(eid, pid)
-            if not self._can_edit(eid, entry, key, admin):
-                raise MatcherError("この参加者を消せるのは、追加したブラウザと調整を作った人だけです", 403)
+            entry = self._person_entry(eid, pid)      # 削除も誰でもできる（利用者の指定）
             try:
                 self.backend.clear(entry["row"])
             except Exception as e:
@@ -1033,7 +1061,7 @@ def render_png(event, people):
                 d.rectangle([x0, y0, x1, y1], fill=_hex_rgb(sheet if inside else paper),
                             outline=_hex_rgb(rule), width=2)
                 d.text((x0 + 8, y0 + 4), str(dn), font=f_day,
-                       fill=_hex_rgb(ink if inside else rule))
+                       fill=_hex_rgb(ink if inside else soft))   # 候補日でない日も、読める濃さの薄い文字色で
                 if not inside:
                     continue
                 half_top = y0 + 28

@@ -4,7 +4,7 @@
   --paper: #f3f4f1; --sheet: #ffffff; --ink: #1c1f24; --ink-soft: #5d636c; --rule: #d9dcd6;
   --ai: #24477a; --ai-ink: #ffffff; --ai-edge: #24477a; --second: #24477a; --second-ink: #ffffff;
   --accent: #24477a; --accent-ink: #ffffff; --deco: transparent; --warn: #a1361f;
-  --ok: #24477a; --maybe: #8a6d1f; --ng: #5d636c;
+  --ok: #24477a; --maybe: #7a5f12; --ng: #5d636c; --sun: #b3261e; --sat: #2a56b0;
   --heat0: #ffffff; --heat1: #e4e9f1; --heat2: #c9d3e2; --heat3: #aebdd4; --heat4: #93a7c5; --heat5: #7891b7;
   --heat-ink0: #14161a; --heat-ink1: #14161a; --heat-ink2: #14161a; --heat-ink3: #14161a; --heat-ink4: #14161a; --heat-ink5: #14161a;
   --f-display: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
@@ -17,7 +17,8 @@
   :root:not([data-themed]) {
     --paper: #15171b; --sheet: #1d2026; --ink: #e9ebee; --ink-soft: #a2a8b2; --rule: #30343b;
     --ai: #8fb0e6; --ai-ink: #0f1726; --ai-edge: #8fb0e6; --second: #8fb0e6; --second-ink: #0f1726;
-    --accent: #8fb0e6; --accent-ink: #0f1726; --warn: #f08a70; --ok: #8fb0e6; --ng: #a2a8b2;
+    --accent: #8fb0e6; --accent-ink: #0f1726; --warn: #f08a70; --ok: #8fb0e6; --ng: #a2a8b2; --maybe: #e2c26a;
+    --sun: #ff8a80; --sat: #8fb0f6;
     color-scheme: dark;
   }
 }
@@ -97,14 +98,14 @@ button:disabled { opacity: .55; cursor: default; }
 .mh .m { font-size: 22px; }
 .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
 .wd { text-align: center; font-size: 12px; color: var(--ink-soft); padding: 2px 0; border-bottom: 1px solid var(--rule); }
-.wd.sun { color: var(--warn); } .wd.sat { color: var(--ai); }
+.wd.sun { color: var(--sun); } .wd.sat { color: var(--sat); }
 .cell { position: relative; display: grid; grid-template-rows: auto 1fr 1fr; gap: 0; align-items: stretch; padding: 2px; min-height: 62px; border: 1px solid var(--rule);
   border-radius: 4px; background: var(--sheet); color: var(--ink); text-align: left; min-width: 0; }
 button.cell { cursor: pointer; }
-.cell.out { background: transparent; border-style: dashed; opacity: .45; grid-template-rows: auto; }
+.cell.out { background: transparent; border-style: dashed; color: var(--ink-soft); grid-template-rows: auto; }   /* 候補日でない日：薄い文字色（読める濃さ）で示す */
 .cell.sel { outline: 2px solid var(--ai); outline-offset: 1px; }
 .cell .dn { font-family: var(--f-mono); font-size: 11px; line-height: 1.2; padding-left: 2px; }
-.cell.sun .dn { color: var(--warn); } .cell.sat .dn { color: var(--ai); }
+.cell.sun .dn { color: var(--sun); } .cell.sat .dn { color: var(--sat); }
 /* 昼と夜の間に余白を置かない。内訳（○△✕ の人数）はふだん隠し、カーソルを合わせたときだけ出す */
 .half { display: flex; align-items: center; justify-content: center; border-radius: 0; font-family: var(--f-mono); font-size: 10px; line-height: 1.1; letter-spacing: -.02em;
   white-space: nowrap; overflow: hidden; min-height: 18px; }
@@ -152,6 +153,8 @@ button.cell { cursor: pointer; }
 #editor { display: grid; gap: 14px; }
 .tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 .tabs:empty { display: none; }
+.tabs .who { width: 100%; }
+.tabs .who select { font-size: 16px; max-width: 100%; }
 .tab[aria-selected="true"] { background: var(--ai); color: var(--ai-ink); border-color: var(--ai); }
 .penbar { display: grid; gap: 8px; position: sticky; top: 0; z-index: 2; background: var(--sheet); padding: 8px 0; border-bottom: 1px solid var(--rule); }
 .pens { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -164,7 +167,7 @@ button.cell { cursor: pointer; }
 .bulk .lbl { font-size: 12px; color: var(--ink-soft); min-width: 3.5em; }
 .tgs { display: flex; flex-wrap: wrap; gap: 4px; }
 .tg { min-width: 40px; justify-content: center; padding: 4px 10px; }
-.tg.sun:not(.on) { color: var(--warn); } .tg.sat:not(.on) { color: var(--ai); }
+.tg.sun:not(.on) { color: var(--sun); } .tg.sat:not(.on) { color: var(--sat); }
 .tg.on, button.wd.on { background: var(--ai); color: var(--ai-ink); border-color: var(--ai); }
 button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; justify-content: center; border: 1px solid var(--rule); }
 .months.mine .cell { min-height: 84px; }
@@ -175,7 +178,6 @@ button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; 
 .paint.m-o b { color: var(--ok); } .paint.m-t b { color: var(--maybe); } .paint.m-x b { color: var(--ng); }
 .paint.manual { border-color: var(--ink-soft); background: var(--sheet); }
 .paint.manual b::after { content: "・"; font-size: 11px; vertical-align: top; }
-.paint.auto b { opacity: .8; }
 .paint.m-o:not(.auto) { background: var(--heat2); } .paint.m-o:not(.auto) b { color: var(--heat-ink2); }
 .detail { display: grid; gap: 10px; border: 1px dashed var(--rule); border-radius: var(--r); padding: 12px; }
 .preview, .shared { display: grid; gap: 8px; }
@@ -190,6 +192,8 @@ button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; 
 .foot-row { border-top: 1px solid var(--rule); padding-top: 10px; }
 .foot { font-size: 12px; color: var(--ink-soft); }
 .foot p { margin: 0 0 4px; }
+.privacy summary { cursor: pointer; }
+.privacy ul { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 4px; }
 
 /* 概要・メモ（改行をそのまま出す） */
 .desc { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; border-left: 3px solid var(--deco); padding: 2px 0 2px 10px; }
@@ -207,7 +211,7 @@ button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; 
 .pnav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pnav .pm { font-family: var(--f-display); font-size: 18px; }
 .pday { justify-content: center; min-height: 40px; padding: 0; font-family: var(--f-mono); font-size: 14px; }
-.pday.sun { color: var(--warn); } .pday.sat { color: var(--ai); }
+.pday.sun { color: var(--sun); } .pday.sat { color: var(--sat); }
 .pday.on { background: var(--heat3); color: var(--heat-ink3); border-color: var(--ai); }
 .pday.edge { background: var(--ai); color: var(--ai-ink); }
 .pday.add { background: var(--second); color: var(--second-ink); border-color: var(--second); }
@@ -235,7 +239,7 @@ details.box > summary { cursor: pointer; }
 .paint select.mark { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
 .paint b { flex: 1; text-align: center; font-size: 16px; line-height: 1; padding-right: 6px; }
 .paint.m-o b { color: var(--ok); } .paint.m-t b { color: var(--maybe); } .paint.m-x b { color: var(--ng); } .paint.m-none b { color: var(--rule); }
-.paint.auto b { font-weight: 400; opacity: .75; }
+.paint.auto b { font-weight: 400; }   /* 自動の印は細字で見分ける（透明度を下げると、地とのコントラストが足りなくなる） */
 .paint.manual.m-o { background: var(--heat2); } .paint.manual.m-o b { color: var(--heat-ink2); }
 .paint:focus-within { outline: 2px solid var(--ai); outline-offset: 1px; }
 .paint::after { content: "▾"; position: absolute; right: 3px; top: 50%; transform: translateY(-50%); font-size: 9px; color: var(--ink-soft); pointer-events: none; }
