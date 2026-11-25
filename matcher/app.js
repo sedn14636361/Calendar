@@ -515,7 +515,6 @@ function renderPeople() {
     const own = !!S.keys.people[p.id];
     ul.append(el("li", { class: "person" + (own ? " own" : "") },
       el("i", { class: "dot", style: { background: p.color } }), el("span", { class: "nm", text: p.name }),
-      el("span", { class: "tag", text: p.mode === "detail" ? "詳細" : "大雑把" }),
       own ? el("span", { class: "tag own", text: "あなた" }) : el("span", { class: "lock", title: "ほかの人の入力（編集できません）", text: "🔒" }),
       admin && !own ? el("button", { type: "button", class: "small danger", text: "削除", onclick: () => onDeletePerson(p) }) : null,
       p.memo ? el("span", { class: "pmemo", text: p.memo }) : null));
