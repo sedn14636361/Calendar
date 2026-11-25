@@ -72,7 +72,36 @@ function renderPalette(p) {
   const box = $("palette"); box.textContent = ""; box.hidden = false;
   const strip = el("div", { class: "strip" });
   p.colors.forEach((c) => strip.append(el("span", { title: `${c.name} ${c.hex}`, style: { background: c.hex } })));
-  box.append(strip, el("p", { class: "note", text: (p.source === "ai" ? "配色：ことばパレット（AI）" : "配色：シナリオ名から計算") + (p.reason ? `　${p.reason}` : "") }));
+  box.append(strip);   // 配色の出どころの説明文は出さない（利用者の指定）
+}
+
+/* =================================================================
+   作るページ
+   ================================================================= */
+/* ---------- タップで日を選ぶカレンダー（作るページの範囲と、候補日を足すときに使う） ----------
+   box に「‹ 年月 ›」と月の表を描く。cellFn(iso, d, wd) が各日のボタンを返す */
+function renderPicker(box, P, cellFn) {
+  box.textContent = "";
+  const ym = `${P.month.getFullYear()}-${pad(P.month.getMonth() + 1)}`;
+  const move = (n) => { P.month = new Date(P.month.getFullYear(), P.month.getMonth() + n, 1); P.redraw(); };
+  box.append(el("div", { class: "pnav" },
+    el("button", { type: "button", class: "small", "aria-label": "前の月", text: "‹", onclick: () => move(-1) }),
+    el("span", { class: "pm", text: `${P.month.getFullYear()}年${P.month.getMonth() + 1}月` }),
+    el("button", { type: "button", class: "small", "aria-label": "次の月", text: "›", onclick: () => move(1) })));
+  box.append(monthGrid(ym, cellFn));
+}
+const todayIso = () => isoOf(new Date());
+
+/* 範囲のタップ（/date の画面と同じ決まり）：開始日 → 終了日。決まったあとは、後ろをタップで伸ばし、前をタップで開始日を移し、
+   中をタップで近い方の端を動かす */
+function tapRange(R, key) {
+  const diff = (a, b) => daysBetween(dateOf(a), dateOf(b));
+  if (R.start === null) { R.start = key; R.end = null; }
+  else if (R.end === null) { if (key < R.start) R.start = key; else R.end = key; }
+  else if (key > R.end) R.end = key;
+  else if (key < R.start) R.start = key;
+  else if (diff(R.start, key) < diff(key, R.end)) R.start = key;
+  else R.end = key;
 }
 
 /* =================================================================
@@ -80,14 +109,27 @@ function renderPalette(p) {
    ================================================================= */
 function initCreate() {
   $("create").hidden = false;
-  const today = new Date();
-  $("cFirst").value = isoOf(today); $("cLast").value = isoOf(addDays(today, 13));
-  $("cFirst").addEventListener("change", () => { if ($("cLast").value < $("cFirst").value) $("cLast").value = $("cFirst").value; });
+  const now = new Date();
+  const C = { month: new Date(now.getFullYear(), now.getMonth(), 1), start: null, end: null };
+  C.redraw = () => {
+    renderPicker($("cCal"), C, (iso, d, wd) => {
+      const inr = C.start !== null && (C.end === null ? iso === C.start : C.start <= iso && iso <= C.end);
+      const past = iso < todayIso();
+      return el("button", { type: "button", disabled: past, class: "pday" + (inr ? " on" : "") + (iso === C.start || iso === C.end ? " edge" : "")
+        + (wd === 0 ? " sun" : wd === 6 ? " sat" : ""), "aria-pressed": String(inr), "aria-label": md(iso),
+        onclick: () => { tapRange(C, iso); C.redraw(); } }, String(d));
+    });
+    $("cSum").textContent = C.start === null ? "日程が未選択"
+      : C.end === null ? `${md(C.start)}〜（終了日をタップ。同じ日をもう一度で1日だけ）`
+        : `${md(C.start)}〜${md(C.end)}（${daysBetween(dateOf(C.start), dateOf(C.end)) + 1}日）`;
+  };
+  C.redraw();
   $("createForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
+    if (C.start === null || C.end === null) { setStatus("カレンダーで開始日と終了日をタップしてください", true); return; }
     const btn = $("cGo"); btn.disabled = true; setStatus("配色を作っています…（30秒ほどかかることがあります）");
     try {
-      const d = await api("/m/api/create", { title: $("cTitle").value, first: $("cFirst").value, last: $("cLast").value });
+      const d = await api("/m/api/create", { title: $("cTitle").value, description: $("cDesc").value, first: C.start, last: C.end });
       saveKeys(d.id, { people: {}, admin: d.admin });
       location.href = `/m/${d.id}`;
     } catch (e) { setStatus(e.message, true); btn.disabled = false; }
@@ -124,9 +166,10 @@ function parseICS(text) {
     else if (key === "DTEND") { const p = parseICSDate(value); if (p) cur.end = p.date; }
     else if (key === "RRULE") cur.rrule = value;
     else if (key === "STATUS" && value === "CANCELLED") cur.cancelled = true;
-    else if (key === "TRANSP" && value === "TRANSPARENT") cur.free = true;   // 「予定なし」として入れた予定は数えない
+    // TRANSP:TRANSPARENT（「予定なし」）は捨てない。Google カレンダーの終日予定は初期設定がこれで、
+    // 捨てると終日の予定が入らない。ボットの空き日の判定（/2026-9 など）も、この印に関係なく数えている
   }
-  return events.filter((e) => e.start && !e.cancelled && !e.free).map((e) => ({
+  return events.filter((e) => e.start && !e.cancelled).map((e) => ({
     start: e.start, end: e.end || new Date(e.start.getTime() + (e.allDay ? 86400000 : 3600000)), rrule: e.rrule || null, allDay: !!e.allDay,
   }));
 }
@@ -253,7 +296,7 @@ function heatLevel(c) {
    調整のページ
    ================================================================= */
 const S = {
-  eid: document.body.dataset.event, data: null, keys: null, current: null, pen: "o", bulkDays: new Set(), bulkSlots: new Set(["d", "n"]),
+  eid: document.body.dataset.event, data: null, keys: null, current: null, bulkDays: new Set(), bulkSlots: new Set(["d", "n"]),
   dirty: {}, saving: false, saveTimer: null, selectedDay: null, pending: null, joining: false,
 };
 
@@ -272,10 +315,14 @@ function initEvent() {
   $("saveImg").href = `/m/${S.eid}/image.png`;
   $("saveImg").setAttribute("download", "awasegoyomi.png");
   $("removeEvent").addEventListener("click", onRemoveEvent);
+  $("editForm").addEventListener("submit", onSaveEdit);
+  $("eCancel").addEventListener("click", () => { E.dirty = false; E.add.clear(); E.rm.clear(); renderEdit(); setStatus(""); });
+  for (const id of ["eTitle", "eDesc"]) $(id).addEventListener("input", () => { E.dirty = true; });
   load(true);
   // ほかの人の入力を30秒ごとに取り込む。入力欄を操作している間と、保存を待っている間は描き直さない
   const idle = () => document.visibilityState === "visible" && !S.saving && !Object.keys(S.dirty).length
-    && !(document.activeElement && document.activeElement.closest && document.activeElement.closest("#mine input, #mine textarea, #mine select"));
+    && !(document.activeElement && document.activeElement.closest && document.activeElement.closest("#mine input, #mine textarea, #mine select, #editBox input, #editBox textarea"))
+    && !E.dirty;
   setInterval(() => { if (idle()) load(false); }, 30000);
   document.addEventListener("visibilitychange", () => { if (idle()) load(false); });
 }
@@ -303,10 +350,12 @@ function accept(d) {
   if (pendingMarks && me()) me().marks = pendingMarks;
   document.title = `${ev.title} — あわせ暦`;
   $("title").textContent = ev.title;
-  $("lead").textContent = `${md(ev.first)} 〜 ${md(ev.last)}・${d.people.length}人が入力`;
+  const contiguous = daysBetween(dateOf(ev.first), dateOf(ev.last)) + 1 === ev.days.length;
+  $("lead").textContent = `${md(ev.first)} 〜 ${md(ev.last)}${contiguous ? "" : `（候補 ${ev.days.length}日）`}・${d.people.length}人が入力`;
+  $("desc").textContent = ev.description || ""; $("desc").hidden = !ev.description;
   applyTheme(ev.theme); renderPalette(ev.palette); remember(ev);
   $("event").hidden = false;
-  renderBest(); renderOverview(); renderDay(); renderPeople(); renderMine();
+  renderBest(); renderOverview(); renderDay(); renderPeople(); renderMine(); renderEdit();
 }
 
 /* ---------- 候補 ---------- */
@@ -349,9 +398,11 @@ function renderOverview() {
   for (const ym of monthsOf(S.data.event.days)) box.append(monthGrid(ym, (iso, d, wd) => {
     if (!days.has(iso)) return el("div", { class: "cell out" }, el("span", { class: "dn", text: d }));
     const halves = ["d", "n"].map((slot) => {
+      // 内訳はふだん出さない。カーソルを合わせると出し（title と CSS の :hover）、タップすると下に日の詳細を出す
       const c = S.data.tally[iso][slot], lv = heatLevel(c);
-      const label = n ? (c.o === n ? `★${n}` : `○${c.o}${c.t ? ` △${c.t}` : ""}`) : "";
-      return el("span", { class: `half lv${lv}` + (n && c.o === n ? " all" : ""), style: { background: `var(--heat${lv})`, color: `var(--heat-ink${lv})` }, text: label });
+      const label = n ? `○${c.o}△${c.t}✕${c.x}` : "";   // マスが狭いので詰めて書く（title には読みやすい形で）
+      return el("span", { class: `half lv${lv}`, title: n ? `${SLOT_TEXT[slot]} ○${c.o} △${c.t} ✕${c.x}` : "",
+        style: { background: `var(--heat${lv})`, color: `var(--heat-ink${lv})` } }, el("span", { class: "lbl", text: label }));
     });
     const t = S.data.tally[iso];
     return el("button", { type: "button", class: "cell in" + (S.selectedDay === iso ? " sel" : "") + (wd === 0 ? " sun" : wd === 6 ? " sat" : ""),
@@ -364,31 +415,65 @@ function selectDay(iso) {
   $("day").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
 }
 function renderDay() {
+  // 日の詳細：昼・夜の ○△✕ の内訳だけ（利用者の指定）
   const box = $("day"), iso = S.selectedDay;
   if (!iso || !S.data.event.days.includes(iso)) { box.hidden = true; return; }
   box.hidden = false; box.textContent = "";
   const t = S.data.tally[iso];
   box.append(el("div", { class: "head-row" }, el("h3", { text: md(iso) }), el("button", { type: "button", class: "small", text: "閉じる", onclick: () => { S.selectedDay = null; renderOverview(); renderDay(); } })));
-  box.append(el("p", { class: "note", text: `昼 ○${t.d.o} △${t.d.t} ✕${t.d.x}${t.d["-"] ? ` 未${t.d["-"]}` : ""}　／　夜 ○${t.n.o} △${t.n.t} ✕${t.n.x}${t.n["-"] ? ` 未${t.n["-"]}` : ""}` }));
+  const count = (c) => `○${c.o} △${c.t} ✕${c.x}${c["-"] ? ` 未${c["-"]}` : ""}`;
+  box.append(el("p", { class: "note", text: `昼 ${count(t.d)}　／　夜 ${count(t.n)}` }));
   if (!S.data.people.length) return;
   const table = el("div", { class: "dtable" });
-  table.append(el("span", { class: "th", text: "名前" }), el("span", { class: "th", text: "昼" }), el("span", { class: "th", text: "夜" }), el("span", { class: "th tl-h" }, timeScale()));
+  table.append(el("span", { class: "th", text: "名前" }), el("span", { class: "th", text: "昼" }), el("span", { class: "th", text: "夜" }));
   for (const p of S.data.people) {
     table.append(el("span", { class: "nm" }, el("i", { class: "dot", style: { background: p.color } }), el("span", { text: p.name })));
     for (const slot of ["d", "n"]) {
-      const m = resolveMark(p, iso, slot), manual = !!(p.marks[iso] || {})[slot];
-      table.append(el("span", { class: `mk m-${m || "none"}` + (manual && p.mode === "detail" ? " manual" : ""), text: m ? MARK_TEXT[m] : "−", title: m ? "" : "未入力" }));
+      const m = resolveMark(p, iso, slot);
+      table.append(el("span", { class: `mk m-${m || "none"}`, text: m ? MARK_TEXT[m] : "−", title: m ? "" : "未入力" }));
     }
-    table.append(p.mode === "detail" && p.busy_set ? timeline(p.busy[iso] || [], p.color) : el("span", { class: "tl-none", text: p.mode === "detail" ? "予定を未共有" : "大雑把入力" }));
   }
   box.append(table);
 }
-function timeScale() { const s = el("span", { class: "scale" }); [0, 6, 12, 18, 24].forEach((h) => s.append(el("i", { style: { left: `${h / 24 * 100}%` }, text: h }))); return s; }
-function timeline(ivs, color) {
-  const bar = el("span", { class: "tl" });
-  bar.append(el("i", { class: "band", style: { left: `${SLOT_RANGE.d[0] / 14.4}%`, width: `${(SLOT_RANGE.n[1] - SLOT_RANGE.d[0]) / 14.4}%` } }));
-  for (const [s, e] of ivs) bar.append(el("i", { class: "busy", title: `${fmtHM(s)}–${fmtHM(e)}`, style: { left: `${s / 14.4}%`, width: `${Math.max(0.6, (e - s) / 14.4)}%`, background: color } }));
-  return bar;
+
+/* ---------- タイトル・概要・候補日を直す（誰でも。候補日を消すのは作った人だけ） ---------- */
+const E = { month: null, add: new Set(), rm: new Set(), dirty: false };
+function renderEdit() {
+  const ev = S.data.event, admin = !!S.keys.admin && S.data.admin;
+  if (!E.dirty) { $("eTitle").value = ev.title; $("eDesc").value = ev.description || ""; }
+  if (!E.month) { const f = dateOf(ev.first); E.month = new Date(f.getFullYear(), f.getMonth(), 1); }
+  $("eNote").textContent = admin
+    ? "足したい日をタップしてください。今の候補日（色の付いた日）をタップすると、消す日になります。もう一度タップで取り消し。"
+    : "足したい日をタップしてください（もう一度タップで取り消し）。";
+  const cand = new Set(ev.days);
+  E.redraw = renderEdit;
+  renderPicker($("eCal"), E, (iso, d, wd) => {
+    const isCand = cand.has(iso), past = iso < todayIso();
+    const st = E.rm.has(iso) ? " rm" : E.add.has(iso) ? " add" : isCand ? " on" : "";
+    return el("button", { type: "button", disabled: past && !isCand, class: "pday" + st + (wd === 0 ? " sun" : wd === 6 ? " sat" : ""),
+      "aria-label": md(iso) + (isCand ? "（候補日）" : "") + (E.add.has(iso) ? "（足す）" : "") + (E.rm.has(iso) ? "（消す）" : ""),
+      onclick: () => {
+        if (isCand) {
+          if (!admin) { setStatus("候補日を消せるのは、作った人だけです", true); return; }
+          if (E.rm.has(iso)) E.rm.delete(iso); else E.rm.add(iso);
+        } else if (E.add.has(iso)) E.add.delete(iso); else E.add.add(iso);
+        E.dirty = true; setStatus(""); renderEdit();
+      } }, String(d));
+  });
+  const parts = [];
+  if (E.add.size) parts.push(`足す：${[...E.add].sort().map(md).join("・")}`);
+  if (E.rm.size) parts.push(`消す：${[...E.rm].sort().map(md).join("・")}（その日の入力も消えます）`);
+  $("eSum").textContent = parts.join("\n");
+}
+async function onSaveEdit(ev) {
+  ev.preventDefault();
+  if (E.rm.size && !confirm(`${E.rm.size}日の候補日を消します。その日の全員の入力も見えなくなります。`)) return;
+  try {
+    const d = await api(`/m/api/event/${S.eid}/edit`, { title: $("eTitle").value, description: $("eDesc").value,
+      add_days: [...E.add], remove_days: [...E.rm], admin: S.keys.admin });
+    E.dirty = false; E.add.clear(); E.rm.clear();
+    accept(d); setStatus("保存しました");
+  } catch (e) { setStatus(e.message, true); }
 }
 
 /* ---------- 参加者 ---------- */
@@ -403,7 +488,8 @@ function renderPeople() {
       el("i", { class: "dot", style: { background: p.color } }), el("span", { class: "nm", text: p.name }),
       el("span", { class: "tag", text: p.mode === "detail" ? "詳細" : "大雑把" }),
       own ? el("span", { class: "tag own", text: "あなた" }) : el("span", { class: "lock", title: "ほかの人の入力（編集できません）", text: "🔒" }),
-      admin && !own ? el("button", { type: "button", class: "small danger", text: "削除", onclick: () => onDeletePerson(p) }) : null));
+      admin && !own ? el("button", { type: "button", class: "small danger", text: "削除", onclick: () => onDeletePerson(p) }) : null,
+      p.memo ? el("span", { class: "pmemo", text: p.memo }) : null));
   }
 }
 async function onDeletePerson(p) {
@@ -448,9 +534,14 @@ function renderEditor() {
   const p = me(), box = $("editor"); if (!p) return;
   const focusId = document.activeElement && document.activeElement.id;
   box.textContent = "";
-  const nameIn = el("input", { id: "eName", value: p.name, maxlength: 20, "aria-label": "名前" });
+  const nameIn = el("input", { id: "eName", value: p.name, "aria-label": "名前" });
   nameIn.addEventListener("change", () => saveNow({ name: nameIn.value }));
   box.append(el("div", { class: "row name-row" }, el("label", { class: "field grow" }, el("span", { text: "名前" }), nameIn)));
+  const memoIn = el("textarea", { id: "eMemo", rows: 2, placeholder: "例：21時以降なら行けます", "aria-label": "メモ" });
+  memoIn.value = S.memoDraft && S.memoDraft.pid === p.id ? S.memoDraft.text : (p.memo || "");
+  memoIn.addEventListener("input", () => { S.memoDraft = { pid: p.id, text: memoIn.value }; });
+  memoIn.addEventListener("change", () => { S.memoDraft = null; saveNow({ memo: memoIn.value }); });
+  box.append(el("label", { class: "field" }, el("span", { text: "メモ（みんなに見えます）" }), memoIn));
 
   const seg = el("div", { class: "seg two", role: "radiogroup", "aria-label": "入力のしかた" });
   for (const [mode, label, sub] of [["rough", "大雑把入力", "自分で ○△✕"], ["detail", "詳細入力", "予定から ○✕"]]) {
@@ -460,13 +551,8 @@ function renderEditor() {
   box.append(seg);
   if (p.mode === "detail") box.append(detailPanel(p));
 
-  // ペン
-  const pens = el("div", { class: "pens", role: "radiogroup", "aria-label": "ペン" });
-  for (const [k, label] of [["o", "○"], ["t", "△"], ["x", "✕"], ["clear", p.mode === "detail" ? "自動に戻す" : "消す"]]) {
-    pens.append(el("button", { type: "button", role: "radio", "aria-checked": String(S.pen === k), class: `pen pen-${k}` + (S.pen === k ? " on" : ""), onclick: () => { S.pen = k; renderEditor(); } }, label));
-  }
-  // まとめて塗る：曜日（いくつでも。選ばなければ全部の曜日）× 時間帯（昼・夜）を選び、今のペンで塗る
-  const penName = { o: "○", t: "△", x: "✕", clear: p.mode === "detail" ? "自動に戻す" : "消す" }[S.pen];
+  // まとめて選択：曜日 × 時間帯で枠を選び（自分のカレンダーに枠線で出る）、そのあと ○・△・✕・自動に戻す を押して付ける
+  const clearName = p.mode === "detail" ? "自動に戻す" : "消す";
   const wdBtns = WD.map((w, i) => el("button", { type: "button", class: "tg" + (S.bulkDays.has(i) ? " on" : "") + (i === 0 ? " sun" : i === 6 ? " sat" : ""),
     "aria-pressed": String(S.bulkDays.has(i)), onclick: () => { toggleSet(S.bulkDays, i); renderEditor(); } }, w));
   const preset = (label, list) => el("button", { type: "button", class: "small", text: label,
@@ -474,37 +560,44 @@ function renderEditor() {
   const slotBtns = ["d", "n"].map((slot) => el("button", { type: "button", class: "tg" + (S.bulkSlots.has(slot) ? " on" : ""),
     "aria-pressed": String(S.bulkSlots.has(slot)), onclick: () => { toggleSet(S.bulkSlots, slot); renderEditor(); } }, `${SLOT_TEXT[slot]}（${slot === "d" ? "10〜18時" : "18〜24時"}）`));
   const targets = bulkTargets();
+  const wdText = S.bulkDays.size === 7 ? "全部の曜日" : [...S.bulkDays].sort().map((i) => WD[i]).join("・");
   const bulk = el("div", { class: "bulk" },
-    el("p", { class: "cap", text: "まとめて塗る" }),
+    el("p", { class: "cap", text: "まとめて選択" }),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "曜日" }), el("div", { class: "tgs" }, ...wdBtns),
-      el("div", { class: "tgs" }, preset("全部", []), preset("平日", [1, 2, 3, 4, 5]), preset("土日", [0, 6]))),
+      el("div", { class: "tgs" }, preset("全部", [0, 1, 2, 3, 4, 5, 6]), preset("平日", [1, 2, 3, 4, 5]), preset("土日", [0, 6]),
+        preset("解除", []))),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "時間帯" }), el("div", { class: "tgs" }, ...slotBtns)),
-    el("div", { class: "bulk-row" },
-      el("button", { type: "button", class: "primary", disabled: !targets.length, onclick: paintBulk },
-        S.pen === "clear" ? `選んだ枠を${penName}` : `選んだ枠を ${penName} で塗る`),
-      el("span", { class: "note", text: targets.length
-        ? `${S.bulkDays.size ? [...S.bulkDays].sort().map((i) => WD[i]).join("・") : "全部の曜日"}の${[...S.bulkSlots].sort().map((x) => SLOT_TEXT[x]).join("と")}（${targets.length}枠）`
-        : "時間帯を選んでください" })));
-  box.append(el("div", { class: "penbar" }, el("p", { class: "note", text: p.mode === "detail"
-    ? "予定から ○✕ が自動で付きます。行けるか分からない枠は △ のペンでタップしてください（手で付けた印は ・ 付きで、自動の判定より優先）。"
-    : "ペンを選んで、日の「昼」「夜」をタップしてください。" }), pens));
-  box.append(bulk);   // ペンの帯（画面の上に留まる）に入れると、スマホでカレンダーが隠れるので外に置く
+    el("p", { class: "note", text: targets.length ? `${wdText}の${[...S.bulkSlots].sort().map((x) => SLOT_TEXT[x]).join("と")}を選んでいます（${targets.length}枠）`
+      : !S.bulkDays.size ? "曜日を選んでください" : "時間帯を選んでください" }),
+    el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "選んだ枠に" }),
+      el("div", { class: "tgs" }, ...[["o", "○"], ["t", "△"], ["x", "✕"], ["clear", clearName]].map(([k, label]) =>
+        el("button", { type: "button", class: `apply pen-${k}`, disabled: !targets.length, onclick: () => paintBulk(k) }, label)))));
+  box.append(el("p", { class: "note", text: p.mode === "detail"
+    ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。手で選んだ印は、自動の判定より優先されます。"
+    : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。" }));
+  box.append(bulk);
 
   // 自分のカレンダー
   const days = new Set(S.data.event.days);
   const cal = el("div", { class: "months mine" });
   for (const ym of monthsOf(S.data.event.days)) cal.append(monthGrid(ym, (iso, d, wd) => {
     if (!days.has(iso)) return el("div", { class: "cell out" }, el("span", { class: "dn", text: d }));
+    // 枠ごとのプルダウンメニュー（利用者の指定）。詳細入力では「自動」（予定から決まった ○✕）も選べる
     const halves = ["d", "n"].map((slot) => {
-      const manual = (p.marks[iso] || {})[slot], m = manual || autoMark(p, iso, slot);
-      // 「・」（手で付けた印）は、自動の判定と見分ける必要がある詳細入力のときだけ出す
-      return el("button", { type: "button", class: `paint m-${m || "none"}` + (manual && p.mode === "detail" ? " manual" : manual ? "" : m ? " auto" : ""),
-        "aria-label": `${md(iso)} ${SLOT_TEXT[slot]}：${m ? MARK_TEXT[m] : "未入力"}`, onclick: () => paint(iso, slot) },
-      el("small", { text: SLOT_TEXT[slot] }), el("b", { text: m ? MARK_TEXT[m] : "" }));
+      const manual = (p.marks[iso] || {})[slot], auto = autoMark(p, iso, slot), m = manual || auto;
+      const picked = S.bulkSlots.has(slot) && S.bulkDays.has(wd);   // まとめて選択で選んでいる枠
+      const first = p.mode === "detail" ? [["", auto ? `自動${MARK_TEXT[auto]}` : "自動"]] : [["", "−"]];
+      const sel = el("select", { class: `mark m-${m || "none"}` + (manual ? " manual" : ""), "aria-label": `${md(iso)} ${SLOT_TEXT[slot]}`,
+        onchange: (e) => setMark(iso, slot, e.target.value) },
+      ...[...first, ["o", "○"], ["t", "△"], ["x", "✕"]].map(([v, t]) => el("option", { value: v, selected: (manual || "") === v, text: t })));
+      // 見た目は印だけを出し、メニューは透明にして枠いっぱいに重ねる（狭い枠でも選んだ印が読めるように）
+      // 「manual」（太字・枠・「・」）は、自動の判定と見分ける必要がある詳細入力のときだけ付ける
+      return el("label", { class: `paint m-${m || "none"}` + (manual ? (p.mode === "detail" ? " manual" : "") : m ? " auto" : "") + (picked ? " picked" : "") },
+        el("small", { text: SLOT_TEXT[slot] }), el("b", { "aria-hidden": "true", text: m ? MARK_TEXT[m] : "−" }), sel);
     });
     return el("div", { class: "cell in" + (wd === 0 ? " sun" : wd === 6 ? " sat" : "") }, el("span", { class: "dn", text: d }), ...halves);
   }, (w, i) => el("button", { type: "button", class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : "") + (S.bulkDays.has(i) ? " on" : ""),
-    "aria-pressed": String(S.bulkDays.has(i)), title: "押すと「まとめて塗る」の曜日に選ばれます", onclick: () => { toggleSet(S.bulkDays, i); renderEditor(); } }, w)));
+    "aria-pressed": String(S.bulkDays.has(i)), title: "押すと「まとめて選択」の曜日に選ばれます", onclick: () => { toggleSet(S.bulkDays, i); renderEditor(); } }, w)));
   box.append(cal);
   if (p.mode === "detail" && Object.keys(p.marks).length) box.append(el("div", { class: "row" }, el("button", { type: "button", class: "small", text: "手で付けた印をすべて消す（自動に戻す）", onclick: () => { p.marks = {}; queueMarks(); renderEditor(); } })));
 
@@ -516,28 +609,28 @@ function renderEditor() {
   if (focusId && $(focusId)) $(focusId).focus();
 }
 
-function paint(iso, slot) {
+function setMark(iso, slot, mark) {          // 枠のメニューで選んだ印（"" は未入力、詳細入力では自動に戻す）
   const p = me(); if (!p) return;
   const row = { ...(p.marks[iso] || {}) };
-  if (S.pen === "clear") delete row[slot]; else row[slot] = S.pen;
+  if (!mark) delete row[slot]; else row[slot] = mark;
   if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
   queueMarks(); renderEditor();
 }
 function toggleSet(set, v) { if (set.has(v)) set.delete(v); else set.add(v); }
 /* まとめて塗る対象の枠：選んだ曜日（選ばなければ全部）× 選んだ時間帯 */
-function bulkTargets() {
+function bulkTargets() {                     // 選んだ曜日 × 選んだ時間帯の枠（曜日を何も選んでいなければ無し）
   const out = [];
   for (const iso of S.data.event.days) {
-    if (S.bulkDays.size && !S.bulkDays.has(dateOf(iso).getDay())) continue;
+    if (!S.bulkDays.has(dateOf(iso).getDay())) continue;
     for (const slot of ["d", "n"]) if (S.bulkSlots.has(slot)) out.push([iso, slot]);
   }
   return out;
 }
-function paintBulk() {
+function paintBulk(mark) {
   const p = me(); if (!p) return;
   for (const [iso, slot] of bulkTargets()) {
     const row = { ...(p.marks[iso] || {}) };
-    if (S.pen === "clear") delete row[slot]; else row[slot] = S.pen;
+    if (mark === "clear") delete row[slot]; else row[slot] = mark;
     if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
   }
   queueMarks(); renderEditor();
