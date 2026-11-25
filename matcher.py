@@ -41,7 +41,29 @@ MATCHER_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "matcher"
 
 # 時間帯（分）。ボットの DAY_START〜DAY_END（10〜18時）・NIGHT_START〜NIGHT_END（18〜24時）と同じ
 SLOTS = ("d", "n")                     # d＝昼、n＝夜
-SLOT_RANGE = {"d": (10 * 60, 18 * 60), "n": (18 * 60, 24 * 60)}
+SLOT_RANGE = {"d": (10 * 60, 18 * 60), "n": (18 * 60, 24 * 60)}   # 時間帯を持たない、前からある日程あわせの昼・夜
+DEFAULT_SLOTS = {"d": [10 * 60, 18 * 60], "n": [21 * 60, 24 * 60]}  # 新しく作るときの初期値（利用者の指定：昼 10〜18、夜 21〜24）
+
+
+def slot_ranges(event):
+    """その日程あわせの昼・夜の時間帯（分）。作るときに決め、あとから直せる"""
+    sl = event.get("slots") if isinstance(event, dict) else None
+    return {k: tuple(sl[k]) for k in SLOTS} if sl else dict(SLOT_RANGE)
+
+
+def clean_slots(raw):
+    """画面から来た時間帯 {"d": [開始, 終了], "n": [...]}（分。1時間きざみ）を確かめる"""
+    if not isinstance(raw, dict):
+        raise MatcherError("時間帯の形が正しくありません")
+    out = {}
+    for k, name in (("d", "昼"), ("n", "夜")):
+        v = raw.get(k)
+        if not (isinstance(v, list) and len(v) == 2 and all(type(x) is int and x % 60 == 0 and 0 <= x <= 1440 for x in v)):
+            raise MatcherError(f"{name}の時間帯の形が正しくありません")
+        if v[0] >= v[1]:
+            raise MatcherError(f"{name}の終わりは、始まりより後にしてください")
+        out[k] = [v[0], v[1]]
+    return out
 MARKS = ("o", "t", "x")                # ○・△・✕
 MODES = ("rough", "detail")            # 大雑把入力・詳細入力
 
@@ -337,31 +359,32 @@ def build_theme(palette):
 
 
 # ---------- ○△✕ の判定と集計 ----------
-def busy_mark(intervals, slot):
+def busy_mark(intervals, slot, ranges=None):
     """その日の予定（分の区間）から、時間帯の ○✕ を決める。少しでも重なれば ✕（ボットの判定と同じ）"""
-    s0, e0 = SLOT_RANGE[slot]
+    s0, e0 = (ranges or SLOT_RANGE)[slot]
     return "x" if any(s < e0 and e > s0 for s, e in intervals) else "o"
 
 
-def resolve_mark(person, day, slot):
+def resolve_mark(person, day, slot, ranges=None):
     """本人が付けた印があればそれ、詳細入力で予定を共有済みなら自動の ○✕、どちらでもなければ None（未入力）"""
     m = person.get("marks", {}).get(day, {}).get(slot)
     if m:
         return m
     if person.get("mode") == "detail" and person.get("busy_set"):
-        return busy_mark(person.get("busy", {}).get(day, []), slot)
+        return busy_mark(person.get("busy", {}).get(day, []), slot, ranges)
     return None
 
 
 def tally(event, people):
     """日・時間帯ごとの人数（o・t・x・-＝未入力）"""
     out = {}
+    ranges = slot_ranges(event)
     for day in period_days(event):
         out[day] = {}
         for slot in SLOTS:
             c = {"o": 0, "t": 0, "x": 0, "-": 0}
             for p in people:
-                c[resolve_mark(p, day, slot) or "-"] += 1
+                c[resolve_mark(p, day, slot, ranges) or "-"] += 1
             out[day][slot] = c
     return out
 
@@ -558,7 +581,7 @@ class Store:
         return {"row": row, "data": data}
 
     # --- 調整 ---
-    def create_event(self, title, first, last, palette, now=None, description=""):
+    def create_event(self, title, first, last, palette, now=None, description="", slots=None):
         with self.lock:
             self._require()
             eid = secrets.token_urlsafe(9)
@@ -566,6 +589,7 @@ class Store:
                 eid = secrets.token_urlsafe(9)
             admin = secrets.token_urlsafe(24)
             data = {"id": eid, "title": title, "description": description,
+                    "slots": slots or json.loads(json.dumps(DEFAULT_SLOTS)),
                     "first": first.isoformat(), "last": last.isoformat(),
                     "palette": palette, "admin": _hash_key(admin),
                     "created": (now or datetime.now(JST)).isoformat(timespec="seconds")}
@@ -600,6 +624,8 @@ class Store:
                 data["title"] = clean_text(changes["title"], MAX_TITLE, "タイトル")
             if "description" in changes:
                 data["description"] = clean_memo(changes["description"], MAX_DESC, "概要")
+            if "slots" in changes:                     # 昼・夜の時間帯（詳細入力の自動の ○✕ は、新しい時間帯で計算し直される）
+                data["slots"] = clean_slots(changes["slots"])
             days = set(period_days(data))
             add, remove = changes.get("add_days") or [], changes.get("remove_days") or []
             if not isinstance(add, list) or not isinstance(remove, list):
@@ -771,6 +797,17 @@ def validate_changes(event, body):
                 clean[day] = merged
         out["busy"] = clean
         out["busy_set"] = True
+    if "fixed" in body:                                # プルダウンで個別に選んだ枠（まとめて選択で変えない）
+        fixed = body["fixed"]
+        if not isinstance(fixed, dict):
+            raise MatcherError("印の形が正しくありません")
+        clean = {}
+        for day, slots in fixed.items():
+            if not isinstance(slots, dict) or any(k not in SLOTS or v is not True for k, v in slots.items()):
+                raise MatcherError("印の形が正しくありません")
+            if day in days and slots:
+                clean[day] = dict(slots)
+        out["fixed"] = clean
     return out
 
 
@@ -811,10 +848,11 @@ def public_view(event, people, viewer_admin=False):
                   "first": event["first"], "last": event["last"],
                   "days": period_days(event), "palette": event["palette"], "theme": build_theme(event["palette"])},
         "people": [{"id": p["id"], "name": p["name"], "mode": p["mode"], "color": p.get("color"), "memo": p.get("memo", ""),
-                    "marks": p.get("marks", {}), "busy": p.get("busy", {}) if p["mode"] == "detail" else {},
+                    "marks": p.get("marks", {}), "fixed": p.get("fixed", {}),
+                    "busy": p.get("busy", {}) if p["mode"] == "detail" else {},
                     "busy_set": bool(p.get("busy_set")), "updated": p.get("updated")} for p in people],
         "tally": table, "best": best_slots(event, table), "admin": bool(viewer_admin),
-        "slots": {s: list(r) for s, r in SLOT_RANGE.items()},
+        "slots": {s: list(r) for s, r in slot_ranges(event).items()},
     }
 
 
@@ -947,7 +985,10 @@ def render_png(event, people):
         yy0 += mh + GAP
     # 凡例：上＝昼、下＝夜
     ly = H - PAD - 34
-    d.text((PAD, ly), "upper 10-18 / lower 18-24", font=f_small, fill=_hex_rgb(soft))
+    rg = slot_ranges(event)
+    hh = lambda m: f"{m // 60}"
+    d.text((PAD, ly), f"upper {hh(rg['d'][0])}-{hh(rg['d'][1])} / lower {hh(rg['n'][0])}-{hh(rg['n'][1])}",
+           font=f_small, fill=_hex_rgb(soft))
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
@@ -968,11 +1009,12 @@ class Matcher:
         return self.store is not None
 
     # --- 作る（Web とスラッシュコマンドの共用） ---
-    def create(self, title, first, last, who="?", today=None, description=""):
+    def create(self, title, first, last, who="?", today=None, description="", slots=None):
         if not self.enabled:
             raise MatcherError("この機能の準備ができていません（MATCHER_SHEET_ID が未設定）", 503)
         title = clean_text(title, MAX_TITLE, "タイトル")
         description = clean_memo(description, MAX_DESC, "概要")
+        slots = clean_slots(slots) if slots is not None else None
         check_period(first, last, today)
         self.store._require()
         if not self.limiter.allow("create_ip", who, *LIMITS["create_ip"]):
@@ -980,7 +1022,7 @@ class Matcher:
         if not self.limiter.allow("create_all", "*", *LIMITS["create_all"]):
             raise MatcherError("今日はこれ以上作れません。明日もう一度試してください", 429)
         palette = make_palette(title, self.use_ai)    # 時間がかかるので、保存先の鍵（lock）の外で作る
-        event, admin = self.store.create_event(title, first, last, palette, description=description)
+        event, admin = self.store.create_event(title, first, last, palette, description=description, slots=slots)
         _log(f"調整を作りました（{(last - first).days + 1}日、配色：{palette['source']}）")
         return event, admin
 
@@ -1097,7 +1139,8 @@ class Matcher:
     def _post(self, action, body, ip):
         if action == "create":
             event, admin = self.create(body.get("title"), parse_iso_day(body.get("first")),
-                                       parse_iso_day(body.get("last")), who=ip, description=body.get("description"))
+                                       parse_iso_day(body.get("last")), who=ip, description=body.get("description"),
+                                       slots=body.get("slots"))
             return {"ok": True, "id": event["id"], "admin": admin}
         m = re.fullmatch(r"event/([A-Za-z0-9_-]{6,32})/(view|join|save|delete|remove|edit)", action)
         if not m or not self.enabled:
@@ -1127,7 +1170,7 @@ class Matcher:
             self.store.delete_event(eid, admin)
             return {"ok": True, "removed": True}
         elif verb == "edit":                           # タイトル・概要・候補日の修正（誰でも。候補日を消すのは作った人だけ）
-            changes = {k: body[k] for k in ("title", "description", "add_days", "remove_days") if k in body}
+            changes = {k: body[k] for k in ("title", "description", "slots", "add_days", "remove_days") if k in body}
             self.store.edit_event(eid, changes, admin=admin)
         event, people = self.store.get(eid)
         return public_view(event, people, self.store.is_admin(eid, admin))

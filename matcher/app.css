@@ -239,3 +239,13 @@ details.box > summary { cursor: pointer; }
 .paint.manual.m-o { background: var(--heat2); } .paint.manual.m-o b { color: var(--heat-ink2); }
 .paint:focus-within { outline: 2px solid var(--ai); outline-offset: 1px; }
 .paint::after { content: "▾"; position: absolute; right: 3px; top: 50%; transform: translateY(-50%); font-size: 9px; color: var(--ink-soft); pointer-events: none; }
+
+/* 手で選んだ枠（まとめて選択で変わらない）は太字・枠付き */
+.paint.fixed { border: 1.5px solid var(--ink-soft); background: var(--sheet); }
+.paint.fixed b { font-weight: 800; }
+.paint.fixed.m-o { background: var(--heat2); } .paint.fixed.m-o b { color: var(--heat-ink2); }
+/* 昼と夜の時間帯を選ぶ欄 */
+.slots { display: grid; gap: 6px; }
+.slot-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.slot-row .lbl { min-width: 2em; font-size: 14px; }
+.slot-row select { padding: 4px 8px; }
