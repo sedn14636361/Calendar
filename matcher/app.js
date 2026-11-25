@@ -382,7 +382,7 @@ function accept(d) {
   const ev = d.event;
   // 鍵を持っているのに、もういない参加者（削除された）は忘れる
   for (const pid of Object.keys(S.keys.people)) if (!d.people.some((p) => p.id === pid)) delete S.keys.people[pid];
-  if (!S.current || !S.keys.people[S.current]) S.current = Object.keys(S.keys.people).find((pid) => d.people.some((p) => p.id === pid)) || null;
+  if (!S.current || !d.people.some((p) => p.id === S.current)) S.current = Object.keys(S.keys.people).find((pid) => d.people.some((p) => p.id === pid)) || null;
   if (keep && me() && me().id === mine.id) Object.assign(me(), keep);
   document.title = `${ev.title} — あわせ暦`;
   $("title").textContent = ev.title;
@@ -524,11 +524,13 @@ function renderPeople() {
   $("adminRow").hidden = !admin;
   if (!S.data.people.length) ul.append(el("li", { class: "note", text: "まだいません" }));
   for (const p of S.data.people) {
+    // 誰でも、どの参加者の入力も編集・削除できる（利用者の指定）。「編集する」で「入力」の欄にその人を出す
     const own = !!S.keys.people[p.id];
-    ul.append(el("li", { class: "person" + (own ? " own" : "") },
+    ul.append(el("li", { class: "person" + (p.id === S.current && !S.joining ? " own" : "") },
       el("i", { class: "dot", style: { background: p.color } }), el("span", { class: "nm", text: p.name }),
-      own ? el("span", { class: "tag own", text: "あなた" }) : el("span", { class: "lock", title: "ほかの人の入力（編集できません）", text: "🔒" }),
-      admin && !own ? el("button", { type: "button", class: "small danger", text: "削除", onclick: () => onDeletePerson(p) }) : null,
+      own ? el("span", { class: "tag own", text: "あなた" }) : null,
+      el("button", { type: "button", class: "small", text: "編集する", onclick: () => pickPerson(p.id, true) }),
+      el("button", { type: "button", class: "small danger", text: "削除", onclick: () => onDeletePerson(p) }),
       p.memo ? el("span", { class: "pmemo", text: p.memo }) : null));
   }
 }
@@ -551,22 +553,28 @@ async function onJoin(ev) {
     const d = await api(`/m/api/event/${S.eid}/join`, { name: $("jName").value, mode, admin: S.keys.admin });
     S.keys.people[d.joined] = d.key; saveKeys(S.eid, S.keys);
     S.current = d.joined; S.joining = false; $("jName").value = "";
-    document.querySelector('input[name="jMode"][value="rough"]').checked = true;   // 「もう1人追加」のときは大雑把入力から
+    document.querySelector('input[name="jMode"][value="rough"]').checked = true;   // 次に参加する人は大雑把入力から
     accept(d); setStatus(mode === "rough" ? "参加しました。ペンを選んで、日の「昼」「夜」をタップしてください" : "参加しました。予定を読み込んでください");
   } catch (e) { setStatus(e.message, true); }
 }
 
+/* 「入力」の欄で編集する人を選ぶ。誰でも、どの参加者でも選べる（ブラウザの記録を消しても直せるように） */
+async function pickPerson(pid, scroll) {
+  if (pid !== S.current && !(await settleUnsaved())) return;
+  S.current = pid; S.joining = !pid;
+  renderMine(); renderPeople();
+  if (scroll) $("mine").scrollIntoView({ behavior: "smooth", block: "start" });
+}
 function renderMine() {
-  const ownIds = Object.keys(S.keys.people).filter((pid) => S.data.people.some((p) => p.id === pid));
-  const tabs = $("myTabs"); tabs.textContent = "";
-  if (ownIds.length > 1 || (ownIds.length && S.joining)) {
-    for (const pid of ownIds) {
-      const p = S.data.people.find((x) => x.id === pid);
-      tabs.append(el("button", { type: "button", role: "tab", "aria-selected": String(pid === S.current && !S.joining), class: "tab", text: p.name, onclick: async () => { if (pid !== S.current && !(await settleUnsaved())) return; S.current = pid; S.joining = false; renderMine(); } }));
-    }
+  const box = $("myTabs"); box.textContent = "";
+  if (S.data.people.length) {
+    const sel = el("select", { id: "whoSel", "aria-label": "編集する人", onchange: (e) => pickPerson(e.target.value || null) },
+      el("option", { value: "", selected: S.joining || !me(), text: "新しく参加する" }),
+      ...S.data.people.map((p) => el("option", { value: p.id, selected: !S.joining && p.id === S.current, text: p.name + (S.keys.people[p.id] ? "（あなた）" : "") })));
+    box.append(el("label", { class: "field who" }, el("span", { text: "編集する人（誰の入力でも直せます）" }), sel));
   }
-  const showJoin = !ownIds.length || S.joining;
-  $("joinForm").hidden = !showJoin; $("jCancel").hidden = !ownIds.length;
+  const showJoin = S.joining || !me();
+  $("joinForm").hidden = !showJoin; $("jCancel").hidden = true;
   $("editor").hidden = showJoin;
   if (!showJoin) renderEditor();
 }
@@ -596,11 +604,12 @@ function renderEditor() {
   const wdBtns = WD.map((w, i) => el("button", { type: "button", class: "tg" + (S.bulkDays.has(i) ? " on" : "") + (i === 0 ? " sun" : i === 6 ? " sat" : ""),
     "aria-pressed": String(S.bulkDays.has(i)), onclick: () => { toggleSet(S.bulkDays, i); renderEditor(); } }, w));
   // 全部・平日・土日：その曜日がすべて選ばれていれば外し、そうでなければ足す（利用者の指定）
-  const preset = (label, list) => el("button", { type: "button", class: "small" + (list.length && list.every((i) => S.bulkDays.has(i)) ? " on" : ""), text: label,
+  // 全部・平日・土日：押すと、その曜日だけが選ばれた状態にする（例：日月火 →「平日」で月火水木金）。
+  // すでにその曜日だけが選ばれているときにもう一度押すと、外す（利用者の指定）
+  const same = (list) => list.length === S.bulkDays.size && list.every((i) => S.bulkDays.has(i));
+  const preset = (label, list) => el("button", { type: "button", class: "small" + (list.length && same(list) ? " on" : ""), text: label,
     onclick: () => {
-      if (list.length && list.every((i) => S.bulkDays.has(i))) list.forEach((i) => S.bulkDays.delete(i));
-      else if (list.length) list.forEach((i) => S.bulkDays.add(i));
-      else S.bulkDays.clear();
+      S.bulkDays = list.length && !same(list) ? new Set(list) : new Set();
       renderEditor();
     } });
   const slotBtns = ["d", "n"].map((slot) => el("button", { type: "button", class: "tg" + (S.bulkSlots.has(slot) ? " on" : ""),
@@ -656,8 +665,7 @@ function renderEditor() {
     el("p", { class: "status", id: "saveState", role: "status", text: S.saving ? "保存しています…" : S.unsaved ? "保存していない変更があります" : (S.savedOnce ? "保存しました" : "") }),
     el("button", { type: "button", id: "saveBtn", class: "primary", disabled: !S.unsaved || S.saving, onclick: () => saveNow({}) }, "保存する")));
   box.append(el("div", { class: "row foot-row" },
-    el("button", { type: "button", class: "small", text: "別の端末で編集するリンクをコピー", onclick: (e) => copyText(`${location.origin}/m/${S.eid}#p=${p.id}.${S.keys.people[p.id]}`, e.currentTarget, "コピーしました（ほかの人に渡すと編集されます）") }),
-    el("button", { type: "button", class: "small", text: "もう1人追加", onclick: async () => { if (await settleUnsaved()) { S.joining = true; renderMine(); } } }),
+    el("button", { type: "button", class: "small", text: "新しく参加する", onclick: async () => { if (await settleUnsaved()) { S.joining = true; renderMine(); } } }),
     el("button", { type: "button", class: "small danger", text: "この入力を削除", onclick: () => onDeletePerson(p) })));
   if (focusId && $(focusId)) $(focusId).focus();
 }
@@ -776,10 +784,12 @@ function detailPanel(p) {
   shared.append(el("p", { class: "cap", text: p.busy_set ? `共有中の予定（${keys.length}日）` : "まだ予定を共有していません（共有するまで ○✕ は付きません）" }));
   if (keys.length) {
     const ul = el("ul", { class: "ivs" });
-    for (const iso of keys) p.busy[iso].forEach(([s, e], i) => ul.append(el("li", {}, el("span", { class: "d", text: md(iso) }),
-      el("span", { text: s === 0 && e === 1440 ? "終日" : `${fmtHM(s)}–${fmtHM(e)}` }),
-      el("button", { type: "button", class: "small", "aria-label": `${md(iso)} の予定を消す`, text: "✕", onclick: () => {
-        const b = JSON.parse(JSON.stringify(p.busy)); b[iso].splice(i, 1); if (!b[iso].length) delete b[iso]; saveNow({ busy: b }); } }))));
+    // 消すボタン（✕）は日付の左に置く（利用者の指定）
+    for (const iso of keys) p.busy[iso].forEach(([s, e], i) => ul.append(el("li", {},
+      el("button", { type: "button", class: "small del", "aria-label": `${md(iso)} の予定を消す`, text: "✕", onclick: () => {
+        const b = JSON.parse(JSON.stringify(p.busy)); b[iso].splice(i, 1); if (!b[iso].length) delete b[iso]; saveNow({ busy: b }); } }),
+      el("span", { class: "d", text: md(iso) }),
+      el("span", { text: s === 0 && e === 1440 ? "終日" : `${fmtHM(s)}–${fmtHM(e)}` }))));
     shared.append(ul);
   }
   // 手で足す

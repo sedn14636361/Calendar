@@ -2182,7 +2182,7 @@ def match_announcement(event, url, admin_url=None):
         lines += ["> " + discord.utils.escape_markdown(line) for line in head.splitlines()[:6]]
     lines += [url, "URL を開いて、名前を入れて参加してください（ボットのいないサーバーに貼っても使えます）"]
     if admin_url:                              # <> で囲み、Discord のリンクのプレビューを出さない
-        lines += [f"🔑 管理用（参加者・候補日・日程あわせの削除ができます）：<{admin_url}>"]
+        lines += [f"🔑 管理用（候補日・日程あわせの削除ができます）：<{admin_url}>"]
     return "\n".join(lines)
 
 
