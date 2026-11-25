@@ -798,12 +798,18 @@ def _draw_mark(draw, kind, cx, cy, r, color, width=3):
         draw.polygon(pts, fill=color)
 
 
-def heat_level(c, n):
-    """○を1、△を0.5として、参加者に対する割合を 0〜5 の6段階にする"""
-    if n <= 0:
+def heat_level(c, n=None):
+    """枠の濃さ（0〜5）。利用者の指定：
+       ・1人でも ✕ がいる枠、まだ誰も入力していない枠は白（0）
+       ・入力した全員が ○ の枠はいちばん濃い（5）
+       ・○ と △ だけの枠は、入力した人数に対する ○ の割合で 1〜4（全員 △ が 1、○ が多いほど濃い）
+       未入力の人は分母に入れない（入力した人の中での割合）"""
+    entered = c["o"] + c["t"] + c["x"]
+    if c["x"] > 0 or entered == 0:
         return 0
-    score = (c["o"] + 0.5 * c["t"]) / n
-    return 0 if score <= 0 else max(1, min(5, math.ceil(score * 5)))
+    if c["o"] == entered:
+        return 5
+    return 1 + min(3, int(c["o"] / entered * 4))
 
 
 def render_png(event, people):

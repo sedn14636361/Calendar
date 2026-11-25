@@ -240,13 +240,20 @@ let SLOT_RANGE = { d: [600, 1080], n: [1080, 1440] };
 const busyMark = (ivs, slot) => (ivs || []).some(([s, e]) => s < SLOT_RANGE[slot][1] && e > SLOT_RANGE[slot][0]) ? "x" : "o";
 function autoMark(p, iso, slot) { return p.mode === "detail" && p.busy_set ? busyMark(p.busy[iso], slot) : null; }
 function resolveMark(p, iso, slot) { return (p.marks[iso] || {})[slot] || autoMark(p, iso, slot); }
-function heatLevel(c, n) { if (n <= 0) return 0; const s = (c.o + 0.5 * c.t) / n; return s <= 0 ? 0 : Math.max(1, Math.min(5, Math.ceil(s * 5))); }
+/* 枠の濃さ（サーバーの heat_level と同じ）：✕ が1人でもいる・誰も入力していない → 白（0）、
+   入力した全員が ○ → いちばん濃い（5）、○ と △ だけ → 入力した人数に対する ○ の割合で 1〜4 */
+function heatLevel(c) {
+  const entered = c.o + c.t + c.x;
+  if (c.x > 0 || entered === 0) return 0;
+  if (c.o === entered) return 5;
+  return 1 + Math.min(3, Math.floor(c.o / entered * 4));
+}
 
 /* =================================================================
    調整のページ
    ================================================================= */
 const S = {
-  eid: document.body.dataset.event, data: null, keys: null, current: null, pen: "o", bulkSlot: "dn",
+  eid: document.body.dataset.event, data: null, keys: null, current: null, pen: "o", bulkDays: new Set(), bulkSlots: new Set(["d", "n"]),
   dirty: {}, saving: false, saveTimer: null, selectedDay: null, pending: null, joining: false,
 };
 
@@ -325,11 +332,11 @@ function monthsOf(days) {
   for (const iso of days) { const k = iso.slice(0, 7); if (!seen.has(k)) { seen.add(k); out.push(k); } }
   return out;
 }
-function monthGrid(ym, cellFn) {
+function monthGrid(ym, cellFn, headFn) {
   const [y, m] = ym.split("-").map(Number);
   const wrap = el("div", { class: "month" }, el("h3", { class: "mh" }, el("span", { class: "y", text: `${y}` }), el("span", { class: "m", text: `${m}月` })));
   const grid = el("div", { class: "grid" });
-  WD.forEach((w, i) => grid.append(el("div", { class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : ""), text: w })));
+  WD.forEach((w, i) => grid.append(headFn ? headFn(w, i) : el("div", { class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : ""), text: w })));
   const first = new Date(y, m - 1, 1), lastDay = new Date(y, m, 0).getDate();
   for (let i = 0; i < first.getDay(); i++) grid.append(el("div", { class: "blank" }));
   for (let d = 1; d <= lastDay; d++) grid.append(cellFn(isoOf(new Date(y, m - 1, d)), d, new Date(y, m - 1, d).getDay()));
@@ -342,7 +349,7 @@ function renderOverview() {
   for (const ym of monthsOf(S.data.event.days)) box.append(monthGrid(ym, (iso, d, wd) => {
     if (!days.has(iso)) return el("div", { class: "cell out" }, el("span", { class: "dn", text: d }));
     const halves = ["d", "n"].map((slot) => {
-      const c = S.data.tally[iso][slot], lv = heatLevel(c, n);
+      const c = S.data.tally[iso][slot], lv = heatLevel(c);
       const label = n ? (c.o === n ? `★${n}` : `○${c.o}${c.t ? ` △${c.t}` : ""}`) : "";
       return el("span", { class: `half lv${lv}` + (n && c.o === n ? " all" : ""), style: { background: `var(--heat${lv})`, color: `var(--heat-ink${lv})` }, text: label });
     });
@@ -458,14 +465,30 @@ function renderEditor() {
   for (const [k, label] of [["o", "○"], ["t", "△"], ["x", "✕"], ["clear", p.mode === "detail" ? "自動に戻す" : "消す"]]) {
     pens.append(el("button", { type: "button", role: "radio", "aria-checked": String(S.pen === k), class: `pen pen-${k}` + (S.pen === k ? " on" : ""), onclick: () => { S.pen = k; renderEditor(); } }, label));
   }
+  // まとめて塗る：曜日（いくつでも。選ばなければ全部の曜日）× 時間帯（昼・夜）を選び、今のペンで塗る
+  const penName = { o: "○", t: "△", x: "✕", clear: p.mode === "detail" ? "自動に戻す" : "消す" }[S.pen];
+  const wdBtns = WD.map((w, i) => el("button", { type: "button", class: "tg" + (S.bulkDays.has(i) ? " on" : "") + (i === 0 ? " sun" : i === 6 ? " sat" : ""),
+    "aria-pressed": String(S.bulkDays.has(i)), onclick: () => { toggleSet(S.bulkDays, i); renderEditor(); } }, w));
+  const preset = (label, list) => el("button", { type: "button", class: "small", text: label,
+    onclick: () => { S.bulkDays = new Set(list); renderEditor(); } });
+  const slotBtns = ["d", "n"].map((slot) => el("button", { type: "button", class: "tg" + (S.bulkSlots.has(slot) ? " on" : ""),
+    "aria-pressed": String(S.bulkSlots.has(slot)), onclick: () => { toggleSet(S.bulkSlots, slot); renderEditor(); } }, `${SLOT_TEXT[slot]}（${slot === "d" ? "10〜18時" : "18〜24時"}）`));
+  const targets = bulkTargets();
   const bulk = el("div", { class: "bulk" },
-    el("span", { class: "note", text: "まとめて塗る：" }),
-    el("select", { "aria-label": "時間帯", onchange: (e) => { S.bulkSlot = e.target.value; } },
-      ...[["dn", "昼と夜"], ["d", "昼だけ"], ["n", "夜だけ"]].map(([v, t]) => el("option", { value: v, selected: S.bulkSlot === v, text: t }))),
-    ...[["all", "全部の日"], ["weekday", "平日"], ["weekend", "土日"]].map(([k, t]) => el("button", { type: "button", class: "small", text: t, onclick: () => paintBulk(k) })));
+    el("p", { class: "cap", text: "まとめて塗る" }),
+    el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "曜日" }), el("div", { class: "tgs" }, ...wdBtns),
+      el("div", { class: "tgs" }, preset("全部", []), preset("平日", [1, 2, 3, 4, 5]), preset("土日", [0, 6]))),
+    el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "時間帯" }), el("div", { class: "tgs" }, ...slotBtns)),
+    el("div", { class: "bulk-row" },
+      el("button", { type: "button", class: "primary", disabled: !targets.length, onclick: paintBulk },
+        S.pen === "clear" ? `選んだ枠を${penName}` : `選んだ枠を ${penName} で塗る`),
+      el("span", { class: "note", text: targets.length
+        ? `${S.bulkDays.size ? [...S.bulkDays].sort().map((i) => WD[i]).join("・") : "全部の曜日"}の${[...S.bulkSlots].sort().map((x) => SLOT_TEXT[x]).join("と")}（${targets.length}枠）`
+        : "時間帯を選んでください" })));
   box.append(el("div", { class: "penbar" }, el("p", { class: "note", text: p.mode === "detail"
     ? "予定から ○✕ が自動で付きます。行けるか分からない枠は △ のペンでタップしてください（手で付けた印は ・ 付きで、自動の判定より優先）。"
-    : "ペンを選んで、日の「昼」「夜」をタップしてください。" }), pens, bulk));
+    : "ペンを選んで、日の「昼」「夜」をタップしてください。" }), pens));
+  box.append(bulk);   // ペンの帯（画面の上に留まる）に入れると、スマホでカレンダーが隠れるので外に置く
 
   // 自分のカレンダー
   const days = new Set(S.data.event.days);
@@ -480,7 +503,8 @@ function renderEditor() {
       el("small", { text: SLOT_TEXT[slot] }), el("b", { text: m ? MARK_TEXT[m] : "" }));
     });
     return el("div", { class: "cell in" + (wd === 0 ? " sun" : wd === 6 ? " sat" : "") }, el("span", { class: "dn", text: d }), ...halves);
-  }));
+  }, (w, i) => el("button", { type: "button", class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : "") + (S.bulkDays.has(i) ? " on" : ""),
+    "aria-pressed": String(S.bulkDays.has(i)), title: "押すと「まとめて塗る」の曜日に選ばれます", onclick: () => { toggleSet(S.bulkDays, i); renderEditor(); } }, w)));
   box.append(cal);
   if (p.mode === "detail" && Object.keys(p.marks).length) box.append(el("div", { class: "row" }, el("button", { type: "button", class: "small", text: "手で付けた印をすべて消す（自動に戻す）", onclick: () => { p.marks = {}; queueMarks(); renderEditor(); } })));
 
@@ -499,14 +523,21 @@ function paint(iso, slot) {
   if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
   queueMarks(); renderEditor();
 }
-function paintBulk(kind) {
-  const p = me(); if (!p) return;
+function toggleSet(set, v) { if (set.has(v)) set.delete(v); else set.add(v); }
+/* まとめて塗る対象の枠：選んだ曜日（選ばなければ全部）× 選んだ時間帯 */
+function bulkTargets() {
+  const out = [];
   for (const iso of S.data.event.days) {
-    const wd = dateOf(iso).getDay();
-    if (kind === "weekday" && (wd === 0 || wd === 6)) continue;
-    if (kind === "weekend" && wd !== 0 && wd !== 6) continue;
+    if (S.bulkDays.size && !S.bulkDays.has(dateOf(iso).getDay())) continue;
+    for (const slot of ["d", "n"]) if (S.bulkSlots.has(slot)) out.push([iso, slot]);
+  }
+  return out;
+}
+function paintBulk() {
+  const p = me(); if (!p) return;
+  for (const [iso, slot] of bulkTargets()) {
     const row = { ...(p.marks[iso] || {}) };
-    for (const slot of S.bulkSlot) { if (S.pen === "clear") delete row[slot]; else row[slot] = S.pen; }
+    if (S.pen === "clear") delete row[slot]; else row[slot] = S.pen;
     if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
   }
   queueMarks(); renderEditor();

@@ -156,8 +156,14 @@ button.cell { cursor: pointer; }
 .pen-clear { font-size: 13px; font-weight: 500; }
 .pen.on { background: var(--ai); color: var(--ai-ink); border-color: var(--ai); }
 .pen-o:not(.on) { color: var(--ok); } .pen-t:not(.on) { color: var(--maybe); } .pen-x:not(.on) { color: var(--ng); }
-.bulk { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.bulk select { padding: 4px 8px; font-size: 13px; }
+.bulk { display: grid; gap: 6px; border-top: 1px dashed var(--rule); padding-top: 8px; }
+.bulk-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.bulk .lbl { font-size: 12px; color: var(--ink-soft); min-width: 3.5em; }
+.tgs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tg { min-width: 40px; justify-content: center; padding: 4px 10px; }
+.tg.sun:not(.on) { color: var(--warn); } .tg.sat:not(.on) { color: var(--ai); }
+.tg.on, button.wd.on { background: var(--ai); color: var(--ai-ink); border-color: var(--ai); }
+button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; justify-content: center; border: 1px solid var(--rule); }
 .months.mine .cell { min-height: 84px; }
 .paint { display: flex; align-items: center; justify-content: space-between; gap: 2px; padding: 0 4px; border-radius: 3px; border: 1px solid var(--rule);
   background: var(--paper); min-height: 28px; font-size: 16px; line-height: 1; }
