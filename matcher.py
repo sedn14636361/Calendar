@@ -45,6 +45,13 @@ SLOT_RANGE = {"d": (10 * 60, 18 * 60), "n": (18 * 60, 24 * 60)}   # 時間帯を
 DEFAULT_SLOTS = {"d": [10 * 60, 18 * 60], "n": [21 * 60, 24 * 60]}  # 新しく作るときの初期値（利用者の指定：昼 10〜18、夜 21〜24）
 
 
+NIGHT_MAX = 27 * 60                    # 夜の終わりは 27時（翌3時）まで
+
+
+def next_day(iso):
+    return (date.fromisoformat(iso) + timedelta(days=1)).isoformat()
+
+
 def slot_ranges(event):
     """その日程あわせの昼・夜の時間帯（分）。作るときに決め、あとから直せる"""
     sl = event.get("slots") if isinstance(event, dict) else None
@@ -56,9 +63,10 @@ def clean_slots(raw):
     if not isinstance(raw, dict):
         raise MatcherError("時間帯の形が正しくありません")
     out = {}
-    for k, name in (("d", "昼"), ("n", "夜")):
+    # 夜は日をまたいで 27時（翌3時）まで選べる（利用者の指定）。昼は 0〜24時
+    for k, name, top in (("d", "昼", 1440), ("n", "夜", NIGHT_MAX)):
         v = raw.get(k)
-        if not (isinstance(v, list) and len(v) == 2 and all(type(x) is int and x % 60 == 0 and 0 <= x <= 1440 for x in v)):
+        if not (isinstance(v, list) and len(v) == 2 and all(type(x) is int and x % 60 == 0 and 0 <= x <= top for x in v)):
             raise MatcherError(f"{name}の時間帯の形が正しくありません")
         if v[0] >= v[1]:
             raise MatcherError(f"{name}の終わりは、始まりより後にしてください")
@@ -395,10 +403,15 @@ def build_theme(palette):
 
 
 # ---------- ○△✕ の判定と集計 ----------
-def busy_mark(intervals, slot, ranges=None):
-    """その日の予定（分の区間）から、時間帯の ○✕ を決める。少しでも重なれば ✕（ボットの判定と同じ）"""
+def busy_mark(intervals, slot, ranges=None, next_intervals=()):
+    """その日の予定（分の区間）から、時間帯の ○✕ を決める。少しでも重なれば ✕（ボットの判定と同じ）。
+    夜が 24時を越えるとき（例：21〜27時）は、越えた分を翌日の 0時からの予定（next_intervals）で調べる"""
     s0, e0 = (ranges or SLOT_RANGE)[slot]
-    return "x" if any(s < e0 and e > s0 for s, e in intervals) else "o"
+    if any(s < min(e0, 1440) and e > s0 for s, e in intervals):
+        return "x"
+    if e0 > 1440 and any(s < e0 - 1440 and e > max(s0 - 1440, 0) for s, e in next_intervals):
+        return "x"
+    return "o"
 
 
 def resolve_mark(person, day, slot, ranges=None):
@@ -407,7 +420,8 @@ def resolve_mark(person, day, slot, ranges=None):
     if m:
         return m
     if person.get("mode") == "detail" and person.get("busy_set"):
-        return busy_mark(person.get("busy", {}).get(day, []), slot, ranges)
+        busy = person.get("busy", {})
+        return busy_mark(busy.get(day, []), slot, ranges, busy.get(next_day(day), []))
     return None
 
 
@@ -807,6 +821,8 @@ def validate_changes(event, body):
                 clean[day] = row
         out["marks"] = clean
     if "busy" in body:
+        # 予定は、候補日と、その翌日（夜が 24時を越えるときの未明の分）を受け取る
+        busy_days = days | {next_day(d) for d in days}
         busy = body["busy"]
         if not isinstance(busy, dict):
             raise MatcherError("予定の形が正しくありません")
@@ -814,7 +830,7 @@ def validate_changes(event, body):
         for day, ivs in busy.items():
             if not isinstance(ivs, list) or len(ivs) > MAX_INTERVALS_PER_DAY:
                 raise MatcherError("予定の形が正しくないか、多すぎる予定が含まれています")
-            if day not in days:
+            if day not in busy_days:
                 continue
             got = []
             for iv in ivs:

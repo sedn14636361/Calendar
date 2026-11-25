@@ -284,6 +284,7 @@ function unionBusy(a, b) {
 /* ---------- ○△✕ の判定（サーバーの busy_mark / resolve_mark と同じ） ---------- */
 let SLOT_RANGE = { d: [600, 1080], n: [1260, 1440] };   // 日程あわせごとの昼・夜（サーバーから受け取って置き換える）
 const slotHours = (slot) => `${SLOT_RANGE[slot][0] / 60}〜${SLOT_RANGE[slot][1] / 60}時`;
+const hourText = (h) => (h > 24 ? `${h}時（翌${h - 24}時）` : `${h}時`);
 const slotLabel = (slot) => `${SLOT_TEXT[slot]}（${slotHours(slot)}）`;
 const isFixed = (p, iso, slot) => !!((p.fixed || {})[iso] || {})[slot];
 /* 昼・夜の時間帯を選ぶ欄（1時間きざみ）。box に4つのメニューを描き、値を返す関数を返す */
@@ -291,19 +292,30 @@ function slotPicker(box, slots, onChange) {
   box.textContent = "";
   const sel = (val, lo, hi, label) => {
     const s = el("select", { "aria-label": label, onchange: onChange || null },
-      ...Array.from({ length: hi - lo + 1 }, (_, i) => lo + i).map((h) => el("option", { value: h * 60, selected: h * 60 === val, text: `${h}時` })));
+      ...Array.from({ length: hi - lo + 1 }, (_, i) => lo + i).map((h) => el("option", { value: h * 60, selected: h * 60 === val, text: hourText(h) })));
     return s;
   };
   const rows = {};
   for (const slot of ["d", "n"]) {
-    const a = sel(slots[slot][0], 0, 23, `${SLOT_TEXT[slot]}の始まり`), b = sel(slots[slot][1], 1, 24, `${SLOT_TEXT[slot]}の終わり`);
+    // 夜は日をまたいで 27時（翌3時）まで選べる（利用者の指定）。昼は 0〜24時
+    const top = slot === "n" ? 27 : 24;
+    const a = sel(slots[slot][0], 0, top - 1, `${SLOT_TEXT[slot]}の始まり`), b = sel(slots[slot][1], 1, top, `${SLOT_TEXT[slot]}の終わり`);
     rows[slot] = [a, b];
     box.append(el("div", { class: "slot-row" }, el("span", { class: "lbl", text: SLOT_TEXT[slot] }), a, el("span", { text: "〜" }), b));
   }
   return () => ({ d: rows.d.map((x) => Number(x.value)), n: rows.n.map((x) => Number(x.value)) });
 }
-const busyMark = (ivs, slot) => (ivs || []).some(([s, e]) => s < SLOT_RANGE[slot][1] && e > SLOT_RANGE[slot][0]) ? "x" : "o";
-function autoMark(p, iso, slot) { return p.mode === "detail" && p.busy_set ? busyMark(p.busy[iso], slot) : null; }
+/* サーバーの busy_mark と同じ。夜が 24時を越えるとき（例：21〜27時）は、越えた分を翌日の 0時からの予定で調べる */
+function busyMark(ivs, slot, nextIvs) {
+  const [s0, e0] = SLOT_RANGE[slot];
+  if ((ivs || []).some(([s, e]) => s < Math.min(e0, 1440) && e > s0)) return "x";
+  if (e0 > 1440 && (nextIvs || []).some(([s, e]) => s < e0 - 1440 && e > Math.max(s0 - 1440, 0))) return "x";
+  return "o";
+}
+const nextIso = (iso) => isoOf(addDays(dateOf(iso), 1));
+function autoMark(p, iso, slot) { return p.mode === "detail" && p.busy_set ? busyMark(p.busy[iso], slot, p.busy[nextIso(iso)]) : null; }
+/* 予定を受け取る日：候補日と、その翌日（夜が 24時を越えるときの未明の分） */
+const busyDays = () => [...new Set(S.data.event.days.flatMap((iso) => [iso, nextIso(iso)]))].sort();
 function resolveMark(p, iso, slot) { return (p.marks[iso] || {})[slot] || autoMark(p, iso, slot); }
 /* 枠の濃さ（サーバーの heat_level と同じ）：✕ が1人でもいる・誰も入力していない → 白（0）、
    入力した全員が ○ → いちばん濃い（5）、○ と △ だけ → 入力した人数に対する ○ の割合で 1〜4 */
@@ -771,7 +783,7 @@ function detailPanel(p) {
     shared.append(ul);
   }
   // 手で足す
-  const dSel = el("select", { "aria-label": "日付" }, ...S.data.event.days.map((iso) => el("option", { value: iso, text: md(iso) })));
+  const dSel = el("select", { "aria-label": "日付" }, ...busyDays().map((iso) => el("option", { value: iso, text: md(iso) })));
   const sIn = el("input", { type: "time", value: "19:00", step: 900, "aria-label": "開始" }), eIn = el("input", { type: "time", value: "21:00", step: 900, "aria-label": "終了" });
   const allDay = el("input", { type: "checkbox", id: "dAllDay" });
   shared.append(el("div", { class: "row add-row" }, dSel, sIn, el("span", { text: "〜" }), eIn,
@@ -789,7 +801,7 @@ function detailPanel(p) {
 }
 function readEvents(text, name) {
   const { events, format } = detectAndParse(text, name);
-  S.pending = { pid: S.current, busy: busyFromEvents(events, S.data.event.days), format, count: events.length };
+  S.pending = { pid: S.current, busy: busyFromEvents(events, busyDays()), format, count: events.length };
   setStatus(""); renderEditor();
 }
 
