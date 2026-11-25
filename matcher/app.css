@@ -193,6 +193,11 @@ button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; 
 .foot { font-size: 12px; color: var(--ink-soft); }
 .foot p { margin: 0 0 4px; }
 .privacy summary { cursor: pointer; }
+/* 雰囲気の切り替え（このブラウザでの見え方） */
+.tone { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 13px; }
+.tone .lbl { color: var(--ink-soft); margin-right: 4px; }
+.tone button { font-size: 13px; padding: 2px 10px; }
+.tone button[aria-checked="true"] { background: var(--ai); color: var(--ai-ink); border-color: var(--ai); }
 .privacy ul { margin: 6px 0 0; padding-left: 1.2em; display: grid; gap: 4px; }
 
 /* 概要・メモ（改行をそのまま出す） */

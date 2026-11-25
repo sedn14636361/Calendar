@@ -58,6 +58,14 @@ def slot_ranges(event):
     return {k: tuple(sl[k]) for k in SLOTS} if sl else dict(SLOT_RANGE)
 
 
+def clean_tone(tone):
+    if tone is None:
+        return "auto"
+    if tone not in TONES:
+        raise MatcherError("雰囲気の指定が正しくありません")
+    return tone
+
+
 def clean_slots(raw):
     """画面から来た時間帯 {"d": [開始, 終了], "n": [...]}（分。1時間きざみ）を確かめる"""
     if not isinstance(raw, dict):
@@ -388,10 +396,32 @@ def ensure_contrast(fg, bgs, ratio=TEXT_MIN_CONTRAST):
     return target
 
 
-def build_theme(palette):
+TONES = ("auto", "light", "dark")      # 雰囲気：おまかせ（配色の「背景」のまま）・明るめ・暗め
+
+
+def toned_colors(colors, tone):
+    """雰囲気に合わせて、配色の「背景」（4番目の色）だけを明るく／暗くした5色を返す（色合いは保つ）。
+    明るめ：地の明るさ（相対輝度）0.80 以上、暗め：0.03 以下になるまで、白／黒へ寄せる"""
+    if tone not in ("light", "dark"):
+        return colors
+    out = [dict(c) for c in colors]
+    bg = out[3]["hex"]
+    if tone == "light":
+        src = max((c["hex"] for c in colors), key=luminance) if luminance(bg) < 0.2 else bg   # 暗い背景なら、いちばん明るい色から
+        new = next((mix(src, "#ffffff", i / 20) for i in range(21) if luminance(mix(src, "#ffffff", i / 20)) >= 0.80), "#ffffff")
+    else:
+        src = min((c["hex"] for c in colors), key=luminance) if luminance(bg) > 0.2 else bg   # 明るい背景なら、いちばん暗い色から
+        new = next((mix(src, "#000000", i / 20) for i in range(21) if luminance(mix(src, "#000000", i / 20)) <= 0.03), "#000000")
+    out[3] = {"hex": new, "name": out[3].get("name", "")}
+    return out
+
+
+def build_theme(palette, tone="auto"):
     """画面と画像で使う色をまとめて決める（CSS の変数名で返す）。
     文字の色は、置かれる地の色（paper・sheet）に対してコントラスト比 4.5 以上になるようにする"""
-    t = theme_assign(palette["colors"])
+    colors = toned_colors(palette["colors"], tone)
+    palette = {**palette, "colors": colors}
+    t = theme_assign(colors)
     bg, ink = t["bg"], t["ink"]
     dark = contrast(bg, "#000000") < contrast(bg, "#ffffff")
     # 地の色が中くらいの明るさだと、どんな文字色でも 4.5 に届かないことがある。
@@ -665,7 +695,7 @@ class Store:
         return {"row": row, "data": data}
 
     # --- 調整 ---
-    def create_event(self, title, first, last, palette, now=None, description="", slots=None):
+    def create_event(self, title, first, last, palette, now=None, description="", slots=None, tone="auto"):
         with self.lock:
             self._require()
             eid = secrets.token_urlsafe(9)
@@ -673,7 +703,7 @@ class Store:
                 eid = secrets.token_urlsafe(9)
             admin = secrets.token_urlsafe(24)
             data = {"id": eid, "title": title, "description": description,
-                    "slots": slots or json.loads(json.dumps(DEFAULT_SLOTS)),
+                    "slots": slots or json.loads(json.dumps(DEFAULT_SLOTS)), "tone": tone,
                     "first": first.isoformat(), "last": last.isoformat(),
                     "palette": palette, "admin": _hash_key(admin),
                     "created": (now or datetime.now(JST)).isoformat(timespec="seconds")}
@@ -708,6 +738,8 @@ class Store:
                 data["title"] = clean_text(changes["title"], MAX_TITLE, "タイトル")
             if "description" in changes:
                 data["description"] = clean_memo(changes["description"], MAX_DESC, "概要")
+            if "tone" in changes:                      # 雰囲気（おまかせ・明るめ・暗め）
+                data["tone"] = clean_tone(changes["tone"])
             if "slots" in changes:                     # 昼・夜の時間帯（詳細入力の自動の ○✕ は、新しい時間帯で計算し直される）
                 data["slots"] = clean_slots(changes["slots"])
             days = set(period_days(data))
@@ -920,13 +952,25 @@ LIMITS = {
 
 
 # ---------- 画面に返す形 ----------
+def content_version(event, people):
+    """日程あわせの中身が変わるたびに変わる短い印。プレビューの画像と、コピーする URL の ?v= に使う
+    （Discord はプレビューを約30分キャッシュするが、URL が変われば取り直す）"""
+    stamp = json.dumps([event.get("edited"), event.get("slots"), event.get("tone"), event.get("title")]
+                       + [p.get("updated") for p in people] + [len(people)])
+    return hashlib.sha256(stamp.encode("utf-8")).hexdigest()[:8]
+
+
 def public_view(event, people, viewer_admin=False):
     table = tally(event, people)
     return {
         "ok": True,
         "event": {"id": event["id"], "title": event["title"], "description": event.get("description", ""),
                   "first": event["first"], "last": event["last"],
-                  "days": period_days(event), "palette": event["palette"], "theme": build_theme(event["palette"])},
+                  "days": period_days(event), "palette": event["palette"], "tone": event.get("tone", "auto"),
+                  # 見る人が雰囲気を切り替えられるように、3つとも返す（theme は作った人が選んだ雰囲気）
+                  "theme": build_theme(event["palette"], event.get("tone", "auto")),
+                  "themes": {t_: build_theme(event["palette"], t_) for t_ in ("light", "dark")},
+                  "version": content_version(event, people)},
         "people": [{"id": p["id"], "name": p["name"], "mode": p["mode"], "color": p.get("color"), "memo": p.get("memo", ""),
                     "marks": p.get("marks", {}), "fixed": p.get("fixed", {}),
                     "busy": p.get("busy", {}) if p["mode"] == "detail" else {},
@@ -1010,7 +1054,7 @@ def heat_level(c, n=None):
 
 def render_png(event, people):
     from PIL import Image, ImageDraw
-    theme = build_theme(event["palette"])
+    theme = build_theme(event["palette"], event.get("tone", "auto"))
     table = tally(event, people)
     n = len(people)
     days = set(period_days(event))
@@ -1104,12 +1148,13 @@ class Matcher:
         return self.store is not None
 
     # --- 作る（Web とスラッシュコマンドの共用） ---
-    def create(self, title, first, last, who="?", today=None, description="", slots=None):
+    def create(self, title, first, last, who="?", today=None, description="", slots=None, tone="auto"):
         if not self.enabled:
             raise MatcherError("この機能の準備ができていません（MATCHER_SHEET_ID が未設定）", 503)
         title = clean_text(title, MAX_TITLE, "タイトル")
         description = clean_memo(description, MAX_DESC, "概要")
         slots = clean_slots(slots) if slots is not None else None
+        tone = clean_tone(tone)
         check_period(first, last, today)
         self.store._require()
         if not self.limiter.allow("create_ip", who, *LIMITS["create_ip"]):
@@ -1117,7 +1162,7 @@ class Matcher:
         if not self.limiter.allow("create_all", "*", *LIMITS["create_all"]):
             raise MatcherError("今日はこれ以上作れません。明日もう一度試してください", 429)
         palette = make_palette(title, self.use_ai)    # 時間がかかるので、保存先の鍵（lock）の外で作る
-        event, admin = self.store.create_event(title, first, last, palette, description=description, slots=slots)
+        event, admin = self.store.create_event(title, first, last, palette, description=description, slots=slots, tone=tone)
         _log(f"調整を作りました（{(last - first).days + 1}日、配色：{palette['source']}）")
         return event, admin
 
@@ -1189,7 +1234,7 @@ class Matcher:
         if not self.enabled:
             raise MatcherError("この機能の準備ができていません", 503)
         event, people = self.store.get(eid)
-        stamp = json.dumps([event.get("edited"), event.get("slots")] + [p.get("updated") for p in people] + [len(people)])
+        stamp = content_version(event, people)
         cached = self._img_cache.get(eid)
         if cached and cached[0] == stamp:
             png = cached[1]
@@ -1212,16 +1257,17 @@ class Matcher:
                 title = f"{event['title']} — あわせ暦"
                 base = self._base_url(headers)
                 first, last = date.fromisoformat(event["first"]), date.fromisoformat(event["last"])
+                # 期間と人数を先に、概要をあとに。Discord は説明を 350 バイト（20行）で切るので、収まるように切る
                 desc = f"{first.month}/{first.day}〜{last.month}/{last.day} の日程あわせ（{len(people)}人が入力）"
-                if event.get("description"):            # 概要の冒頭も、Discord のプレビューに出す
-                    head = event["description"].replace("\n", " ")
-                    desc = (head[:120] + "…" if len(head) > 120 else head) + "\n" + desc
+                if event.get("description"):
+                    desc = fit_bytes(desc + "\n" + event["description"].replace("\n", " "), PREVIEW_DESC_BYTES)
                 og = "\n".join([
                     f'<meta property="og:title" content="{html.escape(event["title"])}">',
                     f'<meta property="og:description" content="{html.escape(desc)}">',
                     f'<meta property="og:type" content="website">',
                     f'<meta property="og:url" content="{html.escape(self.url_for(eid, base))}">',
-                    f'<meta property="og:image" content="{html.escape(self.url_for(eid, base))}/image.png">',
+                    # 中身が変わるたびに画像の URL も変える（古い画像が使い回されないように）
+                    f'<meta property="og:image" content="{html.escape(self.url_for(eid, base))}/image.png?v={content_version(event, people)}">',
                     '<meta name="twitter:card" content="summary_large_image">',
                     f'<meta name="theme-color" content="{event["palette"]["colors"][0]["hex"]}">',
                 ])
@@ -1237,7 +1283,7 @@ class Matcher:
         if action == "create":
             event, admin = self.create(body.get("title"), parse_iso_day(body.get("first")),
                                        parse_iso_day(body.get("last")), who=ip, description=body.get("description"),
-                                       slots=body.get("slots"))
+                                       slots=body.get("slots"), tone=body.get("tone") or "auto")
             return {"ok": True, "id": event["id"], "admin": admin}
         m = re.fullmatch(r"event/([A-Za-z0-9_-]{6,32})/(view|join|save|delete|remove|edit)", action)
         if not m or not self.enabled:
@@ -1267,10 +1313,25 @@ class Matcher:
             self.store.delete_event(eid, admin)
             return {"ok": True, "removed": True}
         elif verb == "edit":                           # タイトル・概要・候補日の修正（誰でも。候補日を消すのは作った人だけ）
-            changes = {k: body[k] for k in ("title", "description", "slots", "add_days", "remove_days") if k in body}
+            changes = {k: body[k] for k in ("title", "description", "slots", "tone", "add_days", "remove_days") if k in body}
             self.store.edit_event(eid, changes, admin=admin)
         event, people = self.store.get(eid)
         return public_view(event, people, self.store.is_admin(eid, admin))
+
+
+PREVIEW_DESC_BYTES = 350                # Discord のプレビューの説明の上限（公式資料：350 bytes, 20 lines）
+
+
+def fit_bytes(text, limit):
+    """UTF-8 で limit バイトに収まるように、文字の途中で切らずに縮める（切ったら … を付ける）"""
+    if len(text.encode("utf-8")) <= limit:
+        return text
+    out = ""
+    for ch in text:
+        if len((out + ch + "…").encode("utf-8")) > limit:
+            break
+        out += ch
+    return out + "…"
 
 
 def _json(obj):

@@ -495,7 +495,7 @@ async function makeMatch() {
   render();
   setStatus("作っています…（配色を作るので、30秒ほどかかることがあります）");
   const req = api("api/match", { session: S.session, first: F.start, last: F.end,
-    title: $("match-title").value, description: $("match-desc").value, slots: matchSlots() });
+    title: $("match-title").value, description: $("match-desc").value, slots: matchSlots(), tone: $("match-tone").value });
   const clip = clipboardWithPromise(() => req.then((j) => j.url));   // 押したその場でコピーを始める（iPhone 向け）
   let j;
   try {

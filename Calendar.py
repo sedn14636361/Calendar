@@ -2758,7 +2758,8 @@ async def activity_match(session_token, body, now=None):
         # 配色（ことばパレット）とスプレッドシートへの保存は時間がかかるので、ボットの処理を止めないよう別のスレッドで
         event, admin = await asyncio.to_thread(
             lambda: MATCHER.create(body.get("title"), first, last, f"discord:{user_id}",
-                                   description=body.get("description"), slots=body.get("slots")))
+                                   description=body.get("description"), slots=body.get("slots"),
+                                   tone=body.get("tone") or "auto"))
     except matcher.MatcherError as e:
         with _activity_lock:
             session["used"] = False
