@@ -443,7 +443,11 @@ const SLOT_DEFAULT = { "slot-d-start": 10, "slot-d-end": 18, "slot-n-start": 21,
 function fillSlotSelects() {
   for (const [id, def] of Object.entries(SLOT_DEFAULT)) {
     const s = $(id), end = id.endsWith("end");
-    for (let h = end ? 1 : 0; h <= (end ? 24 : 23); h++) s.append(new Option(`${h}時`, String(h * 60), false, h === def));
+    // 夜は日をまたいで 27時（翌3時）まで選べる（利用者の指定）。昼は 0〜24時
+    const top = id.startsWith("slot-n") ? 27 : 24;
+    for (let h = end ? 1 : 0; h <= (end ? top : top - 1); h++) {
+      s.append(new Option(h > 24 ? `${h}時（翌${h - 24}時）` : `${h}時`, String(h * 60), false, h === def));
+    }
     s.addEventListener("change", render);
   }
 }
