@@ -326,6 +326,42 @@ def theme_assign(colors):
 
 
 HEAT_STEPS = (0, 0.18, 0.36, 0.54, 0.72, 0.9)
+HEAT_MIN_SPREAD = 110                  # 予定の枠の色の、R・G・B の最大と最小の差の下限（0〜255。灰色に近いと小さい）
+
+
+def rgb_spread(h):
+    """RGB の偏り（R・G・B のうち最大と最小の差）。灰色は 0、原色に近いほど大きい"""
+    r, g, b = _rgb(h)
+    return max(r, g, b) - min(r, g, b)
+
+
+def heat_base(colors, sheet):
+    """みんなの空きの枠に付ける色。5色のうち RGB の偏りが最も大きい色を選び（利用者の指定）、
+    それでも灰色に近ければ、色合いを保ったまま彩度を上げる。いちばん濃い段階（地と 9:1 で混ぜた色）が
+    地とコントラスト比 3 以上になるよう、明るさも整える"""
+    import colorsys
+    base = max((c["hex"] for c in colors), key=lambda h: (rgb_spread(h), contrast(h, sheet)))
+    r, g, b = (v / 255 for v in _rgb(base))
+    hue, light, sat = colorsys.rgb_to_hls(r, g, b)
+
+    def to_hex(hh, ll, ss):
+        return "#" + "".join(f"{round(v * 255):02x}" for v in colorsys.hls_to_rgb(hh, ll, ss))
+
+    if rgb_spread(base) < HEAT_MIN_SPREAD:
+        light = min(max(light, 0.35), 0.6)
+        for s_ in [x / 100 for x in range(int(sat * 100), 101, 2)]:
+            if rgb_spread(to_hex(hue, light, s_)) >= HEAT_MIN_SPREAD:
+                sat = s_
+                break
+        else:
+            sat = 1.0
+        base = to_hex(hue, light, sat)
+    for _ in range(40):                        # 濃い段階が地に埋もれないよう、地と反対の向きに明るさを動かす
+        if contrast(mix(sheet, base, HEAT_STEPS[-1]), sheet) >= 3:
+            break
+        light = max(0.05, light - 0.02) if luminance(sheet) > 0.3 else min(0.95, light + 0.02)
+        base = to_hex(hue, light, sat)
+    return base
 
 
 def build_theme(palette):
@@ -344,7 +380,7 @@ def build_theme(palette):
     def readable(h, fallback):
         return h if contrast(h, sheet) >= 3 else fallback
 
-    heat = [mix(sheet, t["btn"], s) for s in HEAT_STEPS]
+    heat = [mix(sheet, heat_base(palette["colors"], sheet), s) for s in HEAT_STEPS]
     return {
         "--paper": bg, "--sheet": sheet, "--ink": ink, "--ink-soft": ink_soft, "--rule": mix(ink, bg, 0.8),
         "--ai": t["btn"], "--ai-ink": text_on(t["btn"]), "--ai-edge": edge(t["btn"]),
