@@ -1,4 +1,5 @@
-// カレンダー画面（Discord のアクティビティ）。/add で開くと予定の追加、/date で開くと空き日の出力。
+// カレンダー画面（Discord のアクティビティ）。/add で開くと予定の追加、/date で開くと空き日の出力、
+// /match で開くと日程あわせ（あわせ暦）を作る画面（範囲のタップは /date と同じ）。
 // どちらの画面かはボットが決める（/add・/date を送ったときの記録。api/start の mode）。
 // 予定の名前など、外から来た文字はすべて textContent で入れる（HTML として解釈させない）。
 // 判定はボット側でも必ずやり直すので、ここでの検査は使いやすさのためだけ。
@@ -27,7 +28,7 @@ const weekStart = (d) => addDays(d, -d.getDay());   // 日曜はじまり
 const allDayTime = () => ({ allDay: true, start: null, end: null });   // 日ごとに指定の、日の初めの状態（終日）
 
 const S = {
-  kind: "add",                 // "add"＝予定の追加、"date"＝空き日の出力
+  kind: "add",                 // "add"＝予定の追加、"date"＝空き日の出力、"match"＝日程あわせを作る
   session: null, calendars: [], today: null, maxDays: 31,
   month: null,                 // その月の1日
   week: null,                  // 週表示の日曜
@@ -160,7 +161,7 @@ function renderMonth() {
     if (d.getDay() === 0) b.classList.add("sun");
     if (d.getDay() === 6) b.classList.add("sat");
     let label = md(d);
-    if (S.kind === "date") {
+    if (S.kind === "date" || S.kind === "match") {   // 範囲をタップで選ぶ画面
       const st = freeState(key);
       if (st) b.classList.add(st);
       if (key === F.start || key === F.end) b.classList.add("edge");
@@ -179,7 +180,7 @@ function renderMonth() {
     const marks = el("span", "marks");
     for (const e of (S.events.get(key) || []).slice(0, 4)) marks.append(el("span", e.all_day ? "mark all" : "mark"));
     b.append(marks);
-    b.addEventListener("click", () => (S.kind === "date" ? tapFree(key) : toggleDay(key)));
+    b.addEventListener("click", () => (S.kind === "date" || S.kind === "match" ? tapFree(key) : toggleDay(key)));
     grid.append(b);
   }
 }
@@ -216,6 +217,7 @@ function tapRange(key) {
   }
 }
 function tapFree(key) {
+  if (M.done) return;
   setStatus("");
   if (F.pick === "add") {
     if (F.skip.has(key)) {                            // 出力しないにしていた日：出力に戻す
@@ -432,6 +434,73 @@ async function runFree() {
   F.busy = false;
   render();
   $("free-result").scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+// ---------- 日程あわせを作る画面（/match） ----------
+const M = { busy: false, done: false, maxDays: 120 };
+function rangeHint() {
+  return F.start === null
+    ? "開始日をタップし、続けて終了日をタップしてください。月をまたぐときは ‹ › で月を移ってからタップします。"
+    : F.end === null
+      ? "終了日をタップしてください。同じ日をもう一度タップすると1日だけになります。"
+      : "範囲より後の日をタップすると範囲が伸び、前の日をタップすると開始日が移ります。範囲の中の日をタップすると、近い方の端がそこへ動きます。";
+}
+function matchValid() {
+  if (F.start === null) return "カレンダーで開始日をタップしてください";
+  if (F.end === null) return "終了日をタップしてください（同じ日をもう一度タップすると1日だけ）";
+  if (dayDiff(F.start, F.end) + 1 > M.maxDays) return "期間が長すぎます。短くしてください";
+  if (F.end < iso(S.today)) return "終了日が過ぎています";
+  if (!$("match-title").value.trim()) return "タイトルを入れてください";
+  return null;
+}
+function renderMatch() {
+  $("month-hint").textContent = rangeHint();
+  $("reset").disabled = F.start === null || M.done;
+  $("reset-menu").hidden = true;
+  const range = F.start === null ? "日程が未選択"
+    : F.end === null ? `${mdk(F.start)}〜（終了日をタップ）` : `${mdk(F.start)}〜${mdk(F.end)}（${dayDiff(F.start, F.end) + 1}日）`;
+  const problem = M.done ? null : matchValid();
+  $("make-summary").textContent = range + (problem ? `\n${problem}` : "");
+  $("make").disabled = !!problem || M.busy || M.done;
+  $("make").textContent = M.busy ? "作っています…" : "作る";
+}
+function setShareStatus(ok) {
+  const st = $("share-status");
+  st.classList.toggle("ok", ok);
+  st.classList.toggle("ng", !ok);
+  st.textContent = ok ? "📋 クリップボードにコピーしました"
+    : "自動でコピーできませんでした。「コピーする」を押すか、URL を長押ししてコピーしてください";
+}
+async function makeMatch() {
+  if (matchValid() || M.busy || M.done) return;
+  M.busy = true;
+  render();
+  setStatus("作っています…（配色を作るので、30秒ほどかかることがあります）");
+  const req = api("api/match", { session: S.session, first: F.start, last: F.end,
+    title: $("match-title").value, description: $("match-desc").value });
+  const clip = clipboardWithPromise(() => req.then((j) => j.url));   // 押したその場でコピーを始める（iPhone 向け）
+  let j;
+  try {
+    j = await req;
+  } catch (e) {
+    setStatus(e.message, true);
+    M.busy = false;
+    render();
+    return;
+  }
+  M.busy = false; M.done = true;
+  $("match-title").readOnly = true; $("match-desc").readOnly = true;
+  $("match-result").hidden = false;
+  $("share-url").value = j.url;
+  $("admin-url").value = j.admin_url;
+  let ok = await clip;
+  if (!ok) ok = await copyText(j.url);
+  setShareStatus(ok);
+  const head = ok ? "作りました。共有用の URL をコピーしました" : "作りました（URL のコピーは手で行ってください）";
+  const trouble = j.posted ? [] : ["チャンネルへの投稿に失敗しました。ボットの「メッセージを送信」の権限を確認してください"];
+  setStatus([head, ...trouble].join("\n"), !ok || trouble.length > 0);
+  render();
+  $("match-result").scrollIntoView({ block: "start", behavior: "smooth" });
 }
 
 // ---------- 日ごとの一覧 ----------
@@ -717,6 +786,7 @@ function renderSummary() {
 function render() {
   renderMonth();
   if (S.kind === "date") { renderFree(); return; }
+  if (S.kind === "match") { renderMatch(); return; }
   $("apply-same").setAttribute("aria-checked", String(S.mode === "same"));
   $("apply-each").setAttribute("aria-checked", String(S.mode === "each"));
   $("same-box").hidden = S.mode !== "same";
@@ -786,9 +856,10 @@ function setApply(mode) {
 // キーボードは画面の下から4〜5割ほどを覆うので、入力中は欄を画面の上から2割の所まで動かし、下の「追加する」バーを隠す
 const TOUCH = new URLSearchParams(location.search).get("platform") === "mobile"
   || (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+const TYPING_IDS = ["name", "match-title", "match-desc"];
 function keepFieldVisible() {
-  const input = $("name");
-  if (document.activeElement !== input) return;
+  const input = document.activeElement;
+  if (!input || !TYPING_IDS.includes(input.id)) return;
   const vv = window.visualViewport;          // キーボードの分だけ小さくなる端末では、見えている範囲に合わせる
   const viewTop = vv ? vv.offsetTop : 0;
   const viewH = vv ? Math.min(vv.height, window.innerHeight) : window.innerHeight;
@@ -797,7 +868,10 @@ function keepFieldVisible() {
 }
 function wireTyping() {
   if (!TOUCH) return;                        // パソコンではキーボードが画面を覆わないので何もしない
-  const input = $("name");
+  for (const id of TYPING_IDS) wireTypingOn($(id));
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", keepFieldVisible);
+}
+function wireTypingOn(input) {
   input.addEventListener("focus", () => {
     document.body.classList.add("typing");   // バーを隠し、下に余白を足す（一番下の欄でも上まで動かせるように）
     requestAnimationFrame(keepFieldVisible);
@@ -805,10 +879,10 @@ function wireTyping() {
     setTimeout(keepFieldVisible, 700);
   });
   input.addEventListener("blur", () => document.body.classList.remove("typing"));
+  if (input.tagName === "TEXTAREA") return;   // 概要は改行を入れられるようにする
   input.addEventListener("keydown", (e) => {   // 「完了」でキーボードを閉じる。日本語の変換を確定する Enter では閉じない
     if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) input.blur();
   });
-  if (window.visualViewport) window.visualViewport.addEventListener("resize", keepFieldVisible);
 }
 function wire() {
   wireTyping();
@@ -838,7 +912,10 @@ function wire() {
     F.pick = "skip"; setStatus(""); render();
   });
   // リセット：押すと「範囲」「個別に選んだ日」「すべて」を選べる
-  $("reset").addEventListener("click", () => { F.resetOpen = !F.resetOpen; render(); });
+  $("reset").addEventListener("click", () => {
+    if (S.kind === "match") { F.start = F.end = null; setStatus("日程をリセットしました"); render(); return; }   // 日程あわせは範囲だけなので、すぐ消す
+    F.resetOpen = !F.resetOpen; render();
+  });
   const resetDone = (what) => { F.resetOpen = false; setStatus(`${what}をリセットしました`); render(); };
   $("reset-range").addEventListener("click", () => { F.start = F.end = null; pruneSkip(); resetDone("範囲"); });
   $("reset-days").addEventListener("click", () => { F.add.clear(); F.skip.clear(); resetDone("個別の選択（出力する日・出力しない日）"); });
@@ -846,6 +923,19 @@ function wire() {
     F.start = F.end = null; F.add.clear(); F.skip.clear(); F.pick = "range"; resetDone("範囲と個別に選んだ日");
   });
   $("run").addEventListener("click", runFree);
+  // 日程あわせの画面
+  $("match-title").addEventListener("input", render);
+  $("make").addEventListener("click", makeMatch);
+  for (const [btn, box, setter] of [["copy-share", "share-url", setShareStatus], ["copy-admin", "admin-url", null]]) {
+    $(btn).addEventListener("click", async () => {
+      const text = $(box).value;
+      if (!text) return;
+      const ok = await copyText(text);
+      if (setter) setter(ok);
+      else setStatus(ok ? "作った人用のリンクをコピーしました" : "自動でコピーできませんでした。リンクを長押ししてコピーしてください", !ok);
+      if (!ok) { const ta = $(box); ta.focus(); ta.select(); }
+    });
+  }
   $("copy").addEventListener("click", async () => {
     const text = $("free-text").value;
     if (!text) return;
@@ -854,14 +944,17 @@ function wire() {
     if (!ok) { const ta = $("free-text"); ta.focus(); ta.select(); }
   });
 }
-function setupKind() {                      // どちらの画面か（api/start の mode）に合わせて、部品を出し分ける
-  const date = S.kind === "date";
-  const title = date ? "空いている日を調べる" : "予定を追加";
+function setupKind() {                      // どの画面か（api/start の mode）に合わせて、部品を出し分ける
+  const date = S.kind === "date", match = S.kind === "match";
+  const title = date ? "空いている日を調べる" : match ? "日程あわせを作る" : "予定を追加";
   $("title").textContent = title;
   document.title = title;
-  for (const id of ["pick-box", "range-tools", "cond-card", "run-box"]) $(id).hidden = !date;
-  document.body.classList.toggle("free", date);
-  for (const id of ["time-card", "form-card", "add"]) $(id).hidden = date;
+  for (const id of ["pick-box", "cond-card", "run-box"]) $(id).hidden = !date;
+  $("range-tools").hidden = !(date || match);
+  $("reset").textContent = match ? "日程をリセット" : "リセット";
+  for (const id of ["match-card", "make-box"]) $(id).hidden = !match;
+  document.body.classList.toggle("free", date || match);
+  for (const id of ["time-card", "form-card", "add"]) $(id).hidden = date || match;
 }
 
 async function main() {
@@ -881,16 +974,17 @@ async function main() {
   const st = await api("api/start", { code });
   await sdk.commands.authenticate({ access_token: st.access_token });
   S.session = st.session;
-  S.kind = st.mode === "date" ? "date" : "add";
+  S.kind = st.mode === "date" || st.mode === "match" ? st.mode : "add";
   setupKind();
   S.today = fromIso(st.today);
   S.maxDays = st.max_days;
+  M.maxDays = st.match_max_days || M.maxDays;
   S.month = new Date(S.today.getFullYear(), S.today.getMonth(), 1);
   S.week = weekStart(S.today);
   const cal = $("calendar");
   for (const c of st.calendars) cal.append(new Option(c.label, c.value));
   $("editor").hidden = false;
-  $("bar").hidden = S.kind === "date";       // /date の「出力する」は下のバーではなく、結果の欄の上に置く
+  $("bar").hidden = S.kind !== "add";        // /date の「出力する」と /match の「作る」は、下のバーではなく欄の近くに置く
   setStatus("");
   await refreshData();
 }

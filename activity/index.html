@@ -52,6 +52,30 @@
       <div id="fmt-btns" class="choices c3" role="radiogroup" aria-label="出力方式"></div>
     </div>
 
+    <!-- 日程あわせを作る（/match）：タイトル・概要。日程は上のカレンダーで開始日→終了日をタップ -->
+    <div id="match-card" class="card form" hidden>
+      <label class="field">タイトル
+        <input id="match-title" type="text" autocomplete="off" enterkeyhint="next" placeholder="例：雪山の山荘殺人事件">
+      </label>
+      <label class="field">概要
+        <textarea id="match-desc" class="free-text" rows="4" placeholder="例：推定4時間／ボイスセッション"></textarea>
+      </label>
+    </div>
+    <div id="make-box" class="run-box" hidden>
+      <p id="make-summary" class="summary"></p>
+      <button type="button" id="make" class="primary" disabled>作る</button>
+    </div>
+    <div id="match-result" class="card" hidden>
+      <h2>共有用の URL</h2>
+      <p id="share-status" class="copy-status" role="status"></p>
+      <textarea id="share-url" class="free-text" readonly rows="2" aria-label="共有用の URL"></textarea>
+      <button type="button" id="copy-share" class="secondary">コピーする</button>
+      <h2>作った人用のリンク</h2>
+      <p class="hint">参加者の削除や候補日の削除ができるリンクです。ほかの人に渡さないでください。</p>
+      <textarea id="admin-url" class="free-text" readonly rows="2" aria-label="作った人用のリンク"></textarea>
+      <button type="button" id="copy-admin" class="secondary">コピーする</button>
+    </div>
+
     <!-- 出力のボタンは、画面の下に固定せず、結果の欄のすぐ上に置く -->
     <div id="run-box" class="run-box" hidden>
       <p id="free-summary" class="summary"></p>

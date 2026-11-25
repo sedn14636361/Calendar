@@ -16,6 +16,7 @@
     <p class="brand"><a href="/m">あわせ暦</a></p>
     <h1 id="title">あわせ暦</h1>
     <p class="lead" id="lead">URL を送るだけで、みんなの空いている日をカレンダーで見比べられる日程あわせです。</p>
+    <p class="desc" id="desc" hidden></p>
     <div class="palette" id="palette" hidden></div>
   </header>
 
@@ -25,13 +26,16 @@
   <section id="create" hidden>
     <form class="box" id="createForm">
       <h2 class="cap">新しい日程あわせを作る</h2>
-      <label class="field"><span>シナリオ名</span>
-        <input id="cTitle" maxlength="60" required placeholder="例：雪山の山荘殺人事件" autocomplete="off"></label>
-      <div class="row">
-        <label class="field"><span>開始日</span><input id="cFirst" type="date" required></label>
-        <label class="field"><span>終了日</span><input id="cLast" type="date" required></label>
+      <label class="field"><span>タイトル</span>
+        <input id="cTitle" required placeholder="例：雪山の山荘殺人事件" autocomplete="off"></label>
+      <label class="field"><span>概要</span>
+        <textarea id="cDesc" rows="3" placeholder="例：推定4時間／ボイスセッション"></textarea></label>
+      <div class="field"><span>日程</span>
+        <p class="note">開始日をタップし、続けて終了日をタップしてください。</p>
+        <div id="cCal" class="picker"></div>
+        <p class="pick-sum" id="cSum"></p>
       </div>
-      <p class="note">期間は62日まで。シナリオ名から「ことばパレット」で配色を作ります（そのためにシナリオ名だけを送ります）。</p>
+      <p class="note">タイトルから「ことばパレット」で配色を作ります（そのためにタイトルだけを送ります）。</p>
       <div class="row"><button class="primary" id="cGo" type="submit">作る</button></div>
     </form>
     <section class="box" id="history" hidden>
@@ -56,8 +60,7 @@
           <a class="btn hov" id="saveImg" download>画像を保存</a>
         </div>
       </div>
-      <p class="legend"><span class="lg-half">上＝昼（10〜18時）</span><span class="lg-half">下＝夜（18〜24時）</span>
-        <span>✕ がある枠は白・入力した人の ○ が多いほど濃い</span><span>★＝全員 ○</span></p>
+      <p class="legend"><span class="lg-half">上＝昼（10〜18時）</span><span class="lg-half">下＝夜（18〜24時）</span></p>
       <div id="overview" class="months"></div>
       <section id="day" class="day" hidden aria-live="polite"></section>
     </section>
@@ -66,7 +69,7 @@
       <h2 class="cap">あなたの入力</h2>
       <div class="tabs" id="myTabs" role="tablist"></div>
       <form id="joinForm" class="join">
-        <label class="field"><span>名前</span><input id="jName" maxlength="20" required autocomplete="nickname" placeholder="例：たなか"></label>
+        <label class="field"><span>名前</span><input id="jName" required autocomplete="nickname" placeholder="例：たなか"></label>
         <fieldset class="field"><legend>入力のしかた</legend>
           <div class="seg">
             <label><input type="radio" name="jMode" value="rough" checked><span>大雑把入力<small>日ごとに ○△✕ を付ける</small></span></label>
@@ -79,6 +82,20 @@
       <div id="editor" hidden></div>
     </section>
 
+    <details class="box" id="editBox">
+      <summary class="cap">タイトル・概要・候補日を直す</summary>
+      <form id="editForm" class="edit">
+        <label class="field"><span>タイトル</span><input id="eTitle" required autocomplete="off"></label>
+        <label class="field"><span>概要</span><textarea id="eDesc" rows="3"></textarea></label>
+        <div class="field"><span>候補日を足す</span>
+          <p class="note" id="eNote">足したい日をタップしてください（もう一度タップで取り消し）。</p>
+          <div id="eCal" class="picker"></div>
+          <p class="pick-sum" id="eSum"></p>
+        </div>
+        <div class="row"><button class="primary" type="submit" id="eSave">保存する</button><button type="button" id="eCancel">元に戻す</button></div>
+      </form>
+    </details>
+
     <section class="box">
       <h2 class="cap">参加者</h2>
       <ul class="people" id="people"></ul>
@@ -90,7 +107,7 @@
 
   <footer class="foot">
     <p>予定の名前はこのページの外に出ません。詳細入力では、読み込んだ予定を時間だけにしてから送ります。</p>
-    <p>編集できるのは、その参加者を追加したブラウザと、日程あわせを作った人だけです。期間の最終日から90日たつと自動で消えます。</p>
+    <p>各自の ○△✕ とメモを編集できるのは、その参加者を追加したブラウザと、日程あわせを作った人だけです。最後の候補日から90日たつと自動で消えます。</p>
   </footer>
 </div>
 <script src="/m/static/app.js?v={{VER_JS}}"></script>

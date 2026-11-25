@@ -45,10 +45,13 @@ SLOT_RANGE = {"d": (10 * 60, 18 * 60), "n": (18 * 60, 24 * 60)}
 MARKS = ("o", "t", "x")                # ○・△・✕
 MODES = ("rough", "detail")            # 大雑把入力・詳細入力
 
-MAX_DAYS = 62                          # 1つの調整の期間の上限（あわせ暦と同じくおよそ2か月）
+# 文字数・日数の上限は、スプレッドシートの1マス（50,000 文字）に収めるためだけのもの。画面には書かない（利用者の指定）
+MAX_DAYS = 120                         # 1つの調整の候補日の数（作るときの期間も、あとから足した日も含めて）
 MAX_PEOPLE = 50
-MAX_TITLE = 60
-MAX_NAME = 20
+MAX_TITLE = 100
+MAX_DESC = 2000                        # 概要
+MAX_MEMO = 300                         # 参加者ごとのメモ
+MAX_NAME = 30
 MAX_INTERVALS_PER_DAY = 48
 MAX_RECORD_CHARS = 45000               # スプレッドシートの1マスは 50,000 文字まで。余裕を持たせる
 MAX_BODY = 192 * 1024                  # 画面から受け取る中身の上限
@@ -113,7 +116,7 @@ def check_period(first, last, today=None):
     if last < first:
         raise MatcherError("終了日が開始日より前になっています")
     if (last - first).days + 1 > MAX_DAYS:
-        raise MatcherError(f"期間は {MAX_DAYS} 日までにしてください")
+        raise MatcherError("期間が長すぎます。短くしてください")
     if last < today:
         raise MatcherError("終了日が過ぎています")
     if first > today + timedelta(days=730):
@@ -121,9 +124,25 @@ def check_period(first, last, today=None):
 
 
 def period_days(event):
+    """候補日の一覧（"YYYY-MM-DD" の昇順）。あとから日を足した調整は days に持つ。無ければ first〜last の毎日"""
+    if event.get("days"):
+        return list(event["days"])
     first = date.fromisoformat(event["first"])
     last = date.fromisoformat(event["last"])
     return [(first + timedelta(days=i)).isoformat() for i in range((last - first).days + 1)]
+
+
+def clean_memo(s, limit, what):
+    """空でもよい文章（概要・メモ）。改行は残し、制御文字は消す"""
+    if s is None:
+        return ""
+    if not isinstance(s, str):
+        raise MatcherError(f"{what}の形が正しくありません")
+    s = re.sub(r"\r\n?", "\n", s)
+    s = re.sub(r"[\x00-\x09\x0b-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069]", "", s).strip()
+    if len(s) > limit:
+        raise MatcherError(f"{what}が長すぎます。短くしてください")
+    return s
 
 
 # ---------- 文字の検査 ----------
@@ -137,7 +156,7 @@ def clean_text(s, limit, what):
     if not s:
         raise MatcherError(f"{what}を入れてください")
     if len(s) > limit:
-        raise MatcherError(f"{what}は {limit} 文字までにしてください")
+        raise MatcherError(f"{what}が長すぎます。短くしてください")
     return s
 
 
@@ -539,14 +558,15 @@ class Store:
         return {"row": row, "data": data}
 
     # --- 調整 ---
-    def create_event(self, title, first, last, palette, now=None):
+    def create_event(self, title, first, last, palette, now=None, description=""):
         with self.lock:
             self._require()
             eid = secrets.token_urlsafe(9)
             while eid in self.events:
                 eid = secrets.token_urlsafe(9)
             admin = secrets.token_urlsafe(24)
-            data = {"id": eid, "title": title, "first": first.isoformat(), "last": last.isoformat(),
+            data = {"id": eid, "title": title, "description": description,
+                    "first": first.isoformat(), "last": last.isoformat(),
                     "palette": palette, "admin": _hash_key(admin),
                     "created": (now or datetime.now(JST)).isoformat(timespec="seconds")}
             self.events[eid] = self._write(None, "e:" + eid, data)
@@ -566,6 +586,45 @@ class Store:
         with self.lock:
             e = self.events.get(eid)
             return bool(e) and _key_ok(admin, e["data"]["admin"])
+
+    def edit_event(self, eid, changes, admin=None, today=None, now=None):
+        """タイトル・概要・候補日を直す。誰でもできる（利用者の指定）。候補日を消すのは作った人だけ"""
+        today = today or today_jst()
+        with self.lock:
+            self._require()
+            entry = self.events.get(eid)
+            if entry is None:
+                raise MatcherError("この調整は見つかりません（削除されたか、URL が違います）", 404)
+            data = json.loads(json.dumps(entry["data"]))
+            if "title" in changes:
+                data["title"] = clean_text(changes["title"], MAX_TITLE, "タイトル")
+            if "description" in changes:
+                data["description"] = clean_memo(changes["description"], MAX_DESC, "概要")
+            days = set(period_days(data))
+            add, remove = changes.get("add_days") or [], changes.get("remove_days") or []
+            if not isinstance(add, list) or not isinstance(remove, list):
+                raise MatcherError("日付の形が正しくありません")
+            if remove and not self.is_admin(eid, admin):
+                raise MatcherError("候補日を消せるのは、作った人だけです", 403)
+            for s_ in add:
+                d = parse_iso_day(s_)
+                if d is None:
+                    raise MatcherError("日付の形が正しくありません")
+                if d < today or d > today + timedelta(days=730):
+                    raise MatcherError("今日より前の日と、2年より先の日は足せません")
+                days.add(d.isoformat())
+            for s_ in remove:
+                if isinstance(s_, str):
+                    days.discard(s_)
+            if not days:
+                raise MatcherError("候補日を全部消すことはできません")
+            if len(days) > MAX_DAYS:
+                raise MatcherError("候補日が多すぎます")
+            data["days"] = sorted(days)
+            data["first"], data["last"] = data["days"][0], data["days"][-1]
+            data["edited"] = (now or datetime.now(JST)).isoformat(timespec="seconds")
+            self.events[eid] = self._write(entry, "e:" + eid, data)
+            return data
 
     def delete_event(self, eid, admin):
         with self.lock:
@@ -611,7 +670,7 @@ class Store:
             while pid in self.people.get(eid, {}):
                 pid = secrets.token_urlsafe(6)
             key = secrets.token_urlsafe(24)
-            data = {"id": pid, "name": name, "mode": mode, "color": color, "marks": {}, "busy": {},
+            data = {"id": pid, "name": name, "mode": mode, "color": color, "memo": "", "marks": {}, "busy": {},
                     "busy_set": False, "key": _hash_key(key),
                     "joined": (now or datetime.now(JST)).isoformat(timespec="microseconds"),
                     "updated": (now or datetime.now(JST)).isoformat(timespec="seconds")}
@@ -657,11 +716,14 @@ class Store:
 
 # ---------- 送られた入力の検査 ----------
 def validate_changes(event, body):
-    """保存の中身（名前・入力のしかた・印・予定の時間）を確かめて、保存する形にする"""
+    """保存の中身（名前・メモ・入力のしかた・印・予定の時間）を確かめて、保存する形にする。
+    候補日でない日の印・予定は黙って捨てる（作った人が候補日を消したあとに、画面の古い印が届くことがあるため）"""
     days = set(period_days(event))
     out = {}
     if "name" in body:
         out["name"] = clean_text(body["name"], MAX_NAME, "名前")
+    if "memo" in body:
+        out["memo"] = clean_memo(body["memo"], MAX_MEMO, "メモ")
     if "mode" in body:
         if body["mode"] not in MODES:
             raise MatcherError("入力のしかたが正しくありません")
@@ -672,8 +734,10 @@ def validate_changes(event, body):
             raise MatcherError("印の形が正しくありません")
         clean = {}
         for day, slots in marks.items():
-            if day not in days or not isinstance(slots, dict):
-                raise MatcherError("期間の外の日に印が付いています")
+            if not isinstance(slots, dict):
+                raise MatcherError("印の形が正しくありません")
+            if day not in days:
+                continue
             row = {s: m for s, m in slots.items() if s in SLOTS and m in MARKS}
             if len(row) != len(slots):
                 raise MatcherError("印の形が正しくありません")
@@ -686,8 +750,10 @@ def validate_changes(event, body):
             raise MatcherError("予定の形が正しくありません")
         clean = {}
         for day, ivs in busy.items():
-            if day not in days or not isinstance(ivs, list) or len(ivs) > MAX_INTERVALS_PER_DAY:
-                raise MatcherError("期間の外の日か、多すぎる予定が含まれています")
+            if not isinstance(ivs, list) or len(ivs) > MAX_INTERVALS_PER_DAY:
+                raise MatcherError("予定の形が正しくないか、多すぎる予定が含まれています")
+            if day not in days:
+                continue
             got = []
             for iv in ivs:
                 if not (isinstance(iv, list) and len(iv) == 2 and all(type(v) is int for v in iv)
@@ -741,9 +807,10 @@ def public_view(event, people, viewer_admin=False):
     table = tally(event, people)
     return {
         "ok": True,
-        "event": {"id": event["id"], "title": event["title"], "first": event["first"], "last": event["last"],
+        "event": {"id": event["id"], "title": event["title"], "description": event.get("description", ""),
+                  "first": event["first"], "last": event["last"],
                   "days": period_days(event), "palette": event["palette"], "theme": build_theme(event["palette"])},
-        "people": [{"id": p["id"], "name": p["name"], "mode": p["mode"], "color": p.get("color"),
+        "people": [{"id": p["id"], "name": p["name"], "mode": p["mode"], "color": p.get("color"), "memo": p.get("memo", ""),
                     "marks": p.get("marks", {}), "busy": p.get("busy", {}) if p["mode"] == "detail" else {},
                     "busy_set": bool(p.get("busy_set")), "updated": p.get("updated")} for p in people],
         "tally": table, "best": best_slots(event, table), "admin": bool(viewer_admin),
@@ -820,18 +887,14 @@ def render_png(event, people):
     days = set(period_days(event))
     first = date.fromisoformat(event["first"])
     last = date.fromisoformat(event["last"])
-    months = []
-    y, m = first.year, first.month
-    while (y, m) <= (last.year, last.month):
-        months.append((y, m))
-        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    # 候補日のある月だけ（あとから離れた日を足しても、間の空の月は描かない）
+    months = sorted({(int(k[:4]), int(k[5:7])) for k in days})
 
     CELL, PAD, TOP, HEAD, BAR, GAP = 120, 36, 24, 64, 30, 28
     title_font, has_jp = _font(34, jp=True)
     f_month, _ = _font(36)
     f_small, _ = _font(16)
     f_day, _ = _font(20)
-    f_count, _ = _font(19)
     W = CELL * 7 + PAD * 2
     title_h = 60 if has_jp else 0
     def weeks_of(yy, mm):                       # 期間の日を含む週だけを描く（画像を縦に長くしない）
@@ -879,31 +942,12 @@ def render_png(event, people):
                     lv = heat_level(c_, n)
                     hy0 = half_top + i * half_h
                     fill = theme[f"--heat{lv}"]
-                    fg = theme[f"--heat-ink{lv}"]
-                    d.rectangle([x0 + 3, hy0 + 1, x1 - 3, hy0 + half_h - 1], fill=_hex_rgb(fill))
-                    if n == 0:
-                        continue
-                    cy = hy0 + half_h / 2
-                    if c_["o"] == n:
-                        _draw_mark(d, "star", x0 + 22, cy, 11, _hex_rgb(fg))
-                        d.text((x0 + 40, cy), f"{n}", font=f_count, anchor="lm", fill=_hex_rgb(fg))
-                    else:
-                        _draw_mark(d, "o", x0 + 18, cy, 7, _hex_rgb(fg), 2)
-                        d.text((x0 + 30, cy), str(c_["o"]), font=f_count, anchor="lm", fill=_hex_rgb(fg))
-                        _draw_mark(d, "t", x0 + 68, cy, 8, _hex_rgb(fg), 2)
-                        d.text((x0 + 80, cy), str(c_["t"]), font=f_count, anchor="lm", fill=_hex_rgb(fg))
-                d.line([x0 + 3, half_top + half_h, x1 - 3, half_top + half_h], fill=_hex_rgb(rule), width=1)
+                    # 昼と夜の間に余白を置かず、内訳（人数）も描かない（利用者の指定。色だけで俯瞰する）
+                    d.rectangle([x0 + 3, hy0, x1 - 3, hy0 + half_h], fill=_hex_rgb(fill))
         yy0 += mh + GAP
     # 凡例：上＝昼、下＝夜
     ly = H - PAD - 34
     d.text((PAD, ly), "upper 10-18 / lower 18-24", font=f_small, fill=_hex_rgb(soft))
-    lx = PAD + 260
-    _draw_mark(d, "star", lx, ly + 9, 9, _hex_rgb(ink))
-    d.text((lx + 14, ly), f"all {n}", font=f_small, fill=_hex_rgb(soft))
-    _draw_mark(d, "o", lx + 90, ly + 9, 7, _hex_rgb(ink), 2)
-    d.text((lx + 102, ly), "ok", font=f_small, fill=_hex_rgb(soft))
-    _draw_mark(d, "t", lx + 150, ly + 9, 8, _hex_rgb(ink), 2)
-    d.text((lx + 162, ly), "maybe", font=f_small, fill=_hex_rgb(soft))
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
@@ -924,10 +968,11 @@ class Matcher:
         return self.store is not None
 
     # --- 作る（Web とスラッシュコマンドの共用） ---
-    def create(self, title, first, last, who="?", today=None):
+    def create(self, title, first, last, who="?", today=None, description=""):
         if not self.enabled:
             raise MatcherError("この機能の準備ができていません（MATCHER_SHEET_ID が未設定）", 503)
-        title = clean_text(title, MAX_TITLE, "シナリオ名")
+        title = clean_text(title, MAX_TITLE, "タイトル")
+        description = clean_memo(description, MAX_DESC, "概要")
         check_period(first, last, today)
         self.store._require()
         if not self.limiter.allow("create_ip", who, *LIMITS["create_ip"]):
@@ -935,7 +980,7 @@ class Matcher:
         if not self.limiter.allow("create_all", "*", *LIMITS["create_all"]):
             raise MatcherError("今日はこれ以上作れません。明日もう一度試してください", 429)
         palette = make_palette(title, self.use_ai)    # 時間がかかるので、保存先の鍵（lock）の外で作る
-        event, admin = self.store.create_event(title, first, last, palette)
+        event, admin = self.store.create_event(title, first, last, palette, description=description)
         _log(f"調整を作りました（{(last - first).days + 1}日、配色：{palette['source']}）")
         return event, admin
 
@@ -1029,6 +1074,9 @@ class Matcher:
                 base = self._base_url(headers)
                 first, last = date.fromisoformat(event["first"]), date.fromisoformat(event["last"])
                 desc = f"{first.month}/{first.day}〜{last.month}/{last.day} の日程あわせ（{len(people)}人が入力）"
+                if event.get("description"):            # 概要の冒頭も、Discord のプレビューに出す
+                    head = event["description"].replace("\n", " ")
+                    desc = (head[:120] + "…" if len(head) > 120 else head) + "\n" + desc
                 og = "\n".join([
                     f'<meta property="og:title" content="{html.escape(event["title"])}">',
                     f'<meta property="og:description" content="{html.escape(desc)}">',
@@ -1049,9 +1097,9 @@ class Matcher:
     def _post(self, action, body, ip):
         if action == "create":
             event, admin = self.create(body.get("title"), parse_iso_day(body.get("first")),
-                                       parse_iso_day(body.get("last")), who=ip)
+                                       parse_iso_day(body.get("last")), who=ip, description=body.get("description"))
             return {"ok": True, "id": event["id"], "admin": admin}
-        m = re.fullmatch(r"event/([A-Za-z0-9_-]{6,32})/(view|join|save|delete|remove)", action)
+        m = re.fullmatch(r"event/([A-Za-z0-9_-]{6,32})/(view|join|save|delete|remove|edit)", action)
         if not m or not self.enabled:
             raise MatcherError("見つかりません", 404)
         eid, verb = m.groups()
@@ -1078,6 +1126,9 @@ class Matcher:
         elif verb == "remove":
             self.store.delete_event(eid, admin)
             return {"ok": True, "removed": True}
+        elif verb == "edit":                           # タイトル・概要・候補日の修正（誰でも。候補日を消すのは作った人だけ）
+            changes = {k: body[k] for k in ("title", "description", "add_days", "remove_days") if k in body}
+            self.store.edit_event(eid, changes, admin=admin)
         event, people = self.store.get(eid)
         return public_view(event, people, self.store.is_admin(eid, admin))
 

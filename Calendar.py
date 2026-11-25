@@ -1122,7 +1122,7 @@ HELP_TEXT = (
     "/c2026-9       その月のカレンダー画像\n"
     "\n"
     "■ 日程あわせ（ボットのいないサーバーでも URL で使える）\n"
-    "/match         シナリオ名と期間を選んで URL を作る\n"
+    "/match         カレンダー画面で日程あわせを作る\n"
     "\n"
     "■ 期間の指定（: で範囲、. で日にち）\n"
     "/2026-8:2026-9         月単位の範囲\n"
@@ -2134,46 +2134,39 @@ PURGE_PERMISSION_HELP = ("ボットに「メッセージの管理」と「メッ
                          "（チャンネルごとの権限で外されていないかも確認してください。README 3-2）")
 
 
-@tree.command(name="match", description="日程あわせ（あわせ暦）の URL を作る。ボットのいないサーバーでも URL から入力できる")
-@app_commands.describe(title="シナリオ名（配色もここから作る）", start="開始日（例：12/1 か 2026-12-1）",
-                       end="終了日（例：12/14。開始から62日まで）")
-async def slash_match(interaction: discord.Interaction, title: app_commands.Range[str, 1, matcher.MAX_TITLE],
-                      start: str, end: str):
-    first, last = matcher.parse_day_input(start), matcher.parse_day_input(end)
-    if first is None or last is None:
-        await interaction.response.send_message("⚠️ 日付を読み取れませんでした。`12/1` か `2026-12-1` の形で入れてください",
-                                                ephemeral=True)
-        return
-    try:
-        matcher.check_period(first, last)       # 入力の誤りは、本人にだけ見える形で返す
-    except matcher.MatcherError as e:
-        await interaction.response.send_message(f"⚠️ {e}", ephemeral=True)
-        return
-    if not MATCHER.public_url:
-        await interaction.response.send_message(
-            "⚠️ ページのアドレスが分かりません。Render の Environment に `PUBLIC_URL`（例：https://xxxx.onrender.com）を入れてください",
-            ephemeral=True)
-        return
-    # 配色づくり（ことばパレット）とスプレッドシートへの保存に数秒〜30秒かかるので、先に「考え中」を出す
-    await interaction.response.defer(thinking=True)
-    try:
-        event, admin = await asyncio.to_thread(MATCHER.create, title, first, last, f"discord:{interaction.user.id}")
-    except matcher.MatcherError as e:
-        await interaction.followup.send(f"⚠️ {e}")
-        return
-    except Exception as e:
-        print(f"/match のエラー: {e!r}")
-        await interaction.followup.send(f"⚠️ 作れませんでした（{type(e).__name__}）")
-        return
-    url = MATCHER.url_for(event["id"])
-    await interaction.followup.send(
-        f"📅 **{discord.utils.escape_markdown(event['title'])}** の日程あわせ"
-        f"（{first.month}/{first.day}〜{last.month}/{last.day}）\n{url}\n"
-        "URL を開いて、名前を入れて参加してください（ボットのいないサーバーに貼っても使えます）",
-        allowed_mentions=discord.AllowedMentions.none())
-    await interaction.followup.send(
-        f"🔑 作った人用のリンクです（参加者の削除や、日程あわせの削除ができます。ほかの人に渡さないでください）\n<{url}#a={admin}>",
-        ephemeral=True)
+def match_announcement(event, url):
+    """日程あわせを作ったときにチャンネルへ出す文（タイトル・期間・概要の冒頭・URL）"""
+    first, last = date.fromisoformat(event["first"]), date.fromisoformat(event["last"])
+    lines = [f"📅 **{discord.utils.escape_markdown(event['title'])}** の日程あわせ（{first.month}/{first.day}〜{last.month}/{last.day}）"]
+    desc = (event.get("description") or "").strip()
+    if desc:
+        head = desc if len(desc) <= 300 else desc[:300] + "…"
+        lines += ["> " + discord.utils.escape_markdown(line) for line in head.splitlines()[:6]]
+    lines += [url, "URL を開いて、名前を入れて参加してください（ボットのいないサーバーに貼っても使えます）"]
+    return "\n".join(lines)
+
+
+@tree.command(name="match", description="日程あわせ（あわせ暦）を作る。カレンダー画面でタイトル・概要・日程を選ぶ")
+async def slash_match(interaction: discord.Interaction):
+    # カレンダー画面（アクティビティ）で、日程をタップで選び、タイトルと概要を入れて作る。
+    # アクティビティはボットの運用者（開発チーム）だけが開ける前提（利用者の指定）。
+    # 開けなかったときは、同じことができるブラウザのページ（/m）へのリンクを、本人にだけ出す
+    if ACTIVITY_ENABLED and MATCHER.enabled:
+        issue_activity_ticket(interaction.user.id, interaction.channel, None, None, kind="match")
+        try:
+            await interaction.response.launch_activity()
+            _activity_log("/match からカレンダー画面を開きました")
+            return
+        except discord.HTTPException as e:
+            revoke_activity_ticket_for(interaction.user.id)
+            print(f"/match のカレンダー画面を開けなかったので、ブラウザのページを案内します: {e}")
+    if not MATCHER.enabled:
+        text = "⚠️ 日程あわせの準備ができていません（Render の Environment に `MATCHER_SHEET_ID` がありません）"
+    elif not MATCHER.public_url:
+        text = "⚠️ ページのアドレスが分かりません。Render の Environment に `PUBLIC_URL`（例：https://xxxx.onrender.com）を入れてください"
+    else:
+        text = f"カレンダー画面を開けなかったので、ブラウザで作ってください（作ったブラウザで管理できます）\n{MATCHER.public_url}/m"
+    await interaction.response.send_message(text, ephemeral=True)
 
 
 @tree.command(name="purge", description="このチャンネルの新しいメッセージを指定した数だけ削除する（自動表示とピン留めは残す）")
@@ -2357,7 +2350,7 @@ _DISCORD_API = "https://discord.com/api"
 _activity_lock = threading.Lock()
 _activity_tickets = {}                 # 利用者ID → {"kind", "expires", "channel", "panel", "calendars"}
 _activity_sessions = {}                # 合言葉 → {"kind", "user_id", "expires", "used"}
-_ACTIVITY_KINDS = ("add", "date")      # どちらの画面か（"add"＝予定の追加、"date"＝空き日の出力）
+_ACTIVITY_KINDS = ("add", "date", "match")   # どの画面か（"add"＝予定の追加、"date"＝空き日の出力、"match"＝日程あわせを作る）
 _bot_loop = None                       # ボット本体の処理の流れ（on_ready で記録）
 
 
@@ -2416,12 +2409,13 @@ def _session_for(token, now, kind=None):
         raise ActivityError("画面を開き直してください（確認の情報がありません）", 401)
     s = _activity_sessions.get(token)
     if s is None or s["expires"] <= now:
-        raise ActivityError("時間が経ったため使えなくなりました。もう一度 /add か /date を送ってください", 401)
+        raise ActivityError("時間が経ったため使えなくなりました。もう一度コマンド（/add・/date・/match）を送ってください", 401)
     cmd = f"/{s['kind']}"
     if kind is not None and s["kind"] != kind:
-        raise ActivityError(f"この画面ではできない操作です。{'/add' if kind == 'add' else '/date'} を送って開き直してください", 403)
+        raise ActivityError(f"この画面ではできない操作です。/{kind} を送って開き直してください", 403)
     if s["used"]:
-        raise ActivityError("この画面からはもう追加しました。続けて追加するときは、もう一度 /add を送ってください", 409)
+        raise ActivityError("この画面からはもう作りました。続けて作るときは、もう一度 /match を送ってください" if s["kind"] == "match"
+                            else "この画面からはもう追加しました。続けて追加するときは、もう一度 /add を送ってください", 409)
     t = _valid_ticket(s["user_id"], now)
     # 同じ人が別のコマンドを送ると、チケットはそちらに置き換わる（前の画面は使えなくなる）
     if t is None or t["kind"] != s["kind"] or (s["kind"] == "add" and t["calendars"] is None):
@@ -2459,7 +2453,7 @@ async def activity_start(code, now=None):
         has_ticket = _valid_ticket(user_id, now) is not None
     if not has_ticket:
         _activity_log("チケットの無い人が開きました（/add・/date を通さずに開いた）")
-        raise ActivityError("Discord で /add か /date を送って開いてください", 403)
+        raise ActivityError("Discord で /add・/date・/match のどれかを送って開いてください", 403)
     with _activity_lock:
         kind = _activity_tickets[user_id]["kind"]
     # 追加先の一覧（10分間覚えている）。ボット本体の処理の流れで読む。空き日の画面では使わないので読まない
@@ -2475,7 +2469,7 @@ async def activity_start(code, now=None):
     today = _today()
     return {"access_token": access_token, "session": session, "mode": kind,
             "calendars": [{"value": c.value, "label": c.name} for c in calendars],
-            "today": today.isoformat(), "max_days": ADD_MAX_DAYS,
+            "today": today.isoformat(), "max_days": ADD_MAX_DAYS, "match_max_days": matcher.MAX_DAYS,
             "titles_until": (today + timedelta(days=DAYS_TO_SHOW)).isoformat()}
 
 
@@ -2703,6 +2697,37 @@ async def activity_free(session_token, body, now=None):
     return reply
 
 
+async def activity_match(session_token, body, now=None):
+    """日程あわせの画面の「作る」。あわせ暦に作り、チャンネルに URL を出して、画面に共有用と管理用の URL を返す。
+    1つの画面から作れるのは1件だけ（2回押しても2つできない）"""
+    now = now if now is not None else time.monotonic()
+    with _activity_lock:
+        session, ticket = _session_for(session_token, now, "match")
+        session["used"] = True                 # 作っている間に2回目を受け付けない（失敗したら戻す）
+        channel, user_id = ticket["channel"], session["user_id"]
+    try:
+        first, last = _parse_iso_day(body.get("first")), _parse_iso_day(body.get("last"))
+        # 配色（ことばパレット）とスプレッドシートへの保存は時間がかかるので、ボットの処理を止めないよう別のスレッドで
+        event, admin = await asyncio.to_thread(MATCHER.create, body.get("title"), first, last,
+                                               f"discord:{user_id}", None, body.get("description"))
+    except matcher.MatcherError as e:
+        with _activity_lock:
+            session["used"] = False
+        raise ActivityError(str(e), e.status)
+    except Exception:
+        with _activity_lock:
+            session["used"] = False
+        raise
+    url = MATCHER.url_for(event["id"])
+    out = _ActivityChannel(channel)
+    await out.send(match_announcement(event, url), allowed_mentions=discord.AllowedMentions.none())
+    if out.send_error is not None:
+        _activity_log(f"チャンネルへの返信に失敗しました: {out.send_error}")
+    _activity_log("日程あわせを作りました")
+    return {"ok": True, "url": url, "admin_url": f"{url}#a={admin}", "posted": out.send_error is None,
+            "title": event["title"]}
+
+
 def _run_on_bot_loop(coro, timeout=120):
     """Web サーバーのスレッドから、ボット本体の処理の流れで coro を実行して結果を待つ"""
     if _bot_loop is None:
@@ -2770,6 +2795,8 @@ def handle_activity_request(method, path, body_bytes):
             result = _run_on_bot_loop(activity_add(body.get("session"), body))
         elif sub == "api/free":
             result = _run_on_bot_loop(activity_free(body.get("session"), body))
+        elif sub == "api/match":
+            result = _run_on_bot_loop(activity_match(body.get("session"), body))
         else:
             raise ActivityError("見つかりません", 404)
         code = 200
