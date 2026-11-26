@@ -167,3 +167,12 @@ body.free .spacer { height: 40px; }
 /* ボタンを押したあとの知らせ（作りました・エラー）は、ボタンのすぐ下に出す */
 .act-status { margin: 8px 0 0; }
 .act-status:empty { display: none; }
+/* 日程あわせの昼と夜の時間帯：4つのメニューを同じ幅にそろえる（夜は長い選択肢があり、そのままだと夜だけ広くなる。利用者の指定） */
+.slot-fine { flex-direction: column; gap: 8px; }
+.slot-fine label { display: grid; grid-template-columns: 1.5em minmax(0, 1fr) auto minmax(0, 1fr); gap: 6px; width: 100%; }
+.slot-fine select { width: 100%; min-width: 0; }
+@media (max-width: 400px) {
+  .slot-fine label { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); row-gap: 2px; column-gap: 2px; }
+  .slot-fine .lbl { grid-column: 1 / -1; }
+  .slot-fine select { padding-left: 6px; padding-right: 2px; font-feature-settings: "palt"; }
+}

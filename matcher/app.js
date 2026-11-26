@@ -647,8 +647,9 @@ function renderEditor() {
         preset("土日祝", evDays.filter((x) => wdOf(x) === 0 || wdOf(x) === 6 || isHol(x))),
         preset("解除", []))),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "日付" }),
+      // オン・オフは色だけで見せる（利用者の指定）。読み上げには aria-pressed で伝える
       el("button", { type: "button", class: "tg pickmode" + (S.pickMode ? " on" : ""), "aria-pressed": String(S.pickMode),
-        onclick: () => { S.pickMode = !S.pickMode; renderEditor(); } }, S.pickMode ? "日付をタップして選ぶ：オン" : "日付をタップして選ぶ"),
+        onclick: () => setPickMode(!S.pickMode) }, "複数選択モード"),
       el("button", { type: "button", class: "small clearsel", disabled: !S.bulkDates.size, text: "選択解除",
         onclick: () => { S.bulkDates = new Set(); S.tapDates = new Set(); renderEditor(); } }),
       el("span", { class: "note", text: S.bulkDates.size ? `${S.bulkDates.size}日を選んでいます` : "" })),
@@ -657,8 +658,8 @@ function renderEditor() {
       el("div", { class: "tgs" }, ...[["o", "○"], ["t", "△"], ["x", "✕"], ["clear", clearName]].map(([k, label]) =>
         el("button", { type: "button", class: `apply pen-${k}`, disabled: !targets.length, onclick: () => paintBulk(k) }, label)))));
   box.append(el("p", { class: "note", text: p.mode === "detail"
-    ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。メニューで選んだ枠（太字・枠付き）は、自動の判定より優先され、まとめて選択でも変わりません。"
-    : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。メニューで選んだ枠（太字・枠付き）は、まとめて選択でも変わりません。" }));
+    ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。メニューで選んだ枠（太字・枠付き）は、自動の判定より優先され、曜日などのまとめて選択では変わりません（複数選択モードで選んだ日は上書きできます）。"
+    : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。メニューで選んだ枠（太字・枠付き）は、曜日などのまとめて選択では変わりません（複数選択モードで選んだ日は上書きできます）。" }));
   box.append(bulk);
 
   // 自分のカレンダー
@@ -683,19 +684,24 @@ function renderEditor() {
       // 見た目は印だけを出し、メニューは透明にして枠いっぱいに重ねる（狭い枠でも選んだ印が読めるように）
       // fixed（太字・枠）＝プルダウンで手で選んだ枠、auto（細字）＝予定から自動
       return el("label", { class: `paint m-${m || "none"}` + (fixed ? " fixed" : manual ? "" : m ? " auto" : "") + (picked ? " picked" : ""),
-        title: fixed ? "手で選んだ枠（まとめて選択では変わりません）" : "" },
+        title: fixed ? "固定の枠（曜日などのまとめて選択では変わりません。複数選択モードで選ぶと上書きできます）" : "" },
         el("small", { text: SLOT_TEXT[slot] }), el("b", { "aria-hidden": "true", text: m ? MARK_TEXT[m] : "−" }), sel);
     });
-    // 日付をタップして選ぶモードの間は、日の上に透明なボタンをかぶせて、タップでその日を選ぶ・外す（メニューは開かない）
+    // 複数選択モードの間は、日の上に透明なボタンをかぶせて、タップでその日を選ぶ・外す（メニューは開かない）。
+    // マウスのドラッグ・指のスワイプで続けて選べる。かぶせたボタンの上ではページは動かない（それ以外の場所のスワイプで上下に動く）
     const chosen = S.bulkDates.has(iso);
     const pick = S.pickMode ? el("button", { type: "button", class: "daypick", "data-iso": iso, "aria-pressed": String(chosen), "aria-label": `${md(iso)}${holName(iso) ? " " + holName(iso) : ""}を${chosen ? "外す" : "選ぶ"}`,
       onpointerdown: (e) => startDrag(e, iso),
-      onclick: () => { if (S.dragDone) { S.dragDone = false; return; } tapPick(iso, !chosen); renderEditor(); } }) : null;
+      // マウス・指は押した時点で選ぶ（startDrag）。クリックで切り替えるのは、キーボード（Enter・スペース。detail が 0）のときだけ
+      onclick: (e) => { if (e.detail !== 0) return; tapPick(iso, !chosen); renderEditor(); } }) : null;
     return el("div", { class: "cell in" + dayClass(iso, wd) + (chosen ? " daysel" : ""), title: holName(iso) },
       el("span", { class: "dn", text: d }), ...halves, pick);
   }, (w, i) => el("button", { type: "button", class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : "") + (datesOfWeekday(i).length && datesOfWeekday(i).every((x) => S.bulkDates.has(x)) ? " on" : ""),
     "aria-pressed": String(datesOfWeekday(i).length > 0 && datesOfWeekday(i).every((x) => S.bulkDates.has(x))), title: "押すと、この曜日の日（祝日を除く）をまとめて選ぶ・外す", onclick: () => { toggleWeekday(i); renderEditor(); } }, w)));
   box.append(cal);
+  // 複数選択モードの間は、画面の右下にいつでも終えられるボタンを出す（利用者の指定）
+  if (S.pickMode) box.append(el("button", { type: "button", class: "pickfloat", "aria-label": "複数選択モードを終える",
+    onclick: () => setPickMode(false) }, el("span", { text: "複数選択モード" }), el("b", { "aria-hidden": "true", text: "✕" })));
   if (p.mode === "detail" && Object.keys(p.marks).length) box.append(el("div", { class: "row" }, el("button", { type: "button", class: "small", text: "手で付けた印をすべて消す（自動に戻す）", onclick: () => { p.marks = {}; p.fixed = {}; S.unsaved = true; renderEditor(); } })));
 
   // 保存のバー：変更は「保存する」を押すまで反映しない（利用者の指定）
@@ -706,6 +712,9 @@ function renderEditor() {
     el("button", { type: "button", class: "small", text: "新しく参加する", onclick: async () => { if (await settleUnsaved()) { S.joining = true; renderMine(); } } }),
     el("button", { type: "button", class: "small danger", text: "この入力を削除", onclick: () => onDeletePerson(p) })));
   if (focusId && $(focusId)) $(focusId).focus();
+  // 右下の「複数選択モード ✕」を、下に貼り付く保存のバーの上に置くため、バーの高さを測っておく
+  const sb = box.querySelector(".savebar");
+  if (sb) document.documentElement.style.setProperty("--savebar-h", `${sb.offsetHeight}px`);
 }
 
 function setMark(iso, slot, mark) {          // 枠のメニューで選んだ印。○△✕ は「固定」（まとめて選択で変えない）、"clear" は印と固定を外す
@@ -719,9 +728,10 @@ function setMark(iso, slot, mark) {          // 枠のメニューで選んだ�
 }
 function toggleSet(set, v) { if (set.has(v)) set.delete(v); else set.add(v); }
 /* まとめて選択の対象：選んだ日付 × 選んだ時間帯の枠（日付を何も選んでいなければ無し）。
-   ただし、プルダウンで個別に選んだ枠と、詳細入力で予定があって ✕ になっている枠は変えない（利用者の指定） */
+   ただし、固定の枠（プルダウンで個別に選んだ枠など）と、詳細入力で予定があって ✕ になっている枠は変えない（利用者の指定）。
+   複数選択モードで選んだ日だけは、固定の枠も上書きできる（利用者の指定） */
 function protectedSlot(p, iso, slot) {
-  return isFixed(p, iso, slot) || autoMark(p, iso, slot) === "x";
+  return (isFixed(p, iso, slot) && !S.tapDates.has(iso)) || autoMark(p, iso, slot) === "x";
 }
 /* 祝日（作ったときに内閣府の一覧から読み込んだもの） */
 const holName = (iso) => ((S.data && S.data.event.holidays) || {})[iso] || "";
@@ -737,14 +747,16 @@ function toggleWeekday(i) {
   if (ds.length && ds.every((x) => S.bulkDates.has(x))) ds.forEach((x) => { S.bulkDates.delete(x); S.tapDates.delete(x); });
   else ds.forEach((x) => S.bulkDates.add(x));
 }
-/* 「日付をタップして選ぶ」で選んだ日（S.tapDates）。ここに ○△✕ をまとめて付けると、手で選んだ枠と同じ「固定」になる（利用者の指定） */
+function setPickMode(on) { S.pickMode = on; renderEditor(); }
+/* 複数選択モードで選んだ日（S.tapDates）。ここに ○△✕ をまとめて付けると、手で選んだ枠と同じ「固定」になる（利用者の指定） */
 function tapPick(iso, on) {
   if (on) { S.bulkDates.add(iso); S.tapDates.add(iso); } else { S.bulkDates.delete(iso); S.tapDates.delete(iso); }
 }
-/* PC：マウスで日をドラッグして、まとめて選ぶ・外す（タップで選ぶモードの間だけ。左ボタンを押している間だけ。選ばれている日から始めると外す）。
-   ドラッグしている間は描き直さず、印だけを付け替えて、離したときに描き直す */
+/* 複数選択モード：押した日を選ぶ・外し、そのまま PC はマウスのドラッグ、スマホは指のスワイプで、通った日をまとめて選ぶ・外す
+   （マウスは左ボタンを押している間だけ。選ばれている日から始めると外す）。
+   動かしている間は描き直さず、印だけを付け替えて、離したときに描き直す */
 function startDrag(e, iso) {
-  if (e.pointerType !== "mouse" || e.button !== 0) return;
+  if (e.pointerType === "mouse" && e.button !== 0) return;
   e.preventDefault();
   const on = !S.bulkDates.has(iso), seen = new Set();
   const mark = (x) => {
@@ -756,11 +768,10 @@ function startDrag(e, iso) {
   mark(iso);
   const move = (ev) => { const t = document.elementFromPoint(ev.clientX, ev.clientY); mark(t && t.closest && t.closest(".daypick") && t.closest(".daypick").dataset.iso); };
   const up = () => {
-    document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up);
-    S.dragDone = true; setTimeout(() => { S.dragDone = false; }, 0);   // 押した日のクリックで、もう一度切り替わらないように
+    document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up); document.removeEventListener("pointercancel", up);
     renderEditor();
   };
-  document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
+  document.addEventListener("pointermove", move); document.addEventListener("pointerup", up); document.addEventListener("pointercancel", up);
 }
 function bulkTargets() {
   const p = me(), targets = [];
@@ -782,8 +793,13 @@ function paintBulk(mark) {
     const row = { ...(p.marks[iso] || {}) };
     if (mark === "clear") delete row[slot]; else row[slot] = mark;
     if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
-    // タップ（ドラッグ）で選んだ日に付けた ○△✕ は固定にする：あとの曜日などのまとめて選択や、予定からの自動の ○✕ で変わらない
-    if (mark !== "clear" && S.tapDates.has(iso)) p.fixed[iso] = { ...(p.fixed[iso] || {}), [slot]: true };
+    // 複数選択モードで選んだ日に付けた ○△✕ は固定にする：あとの曜日などのまとめて選択や、予定からの自動の ○✕ で変わらない。
+    // 複数選択モードで選んだ日を「消す」（自動に戻す）ときは、固定も外す
+    if (S.tapDates.has(iso)) {
+      const fx = { ...(p.fixed[iso] || {}) };
+      if (mark === "clear") delete fx[slot]; else fx[slot] = true;
+      if (Object.keys(fx).length) p.fixed[iso] = fx; else delete p.fixed[iso];
+    }
   }
   S.unsaved = true; renderEditor();
 }
