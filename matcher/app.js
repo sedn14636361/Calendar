@@ -699,7 +699,7 @@ function renderEditor() {
   }, (w, i) => el("button", { type: "button", class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : "") + (datesOfWeekday(i).length && datesOfWeekday(i).every((x) => S.bulkDates.has(x)) ? " on" : ""),
     "aria-pressed": String(datesOfWeekday(i).length > 0 && datesOfWeekday(i).every((x) => S.bulkDates.has(x))), title: "押すと、この曜日の日（祝日を除く）をまとめて選ぶ・外す", onclick: () => { toggleWeekday(i); renderEditor(); } }, w)));
   box.append(cal);
-  // 複数選択モードの間は、画面の上にいつでも終えられるボタンを出す（利用者の指定）
+  // 複数選択モードの間は、画面の右下にいつでも終えられるボタンを出す（利用者の指定）
   if (S.pickMode) box.append(el("button", { type: "button", class: "pickfloat", "aria-label": "複数選択モードを終える",
     onclick: () => setPickMode(false) }, el("span", { text: "複数選択モード" }), el("b", { "aria-hidden": "true", text: "✕" })));
   if (p.mode === "detail" && Object.keys(p.marks).length) box.append(el("div", { class: "row" }, el("button", { type: "button", class: "small", text: "手で付けた印をすべて消す（自動に戻す）", onclick: () => { p.marks = {}; p.fixed = {}; S.unsaved = true; renderEditor(); } })));
@@ -712,6 +712,9 @@ function renderEditor() {
     el("button", { type: "button", class: "small", text: "新しく参加する", onclick: async () => { if (await settleUnsaved()) { S.joining = true; renderMine(); } } }),
     el("button", { type: "button", class: "small danger", text: "この入力を削除", onclick: () => onDeletePerson(p) })));
   if (focusId && $(focusId)) $(focusId).focus();
+  // 右下の「複数選択モード ✕」を、下に貼り付く保存のバーの上に置くため、バーの高さを測っておく
+  const sb = box.querySelector(".savebar");
+  if (sb) document.documentElement.style.setProperty("--savebar-h", `${sb.offsetHeight}px`);
 }
 
 function setMark(iso, slot, mark) {          // 枠のメニューで選んだ印。○△✕ は「固定」（まとめて選択で変えない）、"clear" は印と固定を外す

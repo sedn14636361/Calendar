@@ -293,7 +293,8 @@ details.box > summary { cursor: pointer; }
 }
 /* 複数選択モード：かぶせたボタンの上では、指のスワイプでページを動かさず、日を選ぶ（それ以外の場所ではページが動く） */
 .daypick { touch-action: none; -webkit-touch-callout: none; }
-/* 複数選択モードの間、画面の右上にいつでも出す「終える」ボタン */
-.pickfloat { position: fixed; z-index: 20; top: calc(env(safe-area-inset-top, 0px) + 10px); right: calc(env(safe-area-inset-right, 0px) + 12px);
+/* 複数選択モードの間、画面の右下にいつでも出す「終える」ボタン（利用者の指定）。
+   下に貼り付く「保存する」のバーと重ならないよう、バーの高さ（--savebar-h。app.js で測る）だけ上げる */
+.pickfloat { position: fixed; z-index: 20; bottom: calc(env(safe-area-inset-bottom, 0px) + var(--savebar-h, 0px) + 12px); right: calc(env(safe-area-inset-right, 0px) + 12px);
   display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 14px; border-radius: 999px;
   background: var(--ai); color: var(--ai-ink); border: 1px solid var(--ai); font-weight: 700; box-shadow: 0 2px 10px rgba(0, 0, 0, .25); }
