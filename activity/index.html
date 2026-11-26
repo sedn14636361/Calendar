@@ -73,6 +73,7 @@
     <div id="make-box" class="run-box" hidden>
       <p id="make-summary" class="summary"></p>
       <button type="button" id="make" class="primary" disabled>作る</button>
+      <p id="make-status" class="status act-status" role="status"></p>
     </div>
     <div id="match-result" class="card" hidden>
       <h2>共有用の URL</h2>
@@ -83,12 +84,14 @@
       <p class="hint">候補日や日程あわせの削除ができるリンクです。チャンネルにも投稿しています。</p>
       <textarea id="admin-url" class="free-text" readonly rows="2" aria-label="作った人用のリンク"></textarea>
       <button type="button" id="copy-admin" class="secondary">コピーする</button>
+      <p id="admin-status" class="copy-status" role="status"></p>
     </div>
 
     <!-- 出力のボタンは、画面の下に固定せず、結果の欄のすぐ上に置く -->
     <div id="run-box" class="run-box" hidden>
       <p id="free-summary" class="summary"></p>
       <button type="button" id="run" class="primary" disabled>出力する</button>
+      <p id="run-status" class="status act-status" role="status"></p>
     </div>
 
     <div id="free-result" class="card" hidden>
@@ -146,6 +149,7 @@
   <footer id="bar" class="bar" hidden>
     <p id="summary" class="summary"></p>
     <button type="button" id="add" class="primary" disabled>追加する</button>
+      <p id="add-status" class="status act-status" role="status"></p>
   </footer>
 
   <section id="done" class="card" hidden>

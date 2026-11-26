@@ -164,3 +164,6 @@ body.free .spacer { height: 40px; }
   border-radius: 8px; border: 1px solid var(--line); background: #1e1f22; color: var(--text); padding: 8px 10px;
 }
 .secondary { width: 100%; min-height: 44px; margin-top: 8px; }
+/* ボタンを押したあとの知らせ（作りました・エラー）は、ボタンのすぐ下に出す */
+.act-status { margin: 8px 0 0; }
+.act-status:empty { display: none; }

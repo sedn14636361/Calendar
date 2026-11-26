@@ -278,3 +278,7 @@ details.box > summary { cursor: pointer; }
 .daypick:focus-visible { outline: 2px solid var(--ai); outline-offset: -2px; }
 .months.mine .cell.daysel { box-shadow: inset 0 0 0 3px var(--ai); }
 .tg.pickmode { font-size: 13px; }
+
+/* ボタンを押したあとの知らせ（作りました・エラー）は、ボタンのすぐ下に出す */
+.act-status { margin-top: 8px; white-space: pre-line; }
+.act-status:empty { display: none; }

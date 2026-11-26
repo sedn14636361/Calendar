@@ -33,8 +33,8 @@ function el(tag, attrs, ...kids) {
   return e;
 }
 
-function setStatus(text, err) {
-  const s = $("status"); s.textContent = text || ""; s.classList.toggle("err", !!err);
+function setStatus(text, err, id = "status") {
+  const s = $(id); s.textContent = text || ""; s.classList.toggle("err", !!err);
 }
 
 async function api(path, body) {
@@ -141,17 +141,18 @@ function initCreate() {
   // 祝日の色（読めなくても作るのには困らないので、失敗は黙って無視する）
   fetch("/m/api/holidays").then((r) => r.json()).then((j) => { if (j && j.holidays) { C.hol = j.holidays; C.redraw(); } }).catch(() => {});
   const getSlots = slotPicker($("cSlots"), { d: [600, 1080], n: [1260, 1440] });   // 初期値：昼 10〜18時、夜 21〜24時
+  const cStatus = (text, err) => setStatus(text, err, "cStatus");   // 作るボタンの下に出す（利用者の指定）
   $("createForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    if (C.start === null || C.end === null) { setStatus("カレンダーで開始日と終了日をタップしてください", true); return; }
-    const btn = $("cGo"); btn.disabled = true; setStatus("配色を作っています…（30秒ほどかかることがあります）");
+    if (C.start === null || C.end === null) { cStatus("カレンダーで開始日と終了日をタップしてください", true); return; }
+    const btn = $("cGo"); btn.disabled = true; cStatus("配色を作っています…（30秒ほどかかることがあります）");
     try {
       const sl = getSlots();
-      if (sl.d[0] >= sl.d[1] || sl.n[0] >= sl.n[1]) { setStatus("時間帯の終わりは、始まりより後にしてください", true); btn.disabled = false; return; }
+      if (sl.d[0] >= sl.d[1] || sl.n[0] >= sl.n[1]) { cStatus("時間帯の終わりは、始まりより後にしてください", true); btn.disabled = false; return; }
       const d = await api("/m/api/create", { title: $("cTitle").value, description: $("cDesc").value, first: C.start, last: C.end, slots: sl, tone: $("cTone").value });
       saveKeys(d.id, { people: {}, admin: d.admin });
       location.href = `/m/${d.id}`;
-    } catch (e) { setStatus(e.message, true); btn.disabled = false; }
+    } catch (e) { cStatus(e.message, true); btn.disabled = false; }
   });
   const h = store.get("awasegoyomi:history", []);
   if (h.length) {
