@@ -347,12 +347,22 @@ details > summary { padding: 12px 0; }
 button.wd.on { padding-left: 0; padding-right: 0; }
 .tg.wdt.on::before, button.wd.on::before { position: absolute; top: 0; left: 3px; font-size: 11px; margin: 0; }
 
+/* 月が複数あるときの案内（横に並べる広い画面でだけ出す） */
+.scroll-hint { display: none; }
 /* PC など広い画面（960px 以上）：みんなのカレンダーと候補だけを左右に並べる。入力・直す・参加者は下に全幅で置く（利用者の指定） */
 @media (min-width: 960px) {
   body:not([data-event=""]) .wrap { max-width: 1200px; }
   #event { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
-  #allBox { grid-column: 1; grid-row: 1; }
-  #bestBox { grid-column: 2; grid-row: 1; }
+  /* みんなのカレンダーと候補の欄は同じ高さ（高い方に合わせる。利用者の指定）。候補の中身は上に詰める */
+  #allBox { grid-column: 1; grid-row: 1; align-self: stretch; }
+  #bestBox { grid-column: 2; grid-row: 1; align-self: stretch; align-content: start; }
+  /* 候補の見出しを、みんなのカレンダーの見出し（URL をコピーなどのボタンと同じ 44px の行の中）と同じ高さにそろえる */
+  #bestBox > .cap { min-height: 44px; display: flex; align-items: center; }
+  /* 複数の月は横に並べ、横にスクロールして移る（1か月ずつ止まる）。欄の高さは1か月分 */
+  #allBox .months { min-width: 0; }
+  #allBox .months.multi { display: flex; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; padding-bottom: 6px; }
+  #allBox .months.multi > .month { flex: 0 0 100%; scroll-snap-align: start; }
+  .scroll-hint { display: block; }
   #mine, #editBox, #peopleBox { grid-column: 1 / -1; }
 }
 

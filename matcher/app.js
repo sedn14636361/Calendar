@@ -453,9 +453,16 @@ function monthGrid(ym, cellFn, headFn) {
   return wrap;
 }
 function renderOverview() {
-  const box = $("overview"); box.textContent = "";
+  const box = $("overview"), keep = box.scrollLeft; box.textContent = "";   // 描き直しても、横のスクロールの位置は保つ
   const days = new Set(S.data.event.days), n = S.data.people.length;
-  for (const ym of monthsOf(S.data.event.days)) box.append(monthGrid(ym, (iso, d, wd) => {
+  // 複数の月：PC など広い画面（2列）では月を横に並べ、横にスクロールして移る（欄の高さを1か月分にする。利用者の指定）
+  const months = monthsOf(S.data.event.days), multi = months.length > 1;
+  box.classList.toggle("multi", multi);
+  $("monthHint").hidden = !multi;
+  $("monthHint").textContent = `${months.length}か月あります。横にスクロールすると、ほかの月を見られます（矢印キーでも動かせます）`;
+  if (multi) { box.tabIndex = 0; box.setAttribute("role", "region"); box.setAttribute("aria-label", "みんなのカレンダー（月ごと）"); }
+  else { box.removeAttribute("tabindex"); box.removeAttribute("role"); box.removeAttribute("aria-label"); }
+  for (const ym of months) { const g = monthGrid(ym, (iso, d, wd) => {
     if (!days.has(iso)) return el("div", { class: "cell out" }, el("span", { class: "dn", text: d }));
     const halves = ["d", "n"].map((slot) => {
       // マスの中には ○△✕ の人数を出さない（カーソルを合わせても出さない。利用者の指定）。
@@ -468,10 +475,14 @@ function renderOverview() {
     return el("button", { type: "button", class: "cell in" + (S.selectedDay === iso ? " sel" : "") + dayClass(iso, wd), title: holName(iso),
       "aria-label": `${md(iso)}${holName(iso) ? " " + holName(iso) : ""} 昼 ○${t.d.o} △${t.d.t} ✕${t.d.x}、夜 ○${t.n.o} △${t.n.t} ✕${t.n.x}`, onclick: () => selectDay(iso) },
     el("span", { class: "dn", text: d }), ...halves);
-  }));
+  }); g.dataset.ym = ym; box.append(g); }
+  box.scrollLeft = keep;
 }
 function selectDay(iso) {
   S.selectedDay = iso; renderOverview(); renderDay();
+  // 月を横に並べているときは、選んだ日の月まで横に動かす（候補から別の月の日を選んだとき）
+  const box = $("overview"), m = box.querySelector(`.month[data-ym="${iso.slice(0, 7)}"]`);
+  if (m && box.scrollWidth > box.clientWidth) box.scrollLeft += m.getBoundingClientRect().left - box.getBoundingClientRect().left;
   $("day").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "nearest" });
 }
 function renderDay() {
