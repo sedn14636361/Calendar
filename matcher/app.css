@@ -360,3 +360,4 @@ button.wd.on { padding-left: 0; padding-right: 0; }
 
 /* 大雑把入力の書き出し（入力内容を出力） */
 .export { display: grid; gap: 8px; border-top: 1px dashed var(--rule); padding-top: 10px; }
+.export .spec { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }

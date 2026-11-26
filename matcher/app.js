@@ -975,6 +975,14 @@ function shareImport(p, busy, tent) {
 
 /* ---------- 大雑把入力の書き出し（ほかの日程あわせの「インポート」で読める形） ---------- */
 const EXPORT_HEAD = "# あわせ暦の大雑把入力";
+const EXPORT_SPEC = [
+  "1枠1行のテキストです（例：2026-12-01 10:00-18:00 △）",
+  "ほかの日程あわせの「インポート」で、このファイルを選ぶか貼り付けると、同じ ○△✕ を使えます",
+  "日付と時刻で書くので、昼・夜の時間帯がちがう日程あわせでも、時刻の重なりで合わせます",
+  "インポートでは、✕＝予定あり、△＝重なる枠に △（固定）、○＝空きとして取り込みます",
+  "未入力の枠は書き出しません（インポートすると ○ になります）",
+  "書き出しはこのブラウザの中だけで行い、サーバーには送りません",
+];
 function exportText(p) {
   const hm = (m) => fmtHM(m % 1440), lines = [];
   for (const iso of [...S.data.event.days].sort()) for (const slot of ["d", "n"]) {
@@ -986,9 +994,7 @@ function exportText(p) {
   const one = (t) => String(t || "").replace(/\s+/g, " ").trim();
   return { count: lines.length, text: [
     `${EXPORT_HEAD}（${one(S.data.event.title)}／${one(p.name)}）`,
-    "# ほかの日程あわせの「インポート」で、このテキストを貼るか、このファイルを選ぶと、同じ ○△✕ を取り込めます",
-    "# 時刻で合わせるので、昼・夜の時間帯がちがう日程あわせでも使えます（✕＝予定あり、△＝△、○＝空き）",
-    "# 未入力の枠は書いていません。インポートでは、予定の無い時間は ○ になります",
+    ...EXPORT_SPEC.map((t) => `# ・${t}`),
     ...lines, ""].join("\n") };
 }
 function exportPanel(p) {
@@ -1001,9 +1007,9 @@ function exportPanel(p) {
   const copy = el("button", { type: "button", class: "small", disabled: !count, text: "コピー", onclick: (e) => copyText(text, e.currentTarget, "コピーしました") });
   return el("div", { class: "export" },
     el("p", { class: "cap", text: "入力内容を出力" }),
-    el("p", { class: "note", text: count
-      ? `今の ○△✕（${count}枠）を書き出します。ほかの日程あわせの「インポート」で読み込むと、同じ入力を使えます（時刻で合わせるので、昼・夜の時間帯がちがっても使えます）。未入力の枠は書き出さないので、インポートすると ○ になります。`
-      : "まだ ○△✕ がありません。印を付けると、ほかの日程あわせの「インポート」で使える形で書き出せます。" }),
+    // 書き出しの仕様は箇条書きで示す（利用者の指定）。ファイルの冒頭にも同じ項目を書く
+    count ? el("ul", { class: "note spec" }, el("li", { text: `今の ○△✕（${count}枠）を書き出します` }), ...EXPORT_SPEC.map((t) => el("li", { text: t })))
+      : el("p", { class: "note", text: "まだ ○△✕ がありません。印を付けると、ほかの日程あわせの「インポート」で使える形で書き出せます。" }),
     el("div", { class: "row" }, save, copy));
 }
 
