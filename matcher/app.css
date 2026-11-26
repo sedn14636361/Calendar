@@ -347,12 +347,21 @@ details > summary { padding: 12px 0; }
 button.wd.on { padding-left: 0; padding-right: 0; }
 .tg.wdt.on::before, button.wd.on::before { position: absolute; top: 0; left: 3px; font-size: 11px; margin: 0; }
 
+/* みんなのカレンダー：複数の月は横に並べ、横にスクロール（スマホはスワイプ）して移る（1か月ずつ止まる。欄の高さは1か月分）。
+   スマホでもスワイプで月を移れるように、どの画面幅でも横に並べる（利用者の指定）。幅 760〜959px は今までどおり2か月ずつ見せる */
+#allBox .months { min-width: 0; }
+#allBox .months.multi { display: flex; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; padding-bottom: 6px; }
+#allBox .months.multi > .month { flex: 0 0 100%; scroll-snap-align: start; }
+@media (min-width: 760px) and (max-width: 959px) { #allBox .months.multi > .month { flex-basis: calc(50% - 8px); } }
 /* PC など広い画面（960px 以上）：みんなのカレンダーと候補だけを左右に並べる。入力・直す・参加者は下に全幅で置く（利用者の指定） */
 @media (min-width: 960px) {
   body:not([data-event=""]) .wrap { max-width: 1200px; }
   #event { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
-  #allBox { grid-column: 1; grid-row: 1; }
-  #bestBox { grid-column: 2; grid-row: 1; }
+  /* みんなのカレンダーと候補の欄は同じ高さ（高い方に合わせる。利用者の指定）。候補の中身は上に詰める */
+  #allBox { grid-column: 1; grid-row: 1; align-self: stretch; }
+  #bestBox { grid-column: 2; grid-row: 1; align-self: stretch; align-content: start; }
+  /* 候補の見出しを、みんなのカレンダーの見出し（URL をコピーなどのボタンと同じ 44px の行の中）と同じ高さにそろえる */
+  #bestBox > .cap { min-height: 44px; display: flex; align-items: center; }
   #mine, #editBox, #peopleBox { grid-column: 1 / -1; }
 }
 
@@ -381,3 +390,26 @@ button.wd.on { padding-left: 0; padding-right: 0; }
   .paint::after { display: none; }
   .paint b { padding-right: 0; }
 }
+/* 入力するカレンダー：候補日の無い週は、日付の数字だけの高さに縮める（行の高さをそろえる指定は戻した。利用者の指定）。
+   候補日のある週は、候補でない日も候補日と同じ高さ。
+   昼・夜の選択肢は、中身が収まる最低限の高さ（24px。押しやすさの最低基準 WCAG 2.2 の 2.5.8 の 24px は満たす） */
+.months.mine .paint { min-height: 24px; }
+/* PC など広い画面（幅 701px 以上。スマホの境目 700px に合わせる）では、昼・夜の選択肢を 44px にする（利用者の指定。スマホは 24px のまま） */
+@media (min-width: 701px) { .months.mine .paint { min-height: 44px; } }
+/* 候補：出し切れない分（fitBest で決める）は隠す */
+#best > li.cut { display: none; }
+/* 月を移るボタン（みんなのカレンダー。月を横に並べる広い画面で、前・次の月があるときだけ） */
+.mnav { display: flex; gap: 8px; }
+.mnav button { min-width: 44px; justify-content: center; font-size: 18px; }
+.mnav #mNext { margin-left: auto; }
+/* 「選ばれている」の見せ方をそろえる（利用者の指定：修正案1）。雰囲気・入力のしかたも、選ぶボタンと同じ「淡い地＋✓＋濃い文字」
+   （M3 のセグメントボタン）。濃い色で塗るのは主な操作（保存する・参加するなど）と、色だけで見せる指定の複数選択モードだけにする */
+.tone button[aria-checked="true"] { background: var(--heat2); color: var(--heat-ink2); border-color: var(--ai); }
+.tone button[aria-checked="true"]::before { content: "✓"; margin-right: 2px; font-weight: 700; }
+.seg-btn.on, .seg input:checked + span { background: var(--heat2); color: var(--heat-ink2); box-shadow: none; border-color: var(--ai); }
+.seg-btn.on small, .seg input:checked + span small { color: var(--heat-ink2); }
+.seg-btn.on > span:first-child::before, .seg input:checked + span::before { content: "✓ "; font-weight: 700; }
+/* 参加する前の「入力のしかた」：選ばれたものの ✓ を名前の左に並べる（中身を縦に並べる組み方なので、✓ だけが別の行にならないように） */
+.seg input:checked + span { grid-template-columns: auto 1fr; column-gap: 0; }
+.seg input:checked + span small { grid-column: 1 / -1; }
+.seg input:checked + span::before { margin-right: 4px; }
