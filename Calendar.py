@@ -2518,7 +2518,9 @@ async def activity_start(code, now=None):
     return {"access_token": access_token, "session": session, "mode": kind,
             "calendars": [{"value": c.value, "label": c.name} for c in calendars],
             "today": today.isoformat(), "max_days": ADD_MAX_DAYS, "match_max_days": matcher.MAX_DAYS,
-            "titles_until": (today + timedelta(days=DAYS_TO_SHOW)).isoformat()}
+            "titles_until": (today + timedelta(days=DAYS_TO_SHOW)).isoformat(),
+            # /match の日程のカレンダーで祝日に色を付ける（作るときには、あらためて内閣府の一覧を読み込む）
+            "holidays": matcher.upcoming_holidays(today) if kind == "match" else {}}
 
 
 def _parse_iso_day(s):

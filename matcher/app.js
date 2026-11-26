@@ -123,13 +123,14 @@ function tapRange(R, key) {
 function initCreate() {
   $("create").hidden = false;
   const now = new Date();
-  const C = { month: new Date(now.getFullYear(), now.getMonth(), 1), start: null, end: null };
+  const C = { month: new Date(now.getFullYear(), now.getMonth(), 1), start: null, end: null, hol: {} };
   C.redraw = () => {
     renderPicker($("cCal"), C, (iso, d, wd) => {
       const inr = C.start !== null && (C.end === null ? iso === C.start : C.start <= iso && iso <= C.end);
       const past = iso < todayIso();
       return el("button", { type: "button", disabled: past, class: "pday" + (inr ? " on" : "") + (iso === C.start || iso === C.end ? " edge" : "")
-        + (wd === 0 ? " sun" : wd === 6 ? " sat" : ""), "aria-pressed": String(inr), "aria-label": md(iso),
+        + (C.hol[iso] || wd === 0 ? " sun" : wd === 6 ? " sat" : "") + (C.hol[iso] ? " hol" : ""), title: C.hol[iso] || "",
+        "aria-pressed": String(inr), "aria-label": md(iso) + (C.hol[iso] ? " " + C.hol[iso] : ""),
         onclick: () => { tapRange(C, iso); C.redraw(); } }, String(d));
     });
     $("cSum").textContent = C.start === null ? "日程が未選択"
@@ -137,6 +138,8 @@ function initCreate() {
         : `${md(C.start)}〜${md(C.end)}（${daysBetween(dateOf(C.start), dateOf(C.end)) + 1}日）`;
   };
   C.redraw();
+  // 祝日の色（読めなくても作るのには困らないので、失敗は黙って無視する）
+  fetch("/m/api/holidays").then((r) => r.json()).then((j) => { if (j && j.holidays) { C.hol = j.holidays; C.redraw(); } }).catch(() => {});
   const getSlots = slotPicker($("cSlots"), { d: [600, 1080], n: [1260, 1440] });   // 初期値：昼 10〜18時、夜 21〜24時
   $("createForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();

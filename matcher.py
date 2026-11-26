@@ -349,11 +349,24 @@ def fetch_holidays():
         with urllib.request.urlopen(req, timeout=10) as r:
             got = parse_holiday_csv(r.read(200_000).decode("cp932", errors="replace"))
         if len(got) >= 100:                       # 1955年からの一覧なので、少なすぎるときは読み違いとみなす
+            global _LATEST_HOLIDAYS
+            _LATEST_HOLIDAYS = got                # 作るページのカレンダーの色にも使う
             return got, "cao"
         _log("内閣府の祝日の一覧が少なすぎたので、コピーを使います")
     except (urllib.error.URLError, OSError, ValueError) as e:
         _log(f"内閣府の祝日の一覧を読めなかったので、コピーを使います（{type(e).__name__}）")
     return BUNDLED_HOLIDAYS, "bundled"
+
+
+_LATEST_HOLIDAYS = None                   # 最後に内閣府から読めた一覧（まだ無ければコピー）
+
+
+def upcoming_holidays(today=None):
+    """作るページのカレンダーで色を付けるための祝日（今月の初めから2年先まで）。
+    日程あわせを作るときには、あらためて内閣府の一覧を読み込む"""
+    today = today or datetime.now(JST).date()
+    lo, hi = today.replace(day=1).isoformat(), (today + timedelta(days=731)).isoformat()
+    return {d: n for d, n in (_LATEST_HOLIDAYS or BUNDLED_HOLIDAYS).items() if lo <= d <= hi}
 
 
 def holidays_for(days, table):
@@ -1300,6 +1313,9 @@ class Matcher:
             return self._image(m.group(1))
         if m:
             return 200, "text/html; charset=utf-8", self._page(m.group(1), headers), {}
+        if sub == "api/holidays":
+            return 200, "application/json; charset=utf-8", _json({"ok": True, "holidays": upcoming_holidays()}), \
+                {"Cache-Control": "public, max-age=3600"}
         m = re.fullmatch(r"api/event/([A-Za-z0-9_-]{6,32})", sub)
         if m:
             if not self.enabled:
