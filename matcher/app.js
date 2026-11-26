@@ -937,10 +937,16 @@ function detailPanel(p) {
 }
 /* あわせ暦の出力を読んだときの案内：△ を付ける枠の数と、未入力だった枠が ○ になること */
 function importNote(p, pv) {
+  // 案内は箇条書きで示す（利用者の指定）
   const n = applyTentative(p, pv.busy, pv.tent).n;
-  const parts = [`△ を付ける枠：${n}（固定。予定（✕）と重なる枠は ✕ のまま）`];
-  if (pv.missing) parts.push(`書き出した内容に無い（未入力だった）${pv.missing}枠は、予定が無いので ○ になります。行けるか分からない枠は、共有したあとにメニューで △ や ✕ を選んでください`);
-  return el("p", { class: "note", text: parts.join("。") + "。" });
+  const items = [
+    `✕（予定）：${Object.keys(pv.busy).length}日（上の一覧）`,
+    `△ を付ける枠：${n}（固定）`,
+    "予定（✕）と重なる枠は、△ ではなく ✕ になります",
+  ];
+  if (pv.missing) items.push(`書き出した内容に無い（未入力だった）枠：${pv.missing}（予定が無いので ○ になります）`,
+    "行けるか分からない枠は、共有したあとにメニューで △ や ✕ を選んでください");
+  return el("ul", { class: "note spec" }, ...items.map((t) => el("li", { text: t })));
 }
 function readEvents(text, name) {
   const { events, format } = detectAndParse(text, name);
