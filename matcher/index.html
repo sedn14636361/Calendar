@@ -24,6 +24,7 @@
       <button type="button" data-tone="light" role="radio">明るめ</button>
       <button type="button" data-tone="dark" role="radio">暗め</button>
     </div>
+    <div class="row" id="jumpRow" hidden><button type="button" class="jump" id="jumpMine">自分の都合を入力する ↓</button></div>
   </header>
 
   <p class="status" id="status" role="status"></p>
@@ -61,7 +62,7 @@
       <p class="note" id="bestNote"></p>
     </section>
 
-    <section class="box">
+    <section class="box" id="allBox">
       <div class="head-row">
         <h2 class="cap">みんなの空き</h2>
         <div class="row">
@@ -70,6 +71,10 @@
         </div>
       </div>
       <p class="legend"><span class="lg-half" id="lgD"></span><span class="lg-half" id="lgN"></span></p>
+      <p class="legend heat-legend">
+        <span class="hl"><i class="sw l0" aria-hidden="true"></i><span>色なし：✕の人がいる・まだ誰も入力していない</span></span>
+        <span class="hl"><i class="sw l1" aria-hidden="true"></i><i class="sw l2" aria-hidden="true"></i><i class="sw l3" aria-hidden="true"></i><i class="sw l4" aria-hidden="true"></i><i class="sw l5" aria-hidden="true"></i><span>✕なし：濃いほど ○ が多い（いちばん濃いのは全員 ○）</span></span>
+      </p>
       <div id="overview" class="months"></div>
       <section id="day" class="day" hidden aria-live="polite"></section>
     </section>
@@ -88,6 +93,7 @@
         <div class="row"><button class="primary" type="submit">参加する</button>
           <button type="button" id="jCancel" hidden>やめる</button></div>
       </form>
+      <p class="status act-status" id="mStatus" role="status"></p>
       <div id="editor" hidden></div>
     </section>
 
@@ -105,12 +111,14 @@
           <p class="pick-sum" id="eSum"></p>
         </div>
         <div class="row"><button class="primary" type="submit" id="eSave">保存する</button><button type="button" id="eCancel">元に戻す</button></div>
+        <p class="status act-status" id="eStatus" role="status"></p>
       </form>
     </details>
 
-    <section class="box">
+    <section class="box" id="peopleBox">
       <h2 class="cap">参加者</h2>
       <ul class="people" id="people"></ul>
+      <p class="status act-status" id="pStatus" role="status"></p>
       <div class="row" id="adminRow" hidden>
         <button type="button" class="danger" id="removeEvent">この日程あわせを削除</button>
       </div>

@@ -369,7 +369,8 @@ function initEvent() {
   $("saveImg").setAttribute("download", "awasegoyomi.png");
   $("removeEvent").addEventListener("click", onRemoveEvent);
   $("editForm").addEventListener("submit", onSaveEdit);
-  $("eCancel").addEventListener("click", () => { E.dirty = false; E.add.clear(); E.rm.clear(); renderEdit(); setStatus(""); });
+  $("eCancel").addEventListener("click", () => { E.dirty = false; E.add.clear(); E.rm.clear(); renderEdit(); setStatus("", false, "eStatus"); });
+  $("jumpMine").addEventListener("click", jumpToMine);
   for (const id of ["eTitle", "eDesc"]) $(id).addEventListener("input", () => { E.dirty = true; });
   load(true);
   // ほかの人の入力を30秒ごとに取り込む。入力欄を操作している間と、保存を待っている間は描き直さない
@@ -409,6 +410,7 @@ function accept(d) {
   $("lead").textContent = `${md(ev.first)} 〜 ${md(ev.last)}${contiguous ? "" : `（候補 ${ev.days.length}日）`}・${d.people.length}人が入力`;
   $("desc").textContent = ev.description || ""; $("desc").hidden = !ev.description;
   applyTheme(themeFor(ev)); renderTone(); renderPalette(ev.palette); remember(ev);
+  $("jumpRow").hidden = Object.keys(S.keys.people).length > 0;   // このブラウザでまだ参加していない人にだけ出す
   $("event").hidden = false;
   renderBest(); renderOverview(); renderDay(); renderPeople(); renderMine(); renderEdit();
 }
@@ -417,7 +419,7 @@ function accept(d) {
 function renderBest() {
   const ol = $("best"); ol.textContent = "";
   const n = S.data.people.length;
-  if (!n) { $("bestNote").textContent = "まだ誰も入力していません。下の「あなたの入力」から参加してください。"; return; }
+  if (!n) { $("bestNote").textContent = "まだ誰も入力していません。下の「入力」から参加してください。"; return; }
   if (!S.data.best.length) { $("bestNote").textContent = "○ か △ の付いた枠がまだありません。"; return; }
   $("bestNote").textContent = "✕（と未入力）の人が少ない順、次に ○ の多い順です。";
   for (const b of S.data.best) {
@@ -513,10 +515,10 @@ function renderEdit() {
       "aria-label": md(iso) + (isCand ? "（候補日）" : "") + (E.add.has(iso) ? "（足す）" : "") + (E.rm.has(iso) ? "（消す）" : ""),
       onclick: () => {
         if (isCand) {
-          if (!admin) { setStatus("候補日を消せるのは、作った人だけです", true); return; }
+          if (!admin) { setStatus("候補日を消せるのは、作った人だけです", true, "eStatus"); return; }
           if (E.rm.has(iso)) E.rm.delete(iso); else E.rm.add(iso);
         } else if (E.add.has(iso)) E.add.delete(iso); else E.add.add(iso);
-        E.dirty = true; setStatus(""); renderEdit();
+        E.dirty = true; setStatus("", false, "eStatus"); renderEdit();
       } }, String(d));
   });
   const parts = [];
@@ -529,12 +531,12 @@ async function onSaveEdit(ev) {
   if (E.rm.size && !confirm(`${E.rm.size}日の候補日を消します。その日の全員の入力も見えなくなります。`)) return;
   try {
     const sl = E.getSlots();
-    if (sl.d[0] >= sl.d[1] || sl.n[0] >= sl.n[1]) { setStatus("時間帯の終わりは、始まりより後にしてください", true); return; }
+    if (sl.d[0] >= sl.d[1] || sl.n[0] >= sl.n[1]) { setStatus("時間帯の終わりは、始まりより後にしてください", true, "eStatus"); return; }
     const d = await api(`/m/api/event/${S.eid}/edit`, { title: $("eTitle").value, description: $("eDesc").value, slots: sl, tone: $("eTone").value,
       add_days: [...E.add], remove_days: [...E.rm], admin: S.keys.admin });
     E.dirty = false; E.add.clear(); E.rm.clear();
-    accept(d); setStatus("保存しました");
-  } catch (e) { setStatus(e.message, true); }
+    accept(d); setStatus("保存しました", false, "eStatus");
+  } catch (e) { setStatus(e.message, true, "eStatus"); }
 }
 
 /* ---------- 参加者 ---------- */
@@ -550,19 +552,20 @@ function renderPeople() {
       el("i", { class: "dot", style: { background: p.color } }), el("span", { class: "nm", text: p.name }),
       own ? el("span", { class: "tag own", text: "あなた" }) : null,
       el("button", { type: "button", class: "small", text: "編集する", onclick: () => pickPerson(p.id, true) }),
-      el("button", { type: "button", class: "small danger", text: "削除", onclick: () => onDeletePerson(p) }),
+      el("button", { type: "button", class: "small danger", text: "削除", "aria-label": `${p.name} の入力を削除`, onclick: () => onDeletePerson(p, "pStatus") }),
       p.memo ? el("span", { class: "pmemo", text: p.memo }) : null));
   }
 }
-async function onDeletePerson(p) {
+/* 結果は押したボタンの近く（参加者の一覧の下か、入力の欄）に出す */
+async function onDeletePerson(p, where) {
   if (!confirm(`「${p.name}」の入力を削除します。元に戻せません。`)) return;
-  try { accept(await api(`/m/api/event/${S.eid}/delete`, { pid: p.id, key: S.keys.people[p.id] || null, admin: S.keys.admin })); setStatus("削除しました"); }
-  catch (e) { setStatus(e.message, true); }
+  try { accept(await api(`/m/api/event/${S.eid}/delete`, { pid: p.id, key: S.keys.people[p.id] || null, admin: S.keys.admin })); setStatus(`「${p.name}」の入力を削除しました`, false, where); }
+  catch (e) { setStatus(e.message, true, where); }
 }
 async function onRemoveEvent() {
   if (!confirm("この日程あわせを、全員の入力ごと削除します。元に戻せません。")) return;
   try { await api(`/m/api/event/${S.eid}/remove`, { admin: S.keys.admin }); store.set(keyName(S.eid), { people: {}, admin: null }); location.href = "/m"; }
-  catch (e) { setStatus(e.message, true); }
+  catch (e) { setStatus(e.message, true, "pStatus"); }
 }
 
 /* ---------- あなたの入力 ---------- */
@@ -574,16 +577,25 @@ async function onJoin(ev) {
     S.keys.people[d.joined] = d.key; saveKeys(S.eid, S.keys);
     S.current = d.joined; S.joining = false; $("jName").value = "";
     document.querySelector('input[name="jMode"][value="rough"]').checked = true;   // 次に参加する人は大雑把入力から
-    accept(d); setStatus(mode === "rough" ? "参加しました。ペンを選んで、日の「昼」「夜」をタップしてください" : "参加しました。予定を読み込んでください");
-  } catch (e) { setStatus(e.message, true); }
+    accept(d); setStatus(mode === "rough" ? "参加しました。日の「昼」「夜」のメニューから ○△✕ を選び、「保存する」を押してください" : "参加しました。予定を読み込んでください", false, "mStatus");
+  } catch (e) { setStatus(e.message, true, "mStatus"); }
+}
+
+/* 見出しの下の「自分の都合を入力する」：入力の欄へ移り、名前の欄に入る（ほかの人を編集していたら、新しく参加するに切り替える） */
+async function jumpToMine() {
+  if ($("joinForm").hidden && !(await pickPerson(null))) return;
+  $("mine").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  $("jName").focus({ preventScroll: true });
 }
 
 /* 「入力」の欄で編集する人を選ぶ。誰でも、どの参加者でも選べる（ブラウザの記録を消しても直せるように） */
 async function pickPerson(pid, scroll) {
-  if (pid !== S.current && !(await settleUnsaved())) return;
+  if (pid !== S.current && !(await settleUnsaved())) return false;
+  if (pid !== S.current) { S.undo = null; setStatus("", false, "mStatus"); }
   S.current = pid; S.joining = !pid;
   renderMine(); renderPeople();
   if (scroll) $("mine").scrollIntoView({ behavior: "smooth", block: "start" });
+  return true;
 }
 function renderMine() {
   const box = $("myTabs"); box.textContent = "";
@@ -710,7 +722,7 @@ function renderEditor() {
     el("button", { type: "button", id: "saveBtn", class: "primary", disabled: !S.unsaved || S.saving, onclick: () => saveNow({}) }, "保存する")));
   box.append(el("div", { class: "row foot-row" },
     el("button", { type: "button", class: "small", text: "新しく参加する", onclick: async () => { if (await settleUnsaved()) { S.joining = true; renderMine(); } } }),
-    el("button", { type: "button", class: "small danger", text: "この入力を削除", onclick: () => onDeletePerson(p) })));
+    el("button", { type: "button", class: "small danger", text: "この入力を削除", onclick: () => onDeletePerson(p, "mStatus") })));
   if (focusId && $(focusId)) $(focusId).focus();
   // 右下の「複数選択モード ✕」を、下に貼り付く保存のバーの上に置くため、バーの高さを測っておく
   const sb = box.querySelector(".savebar");
@@ -826,11 +838,16 @@ async function saveNow(extra) {
   const b = $("saveBtn"); if (b) b.disabled = true;
   try {
     const d = await api(`/m/api/event/${S.eid}/save`, { pid: p.id, key: S.keys.people[p.id], admin: S.keys.admin, changes });
+    // 予定を1つ消したときだけ「元に戻す」を出す。ほかの予定の変更をしたら、戻す先が古くなるので消す
+    if ("busy" in changes) S.undo = S.undoNext || null;
+    S.undoNext = null;
     S.saving = false; S.unsaved = false; S.savedOnce = true; accept(d);
     return true;
   } catch (e) {
-    S.saving = false; setStatus(e.message, true);
-    const st2 = $("saveState"); if (st2) st2.textContent = "保存できませんでした。もう一度「保存する」を押してください";
+    S.saving = false; S.undoNext = null;
+    // 理由は、画面の下に留まる保存のバーに出す（ページの上の知らせはスマホでは見えないため）
+    const st2 = $("saveState");
+    if (st2) { st2.textContent = `保存できませんでした（${e.message}）。` + (Object.keys(extra).length ? "もう一度押してください" : "もう一度「保存する」を押してください"); st2.classList.add("err"); }
     const b2 = $("saveBtn"); if (b2) b2.disabled = false;
     return false;
   }
@@ -843,7 +860,7 @@ function detailPanel(p) {
   const file = el("input", { type: "file", accept: ".ics,.json,.csv,.txt,text/calendar,application/json,text/csv,text/plain", class: "visually-hidden", id: "dFile" });
   file.addEventListener("change", async () => {
     const f = file.files && file.files[0]; if (!f) return;
-    try { readEvents(await f.text(), f.name); } catch (e) { setStatus(`読み込めませんでした：${e.message}`, true); }
+    try { readEvents(await f.text(), f.name); } catch (e) { setStatus(`読み込めませんでした：${e.message}`, true, "dStatus"); }
     file.value = "";
   });
   const paste = el("textarea", { id: "dPaste", rows: 4, placeholder: "例：\n2026-12-04 19:00-20:30\n2026-12-05 終日\n（ICS の中身をそのまま貼っても読めます）" });
@@ -852,13 +869,14 @@ function detailPanel(p) {
   box.append(el("p", { class: "note", text: "Google カレンダーなどから書き出した .ics を選ぶか、予定を貼り付けてください。予定の名前は読み込んだ時点で捨て、時間だけを送ります。" }),
     el("div", { class: "row" }, el("label", { class: "btn", for: "dFile" }, "ファイルを選ぶ（.ics/.csv/.json/.txt）"), file),
     paste,
-    el("div", { class: "row" }, el("button", { type: "button", text: "貼り付けた内容を読む", onclick: () => { try { if (paste.value.trim()) { readEvents(paste.value, ""); S.pasteText = ""; } } catch (e) { setStatus(`読み込めませんでした：${e.message}`, true); } } }),
+    el("div", { class: "row" }, el("button", { type: "button", text: "貼り付けた内容を読む", onclick: () => { try { if (paste.value.trim()) { readEvents(paste.value, ""); S.pasteText = ""; } } catch (e) { setStatus(`読み込めませんでした：${e.message}`, true, "dStatus"); } } }),
       el("button", { type: "button", class: "small", text: "書き方", onclick: () => { const h = $("dHelp"); h.hidden = !h.hidden; } })),
     el("div", { class: "help", id: "dHelp", hidden: true },
       el("p", { text: "ICS：Google カレンダーの「設定」→ 対象のカレンダー →「エクスポート」で書き出せます（繰り返しの予定にも対応）。" }),
       el("p", { text: "テキスト：1行に1件、「2026-12-04 19:00-20:30」か「2026-12-05 終日」。" }),
       el("p", { text: "CSV：「2026-12-04,19:00,20:30」か「2026-12-05,終日」。" }),
-      el("p", { text: "終日の予定は、その日の昼も夜も ✕ になります。" })));
+      el("p", { text: "終日の予定は、その日の昼も夜も ✕ になります。" })),
+    el("p", { class: "status act-status", id: "dStatus", role: "status" }));   // 読み込み・予定を足すときの知らせ（ボタンの近くに出す）
 
   if (S.pending && S.pending.pid === p.id) {
     const pv = S.pending, list = el("ul", { class: "ivs" });
@@ -877,12 +895,19 @@ function detailPanel(p) {
   const shared = el("div", { class: "shared" });
   const keys = Object.keys(p.busy).sort();
   shared.append(el("p", { class: "cap", text: p.busy_set ? `共有中の予定（${keys.length}日）` : "まだ予定を共有していません（共有するまで ○✕ は付きません）" }));
+  // 予定を1つ消した直後は「元に戻す」を出す（確認の窓は、何件も消すときに煩わしいので出さない）
+  if (S.undo && S.undo.pid === p.id) shared.append(el("div", { class: "row undo", role: "status" },
+    el("span", { text: `${S.undo.text} を消しました` }),
+    el("button", { type: "button", class: "small", text: "元に戻す", onclick: () => { const u = S.undo; S.undo = null; saveNow({ busy: u.busy }); } })));
   if (keys.length) {
     const ul = el("ul", { class: "ivs" });
+    const span = (s, e) => (s === 0 && e === 1440 ? "終日" : `${fmtHM(s)}–${fmtHM(e)}`);
     // 消すボタン（✕）は日付の左に置く（利用者の指定）
     for (const iso of keys) p.busy[iso].forEach(([s, e], i) => ul.append(el("li", {},
-      el("button", { type: "button", class: "small del", "aria-label": `${md(iso)} の予定を消す`, text: "✕", onclick: () => {
-        const b = JSON.parse(JSON.stringify(p.busy)); b[iso].splice(i, 1); if (!b[iso].length) delete b[iso]; saveNow({ busy: b }); } }),
+      el("button", { type: "button", class: "small del", "aria-label": `${md(iso)} ${span(s, e)} の予定を消す`, text: "✕", onclick: () => {
+        const b = JSON.parse(JSON.stringify(p.busy)); b[iso].splice(i, 1); if (!b[iso].length) delete b[iso];
+        S.undoNext = { pid: p.id, busy: JSON.parse(JSON.stringify(p.busy)), text: `${md(iso)} ${span(s, e)}` };
+        saveNow({ busy: b }); } }),
       el("span", { class: "d", text: md(iso) }),
       el("span", { text: s === 0 && e === 1440 ? "終日" : `${fmtHM(s)}–${fmtHM(e)}` }))));
     shared.append(ul);
@@ -897,7 +922,7 @@ function detailPanel(p) {
       const toMin = (v) => { const [h, m] = v.split(":").map(Number); return h * 60 + m; };
       let iv;
       if (allDay.checked) iv = [0, 1440];
-      else { const s = toMin(sIn.value || "0:0"); let e = toMin(eIn.value || "0:0"); if (e === 0) e = 1440; if (!(e > s)) { setStatus("終了は開始より後にしてください（日をまたぐ予定は2つに分けてください）", true); return; } iv = [s, e]; }
+      else { const s = toMin(sIn.value || "0:0"); let e = toMin(eIn.value || "0:0"); if (e === 0) e = 1440; if (!(e > s)) { setStatus("終了は開始より後にしてください（日をまたぐ予定は2つに分けてください）", true, "dStatus"); return; } iv = [s, e]; }
       saveNow({ busy: unionBusy(p.busy, { [dSel.value]: [iv] }) });
     } })));
   if (p.busy_set) shared.append(el("div", { class: "row" }, el("button", { type: "button", class: "small danger", text: "共有中の予定をすべて消す", onclick: () => { if (confirm("共有中の予定をすべて消します（すべて ○ になります）")) saveNow({ busy: {} }); } })));
@@ -907,7 +932,7 @@ function detailPanel(p) {
 function readEvents(text, name) {
   const { events, format } = detectAndParse(text, name);
   S.pending = { pid: S.current, busy: busyFromEvents(events, busyDays()), format, count: events.length };
-  setStatus(""); renderEditor();
+  renderEditor();
 }
 
 async function copyText(text, btn, msg) {
