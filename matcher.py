@@ -94,7 +94,7 @@ MAX_INTERVALS_PER_DAY = 48
 MAX_RECORD_CHARS = 45000               # スプレッドシートの1マスは 50,000 文字まで。余裕を持たせる
 MAX_BODY = 192 * 1024                  # 画面から受け取る中身の上限
 KEEP_DAYS = 90                         # 最終日からこの日数がたった調整は消す
-BEST_LIMIT = 5
+BEST_LIMIT = 20                       # 候補の数の上限（PC の2列ではカレンダーの高さに収まるだけ、スマホでは5つを画面で出す）
 
 PALETTE_API = "https://kotoba-palette.senchaoishi.workers.dev/api/palette"
 PALETTE_TIMEOUT = 25

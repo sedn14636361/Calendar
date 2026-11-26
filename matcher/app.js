@@ -415,7 +415,7 @@ function accept(d) {
   applyTheme(themeFor(ev)); renderTone(); renderPalette(ev.palette); remember(ev);
   $("jumpRow").hidden = Object.keys(S.keys.people).length > 0;   // このブラウザでまだ参加していない人にだけ出す
   $("event").hidden = false;
-  renderBest(); renderOverview(); renderDay(); renderPeople(); renderMine(); renderEdit();
+  renderBest(); renderOverview(); renderDay(); renderPeople(); renderMine(); renderEdit(); fitBest();
 }
 
 /* ---------- 候補 ---------- */
@@ -433,6 +433,24 @@ function renderBest() {
     // 「★ 全員 ○」「✕なし」は出さない（利用者の指定。✕ の数は横の「×0」で分かる）
   }
 }
+/* 候補の数：PC など広い画面（2列）では、みんなのカレンダーの欄の高さに収まるだけ出す（横に余白を作らない。利用者の指定）。
+   1列の画面では今までどおり5つ。カレンダーの欄の高さが変わったとき（日の詳細・描き直し・画面の幅）にも数え直す */
+const BEST_MIN = 5;
+function fitBest() {
+  const items = [...$("best").children]; if (!items.length) return;
+  const wide = matchMedia("(min-width: 960px)").matches;
+  items.forEach((li, i) => li.classList.toggle("cut", !wide && i >= BEST_MIN));
+  if (!wide) return;
+  const a = $("allBox"), b = $("bestBox");
+  a.style.alignSelf = "start"; b.style.alignSelf = "start";          // 測る間だけ、引き伸ばしをやめて中身の高さにする
+  const limit = a.getBoundingClientRect().height;
+  for (let i = items.length - 1; i >= BEST_MIN && b.getBoundingClientRect().height > limit; i--) items[i].classList.add("cut");
+  a.style.removeProperty("align-self"); b.style.removeProperty("align-self");
+}
+let fitQueued = false;
+const queueFit = () => { if (fitQueued) return; fitQueued = true; requestAnimationFrame(() => { fitQueued = false; if (S.data) fitBest(); }); };
+window.addEventListener("resize", queueFit);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(queueFit);   // 文字の形が届くと高さが変わる
 const countChip = (m, v) => el("span", { class: `c m-${m}`, text: `${MARK_TEXT[m]}${v}` });
 
 /* ---------- みんなのカレンダー ---------- */
@@ -479,7 +497,7 @@ function renderOverview() {
   box.scrollLeft = keep;
 }
 function selectDay(iso) {
-  S.selectedDay = iso; renderOverview(); renderDay();
+  S.selectedDay = iso; renderOverview(); renderDay(); fitBest();
   // 月を横に並べているときは、選んだ日の月まで横に動かす（候補から別の月の日を選んだとき）
   const box = $("overview"), m = box.querySelector(`.month[data-ym="${iso.slice(0, 7)}"]`);
   if (m && box.scrollWidth > box.clientWidth) box.scrollLeft += m.getBoundingClientRect().left - box.getBoundingClientRect().left;
@@ -491,7 +509,7 @@ function renderDay() {
   if (!iso || !S.data.event.days.includes(iso)) { box.hidden = true; return; }
   box.hidden = false; box.textContent = "";
   const t = S.data.tally[iso];
-  box.append(el("div", { class: "head-row" }, el("h3", { text: md(iso) + (holName(iso) ? ` ${holName(iso)}` : "") }), el("button", { type: "button", class: "small", text: "閉じる", onclick: () => { S.selectedDay = null; renderOverview(); renderDay(); } })));
+  box.append(el("div", { class: "head-row" }, el("h3", { text: md(iso) + (holName(iso) ? ` ${holName(iso)}` : "") }), el("button", { type: "button", class: "small", text: "閉じる", onclick: () => { S.selectedDay = null; renderOverview(); renderDay(); fitBest(); } })));
   const count = (c) => `○${c.o} △${c.t} ✕${c.x}${c["-"] ? ` 未${c["-"]}` : ""}`;
   box.append(el("p", { class: "note", text: `昼 ${count(t.d)}　／　夜 ${count(t.n)}` }));
   if (!S.data.people.length) return;

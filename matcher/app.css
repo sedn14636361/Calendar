@@ -398,3 +398,5 @@ button.wd.on { padding-left: 0; padding-right: 0; }
 .months.mine .paint { min-height: 24px; }
 /* PC など広い画面（幅 701px 以上。スマホの境目 700px に合わせる）では、昼・夜の選択肢を 44px にする（利用者の指定。スマホは 24px のまま） */
 @media (min-width: 701px) { .months.mine .paint { min-height: 44px; } }
+/* 候補：出し切れない分（fitBest で決める）は隠す */
+#best > li.cut { display: none; }
