@@ -480,8 +480,8 @@ function renderOverview() {
   // 複数の月：PC など広い画面（2列）では月を横に並べ、横にスクロールして移る（欄の高さを1か月分にする。利用者の指定）
   const months = monthsOf(S.data.event.days), multi = months.length > 1;
   box.classList.toggle("multi", multi);
-  $("monthHint").hidden = !multi;
-  $("monthHint").textContent = `${months.length}か月あります。「‹」「›」のボタンか、横にスクロールすると、ほかの月を見られます`;
+  // 案内は、横に移れるとき（updateMonthNav）だけ出す。指で操作する画面では「スワイプ」と書く
+  $("monthHint").textContent = `${months.length}か月あります。「‹」「›」のボタンか、${matchMedia("(pointer: coarse)").matches ? "左右にスワイプ" : "横にスクロール"}すると、ほかの月を見られます`;
   if (multi) { box.tabIndex = 0; box.setAttribute("role", "region"); box.setAttribute("aria-label", "みんなのカレンダー（月ごと）"); }
   else { box.removeAttribute("tabindex"); box.removeAttribute("role"); box.removeAttribute("aria-label"); }
   for (const ym of months) { const g = monthGrid(ym, (iso, d, wd) => {
@@ -501,7 +501,7 @@ function renderOverview() {
   box.scrollLeft = keep;
   updateMonthNav();
 }
-/* 月を移るボタン（月を横に並べる広い画面だけ）。前・次の月があるときだけ出し、日程あわせの期間に無い月には移らない（利用者の指定） */
+/* 月を移るボタン（月を横に並べて、見えていない月があるとき）。前・次の月があるときだけ出し、日程あわせの期間に無い月には移らない（利用者の指定） */
 const ymText = (ym) => `${Number(ym.slice(0, 4))}年${Number(ym.slice(5))}月`;
 function monthIndex() {
   const box = $("overview"), left = box.getBoundingClientRect().left; let best = 0, d = Infinity;
@@ -510,11 +510,14 @@ function monthIndex() {
 }
 function updateMonthNav() {
   const box = $("overview"), nav = $("monthNav"), ms = [...box.querySelectorAll(".month")];
-  nav.hidden = !(box.classList.contains("multi") && box.scrollWidth > box.clientWidth + 1);   // 月を縦に並べる狭い画面では出さない
+  nav.hidden = !(box.classList.contains("multi") && box.scrollWidth > box.clientWidth + 1);   // 全部の月が見えているときは出さない
+  $("monthHint").hidden = nav.hidden;
   if (nav.hidden) return;
   const i = monthIndex(), prev = $("mPrev"), next = $("mNext"), had = document.activeElement;
   const set = (b, m, text) => { b.hidden = !m; if (m) { b.textContent = text(Number(m.dataset.ym.slice(5))); b.setAttribute("aria-label", `${ymText(m.dataset.ym)}を見る`); } };
-  set(prev, ms[i - 1], () => "‹"); set(next, ms[i + 1], () => "›");   // 画面は「‹」「›」だけ（利用者の指定）。読み上げには月を伝える
+  // 画面は「‹」「›」だけ（利用者の指定）。読み上げには月を伝える。2か月ずつ見える幅でも、端まで動いたらその向きのボタンは出さない
+  const atStart = box.scrollLeft <= 1, atEnd = box.scrollLeft >= box.scrollWidth - box.clientWidth - 1;
+  set(prev, atStart ? null : ms[i - 1], () => "‹"); set(next, atEnd ? null : ms[i + 1], () => "›");
   if (had && had.hidden) (had === prev ? next : prev).focus();   // 押したボタンが端で消えたら、もう一方に移る
 }
 function goMonth(step) {
