@@ -256,9 +256,10 @@ details.box > summary { cursor: pointer; }
 .paint.fixed.m-o { background: var(--heat2); } .paint.fixed.m-o b { color: var(--heat-ink2); }
 /* 昼と夜の時間帯を選ぶ欄 */
 .slots { display: grid; gap: 6px; }
-.slot-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.slot-row .lbl { min-width: 2em; font-size: 14px; }
-.slot-row select { padding: 4px 8px; }
+.slot-row { display: grid; grid-template-columns: 2em minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; max-width: 26em; }
+.slot-row .lbl { font-size: 14px; }
+/* 昼と夜でメニューの幅をそろえる（夜は「25時（翌1時）」のような長い選択肢があり、そのままだと夜だけ広くなる。利用者の指定） */
+.slot-row select { padding: 4px 8px; width: 100%; min-width: 0; }
 
 /* 日の詳細：名前はそのまま、昼・夜は記号を中央にそろえ、縦の罫線で分ける */
 .dtable { gap: 0; column-gap: 0; row-gap: 0; }
@@ -285,3 +286,9 @@ details.box > summary { cursor: pointer; }
 .act-status:empty { display: none; }
 /* なぞって選ぶ間に、文字が選択されないように */
 .months.mine.picking { user-select: none; -webkit-user-select: none; }
+/* 狭い画面では「昼」「夜」をメニューの上に出し、メニューを広げる（「27時（翌3時）」が切れないように） */
+@media (max-width: 400px) {
+  .slot-row { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); row-gap: 2px; column-gap: 2px; }
+  .slot-row .lbl { grid-column: 1 / -1; }
+  .slot-row select { padding-left: 6px; padding-right: 2px; font-feature-settings: "palt"; font-size: 14px; }
+}
