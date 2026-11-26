@@ -122,13 +122,14 @@ function tapRange(R, key) {
    ================================================================= */
 function initCreate() {
   $("create").hidden = false;
+  document.querySelector(".brand").hidden = true;   // 見出しの「あわせ暦」と二重になるので出さない（利用者の指定）
   const now = new Date();
   const C = { month: new Date(now.getFullYear(), now.getMonth(), 1), start: null, end: null, hol: {} };
   C.redraw = () => {
     renderPicker($("cCal"), C, (iso, d, wd) => {
       const inr = C.start !== null && (C.end === null ? iso === C.start : C.start <= iso && iso <= C.end);
-      const past = iso < todayIso();
-      return el("button", { type: "button", disabled: past, class: "pday" + (inr ? " on" : "") + (iso === C.start || iso === C.end ? " edge" : "")
+      const past = iso < todayIso(), today = iso === todayIso();
+      return el("button", { type: "button", disabled: past, "aria-current": today ? "date" : null, class: "pday" + (inr ? " on" : "") + (iso === C.start || iso === C.end ? " edge" : "") + (today ? " today" : "")
         + (C.hol[iso] || wd === 0 ? " sun" : wd === 6 ? " sat" : "") + (C.hol[iso] ? " hol" : ""), title: C.hol[iso] || "",
         "aria-pressed": String(inr), "aria-label": md(iso) + (C.hol[iso] ? " " + C.hol[iso] : ""),
         onclick: () => { tapRange(C, iso); C.redraw(); } }, String(d));
@@ -417,20 +418,20 @@ function accept(d) {
 function renderBest() {
   const ol = $("best"); ol.textContent = "";
   const n = S.data.people.length;
-  if (!n) { $("bestNote").textContent = "まだ誰も入力していません。下の「あなたの入力」から参加してください。"; return; }
+  if (!n) { $("bestNote").textContent = "まだ誰も入力していません。下の「入力」から参加してください。"; return; }
   if (!S.data.best.length) { $("bestNote").textContent = "○ か △ の付いた枠がまだありません。"; return; }
   $("bestNote").textContent = "✕（と未入力）の人が少ない順、次に ○ の多い順です。";
   for (const b of S.data.best) {
     const all = b.o === n, ok = b.x + b["-"] === 0;
     ol.append(el("li", {}, el("button", { type: "button", class: "best-item" + (all ? " all" : ok ? " ok" : ""), onclick: () => selectDay(b.day) },
       el("span", { class: "when", text: `${md(b.day)} ${SLOT_TEXT[b.slot]}` }),
-      el("span", { class: "counts" }, countChip("o", b.o), countChip("t", b.t), countChip("x", b.x), b["-"] ? el("span", { class: "c none", text: `未${b["-"]}` }) : null),
-      !all && ok ? el("span", { class: "badge soft", text: "✕なし" }) : null)));   // 「★ 全員 ○」は出さない（利用者の指定）
+      el("span", { class: "counts" }, countChip("o", b.o), countChip("t", b.t), countChip("x", b.x), b["-"] ? el("span", { class: "c none", text: `未${b["-"]}` }) : null))));
+    // 「★ 全員 ○」「✕なし」は出さない（利用者の指定。✕ の数は横の「×0」で分かる）
   }
 }
 const countChip = (m, v) => el("span", { class: `c m-${m}`, text: `${MARK_TEXT[m]}${v}` });
 
-/* ---------- みんなの空き（カレンダー） ---------- */
+/* ---------- みんなのカレンダー ---------- */
 function monthsOf(days) {
   const out = []; const seen = new Set();
   for (const iso of days) { const k = iso.slice(0, 7); if (!seen.has(k)) { seen.add(k); out.push(k); } }
@@ -453,11 +454,11 @@ function renderOverview() {
   for (const ym of monthsOf(S.data.event.days)) box.append(monthGrid(ym, (iso, d, wd) => {
     if (!days.has(iso)) return el("div", { class: "cell out" }, el("span", { class: "dn", text: d }));
     const halves = ["d", "n"].map((slot) => {
-      // 内訳はふだん出さない。カーソルを合わせると出し（title と CSS の :hover）、タップすると下に日の詳細を出す
+      // マスの中には ○△✕ の人数を出さない（カーソルを合わせても出さない。利用者の指定）。
+      // 内訳は、マスをタップすると下の日の詳細に出る。読み上げには、マスの aria-label で伝える
       const c = S.data.tally[iso][slot], lv = heatLevel(c);
-      const label = n ? `○${c.o}△${c.t}✕${c.x}` : "";   // マスが狭いので詰めて書く（title には読みやすい形で）
-      return el("span", { class: `half lv${lv}`, title: n ? `${SLOT_TEXT[slot]} ○${c.o} △${c.t} ✕${c.x}` : "",
-        style: { background: `var(--heat${lv})`, color: `var(--heat-ink${lv})` } }, el("span", { class: "lbl", text: label }));
+      return el("span", { class: `half lv${lv}`, "aria-hidden": "true",
+        style: { background: `var(--heat${lv})`, color: `var(--heat-ink${lv})` } });
     });
     const t = S.data.tally[iso];
     return el("button", { type: "button", class: "cell in" + (S.selectedDay === iso ? " sel" : "") + dayClass(iso, wd), title: holName(iso),
@@ -509,7 +510,8 @@ function renderEdit() {
   renderPicker($("eCal"), E, (iso, d, wd) => {
     const isCand = cand.has(iso), past = iso < todayIso();
     const st = E.rm.has(iso) ? " rm" : E.add.has(iso) ? " add" : isCand ? " on" : "";
-    return el("button", { type: "button", disabled: past && !isCand, class: "pday" + st + pickDayClass(iso, wd), title: pickHolName(iso),
+    const today = iso === todayIso();
+    return el("button", { type: "button", disabled: past && !isCand, "aria-current": today ? "date" : null, class: "pday" + st + pickDayClass(iso, wd) + (today ? " today" : ""), title: pickHolName(iso),
       "aria-label": md(iso) + (isCand ? "（候補日）" : "") + (E.add.has(iso) ? "（足す）" : "") + (E.rm.has(iso) ? "（消す）" : ""),
       onclick: () => {
         if (isCand) {
@@ -658,8 +660,8 @@ function renderEditor() {
       el("div", { class: "tgs" }, ...[["o", "○"], ["t", "△"], ["x", "✕"], ["clear", clearName]].map(([k, label]) =>
         el("button", { type: "button", class: `apply pen-${k}`, disabled: !targets.length, onclick: () => paintBulk(k) }, label)))));
   box.append(el("p", { class: "note", text: p.mode === "detail"
-    ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。メニューで選んだ枠（太字・枠付き）は、自動の判定より優先され、曜日などのまとめて選択では変わりません（複数選択モードで選んだ日は上書きできます）。"
-    : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。メニューで選んだ枠（太字・枠付き）は、曜日などのまとめて選択では変わりません（複数選択モードで選んだ日は上書きできます）。" }));
+    ? "予定から ○✕ が自動で付きます。分からない枠はメニューで △ に。メニューで選んだ枠（太字）は固定され、複数選択モードでだけ上書きできます。"
+    : "「昼」「夜」のメニューで ○△✕ を選びます。メニューで選んだ枠（太字）は固定され、複数選択モードでだけ上書きできます。" }));
   box.append(bulk);
 
   // 自分のカレンダー

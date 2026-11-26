@@ -161,6 +161,52 @@ def check_period(first, last, today=None):
         raise MatcherError("開始日は2年以内にしてください")
 
 
+def busy_from_google_events(events, first, last):
+    """Google カレンダーの予定から、日ごとの予定の時刻（0時からの分の区間）を作る。
+    first〜last と、last の翌日（夜が 24時を越えるときの未明の分）が対象。予定の名前は使わない。
+    決め方はボットの空き日の判定（/date）と同じ：終日の予定（「予定なし」を含む）はその日の全部、
+    時刻のある予定は日本時間で日ごとに切り分ける"""
+    lo, hi = first, last + timedelta(days=1)
+    out = {}
+
+    def add(day, s, e):
+        if lo <= day <= hi and s < e:
+            out.setdefault(day.isoformat(), []).append([s, e])
+    for ev in events:
+        st, en = ev.get("start") or {}, ev.get("end") or {}
+        if "date" in st:                                   # 終日の予定（終わりの日は含まない）
+            d, end_d = date.fromisoformat(st["date"]), date.fromisoformat(en.get("date") or st["date"])
+            end_d = max(end_d, d + timedelta(days=1))
+            while d < end_d:
+                add(d, 0, 1440)
+                d += timedelta(days=1)
+            continue
+        if "dateTime" not in st or "dateTime" not in en:
+            continue
+        a = datetime.fromisoformat(st["dateTime"].replace("Z", "+00:00")).astimezone(JST)
+        b = datetime.fromisoformat(en["dateTime"].replace("Z", "+00:00")).astimezone(JST)
+        d = a.date()
+        while d <= b.date():
+            day0 = datetime(d.year, d.month, d.day, tzinfo=JST)
+            s = max(0, int((a - day0).total_seconds() // 60))
+            e = min(1440, -(-int((b - day0).total_seconds()) // 60))   # 終わりは切り上げ（少しでも重なれば ✕）
+            add(d, s, e)
+            d += timedelta(days=1)
+    merged = {}
+    for day, ivs in out.items():                           # 重なる区間をまとめる（1日の区間の数の上限に収める）
+        ivs.sort()
+        m = []
+        for s, e in ivs:
+            if m and s <= m[-1][1]:
+                m[-1][1] = max(m[-1][1], e)
+            else:
+                m.append([s, e])
+        if len(m) > MAX_INTERVALS_PER_DAY:                 # 多すぎるときは、はみ出た分を1つにまとめる（✕ の側に倒す）
+            m = m[:MAX_INTERVALS_PER_DAY - 1] + [[m[MAX_INTERVALS_PER_DAY - 1][0], m[-1][1]]]
+        merged[day] = m
+    return merged
+
+
 def period_days(event):
     """候補日の一覧（"YYYY-MM-DD" の昇順）。あとから日を足した調整は days に持つ。無ければ first〜last の毎日"""
     if event.get("days"):
@@ -429,7 +475,7 @@ def rgb_spread(h):
 
 
 def heat_base(colors, sheet):
-    """みんなの空きの枠に付ける色。5色のうち RGB の偏りが最も大きい色を選び（利用者の指定）、
+    """みんなのカレンダーの枠に付ける色。5色のうち RGB の偏りが最も大きい色を選び（利用者の指定）、
     それでも灰色に近ければ、色合いを保ったまま彩度を上げる。いちばん濃い段階（地と 9:1 で混ぜた色）が
     地とコントラスト比 3 以上になるよう、明るさも整える"""
     import colorsys
@@ -506,6 +552,10 @@ def build_theme(palette, tone="auto"):
     bg = ensure_contrast(bg, ["#ffffff" if dark else "#000000"], 7)
     sheet = mix(bg, "#ffffff", 0.06 if dark else 0.55)
     grounds = [bg, sheet]                                  # 文字が置かれる地（ページの地と、欄の地）
+    if dark:
+        # 暗い地では、配色の明るい色（橙など）をそのまま本文に使うと、見出しや強調との差が付かない（利用者の指定）。
+        # 本文は白に寄せ、色合いは少しだけ残す
+        ink = mix(ink, "#ffffff", 0.85)
     ink = ensure_contrast(ink, grounds)
     ink_soft = ensure_contrast(mix(ink, bg, 0.3), grounds)  # 薄めた文字色も、読める濃さまでしか薄めない
 
@@ -1256,6 +1306,17 @@ class Matcher:
                                                holidays=holidays)
         _log(f"調整を作りました（{(last - first).days + 1}日、配色：{palette['source']}）")
         return event, admin
+
+    def add_creator(self, eid, name, busy):
+        """作った人を「詳細入力」の参加者として加える（/match の画面で「自分の予定から入力する」を選んだとき）。
+        busy は日ごとの予定の時刻（分）だけ。予定の名前は受け取らない"""
+        event, _ = self.store.get(eid)
+        name = clean_text(name, MAX_NAME, "名前")
+        changes = validate_changes(event, {"name": name, "mode": "detail", "busy": busy})
+        person, key = self.store.join(eid, name, "detail")
+        self.store.save(eid, person["id"], key, changes)
+        _log(f"作った人の予定を入れました（予定のある日 {len(changes['busy'])} 日）")
+        return person
 
     def url_for(self, eid, base=None):
         return f"{(base or self.public_url).rstrip('/')}/m/{eid}"

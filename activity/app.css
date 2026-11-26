@@ -176,3 +176,8 @@ body.free .spacer { height: 40px; }
   .slot-fine .lbl { grid-column: 1 / -1; }
   .slot-fine select { padding-left: 6px; padding-right: 2px; font-feature-settings: "palt"; }
 }
+/* チェックの欄（/match の「自分の予定から入力する」） */
+.check { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 15px; color: var(--text); }
+.check input { width: 22px; height: 22px; margin: 0; accent-color: var(--ok); }
+.check + .hint { margin-top: 0; }
+#match-self-name-box { margin-top: 12px; }
