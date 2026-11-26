@@ -381,3 +381,6 @@ button.wd.on { padding-left: 0; padding-right: 0; }
   .paint::after { display: none; }
   .paint b { padding-right: 0; }
 }
+/* 入力するカレンダー：どの日付の行も同じ高さにする（候補日の無い週だけ縮まないように。利用者の指定）。
+   1行目（曜日の見出し）はそのまま、日付の行はいちばん高い行にそろえる */
+.months.mine .grid { grid-template-rows: auto; grid-auto-rows: 1fr; }
