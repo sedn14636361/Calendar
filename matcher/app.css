@@ -270,3 +270,11 @@ details.box > summary { cursor: pointer; }
 .savebar.unsaved .status { color: var(--warn); font-weight: 700; }
 .bulk button.small.on { background: var(--ai); color: var(--ai-ink); border-color: var(--ai); }
 .dtable { grid-template-columns: minmax(5em, max-content) 3.6em 3.6em; }
+
+/* 祝日（日曜と同じ色）と、日付をタップして選ぶモード */
+.cell.hol .dn, .pday.hol:not(.on):not(.add) { color: var(--sun); }
+.cell.in { position: relative; }
+.daypick { position: absolute; inset: 0; z-index: 2; background: transparent; border: 0; padding: 0; border-radius: 4px; cursor: pointer; }
+.daypick:focus-visible { outline: 2px solid var(--ai); outline-offset: -2px; }
+.months.mine .cell.daysel { box-shadow: inset 0 0 0 3px var(--ai); }
+.tg.pickmode { font-size: 13px; }

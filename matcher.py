@@ -312,6 +312,83 @@ def fetch_ai_palette(title):
     return hexes[:5], str(body.get("reason") or "")[:160]
 
 
+# ---------- 祝日（内閣府「国民の祝日」の一覧） ----------
+# 日程あわせを作るとき（と、候補日を足すとき）に内閣府の一覧を読み込み、候補日の祝日を日程あわせに保存する（利用者の指定）。
+# 読めないときは、リポジトリに入れた一覧のコピー（matcher/holidays.csv）を使う
+HOLIDAY_CSV_URL = "https://www8.cao.go.jp/chosei/shukujitsu/syukujitsu.csv"
+
+
+def parse_holiday_csv(text):
+    """「2027/1/11,成人の日」の形の行から {"2027-01-11": "成人の日"} を作る（見出しや読めない行は飛ばす）"""
+    out = {}
+    for line in text.splitlines():
+        m = re.fullmatch(r"\s*(\d{4})/(\d{1,2})/(\d{1,2})\s*,\s*(.+?)\s*", line)
+        if m:
+            try:
+                out[date(int(m.group(1)), int(m.group(2)), int(m.group(3))).isoformat()] = m.group(4)[:20]
+            except ValueError:
+                continue
+    return out
+
+
+def _bundled_holidays():
+    try:
+        with open(os.path.join(MATCHER_DIR, "holidays.csv"), encoding="utf-8") as f:
+            return parse_holiday_csv(f.read())
+    except OSError:
+        return {}
+
+
+BUNDLED_HOLIDAYS = _bundled_holidays()
+
+
+def fetch_holidays():
+    """内閣府の一覧を読み込む（Shift_JIS）。読めないとき、中身がおかしいときは、リポジトリのコピーを使う"""
+    try:
+        req = urllib.request.Request(HOLIDAY_CSV_URL, headers={"User-Agent": "calendar-bot-matcher"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            got = parse_holiday_csv(r.read(200_000).decode("cp932", errors="replace"))
+        if len(got) >= 100:                       # 1955年からの一覧なので、少なすぎるときは読み違いとみなす
+            global _LATEST_HOLIDAYS
+            _LATEST_HOLIDAYS = got                # 作るページのカレンダーの色にも使う
+            return got, "cao"
+        _log("内閣府の祝日の一覧が少なすぎたので、コピーを使います")
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        _log(f"内閣府の祝日の一覧を読めなかったので、コピーを使います（{type(e).__name__}）")
+    return BUNDLED_HOLIDAYS, "bundled"
+
+
+_LATEST_HOLIDAYS = None                   # 最後に内閣府から読めた一覧（まだ無ければコピー）
+
+
+def upcoming_holidays(today=None):
+    """作るページのカレンダーで色を付けるための祝日（今月の初めから2年先まで）。
+    日程あわせを作るときには、あらためて内閣府の一覧を読み込む"""
+    today = today or datetime.now(JST).date()
+    lo, hi = today.replace(day=1).isoformat(), (today + timedelta(days=731)).isoformat()
+    return {d: n for d, n in (_LATEST_HOLIDAYS or BUNDLED_HOLIDAYS).items() if lo <= d <= hi}
+
+
+def holidays_for(days, table):
+    return {d: table[d] for d in days if d in table}
+
+
+def event_holidays(event):
+    """日程あわせの候補日の祝日。作ったときに保存したものを使い、無い（前から作られている）ときはコピーで補う"""
+    saved = event.get("holidays")
+    return saved if isinstance(saved, dict) else holidays_for(period_days(event), BUNDLED_HOLIDAYS)
+
+
+def picker_holidays(event):
+    """「候補日を足す」カレンダーで色を付けるための祝日（最初の候補日の月から、最後の候補日の1年あとまで）。
+    候補日に足すと、そのときにあらためて内閣府の一覧から読み込む"""
+    lo = event["first"][:8] + "01"
+    hi = (date.fromisoformat(event["last"]) + timedelta(days=366)).isoformat()
+    got = {d: n for d, n in BUNDLED_HOLIDAYS.items() if lo <= d <= hi}
+    got.update(event_holidays(event))
+    return got
+
+
 def make_palette(title, use_ai=True):
     got = fetch_ai_palette(title) if use_ai else None
     if got:
@@ -695,7 +772,7 @@ class Store:
         return {"row": row, "data": data}
 
     # --- 調整 ---
-    def create_event(self, title, first, last, palette, now=None, description="", slots=None, tone="auto"):
+    def create_event(self, title, first, last, palette, now=None, description="", slots=None, tone="auto", holidays=None):
         with self.lock:
             self._require()
             eid = secrets.token_urlsafe(9)
@@ -707,6 +784,7 @@ class Store:
                     "first": first.isoformat(), "last": last.isoformat(),
                     "palette": palette, "admin": _hash_key(admin),
                     "created": (now or datetime.now(JST)).isoformat(timespec="seconds")}
+            data["holidays"] = holidays_for(period_days(data), holidays or {})
             self.events[eid] = self._write(None, "e:" + eid, data)
             self.people[eid] = {}
             return data, admin
@@ -725,7 +803,7 @@ class Store:
             e = self.events.get(eid)
             return bool(e) and _key_ok(admin, e["data"]["admin"])
 
-    def edit_event(self, eid, changes, admin=None, today=None, now=None):
+    def edit_event(self, eid, changes, admin=None, today=None, now=None, holiday_table=None):
         """タイトル・概要・候補日を直す。誰でもできる（利用者の指定）。候補日を消すのは作った人だけ"""
         today = today or today_jst()
         with self.lock:
@@ -763,6 +841,10 @@ class Store:
             if len(days) > MAX_DAYS:
                 raise MatcherError("候補日が多すぎます")
             data["days"] = sorted(days)
+            if add or remove or "holidays" not in data:  # 候補日の祝日を付け直す（足した日は、読み込んだ一覧から）
+                table = holiday_table if holiday_table is not None else BUNDLED_HOLIDAYS
+                old = event_holidays(entry["data"])
+                data["holidays"] = {d: old.get(d) or table.get(d) for d in data["days"] if (old.get(d) or table.get(d))}
             data["first"], data["last"] = data["days"][0], data["days"][-1]
             data["edited"] = (now or datetime.now(JST)).isoformat(timespec="seconds")
             self.events[eid] = self._write(entry, "e:" + eid, data)
@@ -967,6 +1049,7 @@ def public_view(event, people, viewer_admin=False):
         "event": {"id": event["id"], "title": event["title"], "description": event.get("description", ""),
                   "first": event["first"], "last": event["last"],
                   "days": period_days(event), "palette": event["palette"], "tone": event.get("tone", "auto"),
+                  "holidays": event_holidays(event), "picker_holidays": picker_holidays(event),
                   # 見る人が雰囲気を切り替えられるように、3つとも返す（theme は作った人が選んだ雰囲気）
                   "theme": build_theme(event["palette"], event.get("tone", "auto")),
                   "themes": {t_: build_theme(event["palette"], t_) for t_ in ("light", "dark")},
@@ -1058,6 +1141,7 @@ def render_png(event, people):
     table = tally(event, people)
     n = len(people)
     days = set(period_days(event))
+    hols = event_holidays(event)
     first = date.fromisoformat(event["first"])
     last = date.fromisoformat(event["last"])
     # 候補日のある月だけ（あとから離れた日を足しても、間の空の月は描かない）
@@ -1104,8 +1188,12 @@ def render_png(event, people):
                 inside = key in days
                 d.rectangle([x0, y0, x1, y1], fill=_hex_rgb(sheet if inside else paper),
                             outline=_hex_rgb(rule), width=2)
-                d.text((x0 + 8, y0 + 4), str(dn), font=f_day,
-                       fill=_hex_rgb(ink if inside else soft))   # 候補日でない日も、読める濃さの薄い文字色で
+                num_col = ink if inside else soft          # 候補日でない日も、読める濃さの薄い文字色で
+                if inside and (c == 0 or key in hols):     # 日曜と祝日は日曜の色
+                    num_col = theme["--sun"]
+                elif inside and c == 6:
+                    num_col = theme["--sat"]
+                d.text((x0 + 8, y0 + 4), str(dn), font=f_day, fill=_hex_rgb(num_col))
                 if not inside:
                     continue
                 half_top = y0 + 28
@@ -1136,9 +1224,10 @@ _RENDER_POOL = ThreadPoolExecutor(max_workers=1, thread_name_prefix="matcher-ren
 
 class Matcher:
     """Calendar.py の Web サーバーから呼ばれる窓口"""
-    def __init__(self, store=None, use_ai=True, public_url=""):
+    def __init__(self, store=None, use_ai=True, public_url="", fetch_holidays=True):
         self.store = store
         self.use_ai = use_ai
+        self.fetch_holidays = fetch_holidays
         self.public_url = public_url.rstrip("/")
         self.limiter = RateLimiter()
         self._img_cache = {}
@@ -1162,7 +1251,9 @@ class Matcher:
         if not self.limiter.allow("create_all", "*", *LIMITS["create_all"]):
             raise MatcherError("今日はこれ以上作れません。明日もう一度試してください", 429)
         palette = make_palette(title, self.use_ai)    # 時間がかかるので、保存先の鍵（lock）の外で作る
-        event, admin = self.store.create_event(title, first, last, palette, description=description, slots=slots, tone=tone)
+        holidays, src = fetch_holidays() if self.fetch_holidays else (BUNDLED_HOLIDAYS, "bundled")
+        event, admin = self.store.create_event(title, first, last, palette, description=description, slots=slots, tone=tone,
+                                               holidays=holidays)
         _log(f"調整を作りました（{(last - first).days + 1}日、配色：{palette['source']}）")
         return event, admin
 
@@ -1222,6 +1313,9 @@ class Matcher:
             return self._image(m.group(1))
         if m:
             return 200, "text/html; charset=utf-8", self._page(m.group(1), headers), {}
+        if sub == "api/holidays":
+            return 200, "application/json; charset=utf-8", _json({"ok": True, "holidays": upcoming_holidays()}), \
+                {"Cache-Control": "public, max-age=3600"}
         m = re.fullmatch(r"api/event/([A-Za-z0-9_-]{6,32})", sub)
         if m:
             if not self.enabled:
@@ -1314,7 +1408,10 @@ class Matcher:
             return {"ok": True, "removed": True}
         elif verb == "edit":                           # タイトル・概要・候補日の修正（誰でも。候補日を消すのは作った人だけ）
             changes = {k: body[k] for k in ("title", "description", "slots", "tone", "add_days", "remove_days") if k in body}
-            self.store.edit_event(eid, changes, admin=admin)
+            table = None
+            if changes.get("add_days"):                # 足した日の祝日は、内閣府の一覧を読み込んで付ける
+                table, _src = fetch_holidays() if self.fetch_holidays else (BUNDLED_HOLIDAYS, "bundled")
+            self.store.edit_event(eid, changes, admin=admin, holiday_table=table)
         event, people = self.store.get(eid)
         return public_view(event, people, self.store.is_admin(eid, admin))
 

@@ -29,7 +29,7 @@ const allDayTime = () => ({ allDay: true, start: null, end: null });   // 日ご
 
 const S = {
   kind: "add",                 // "add"＝予定の追加、"date"＝空き日の出力、"match"＝日程あわせを作る
-  session: null, calendars: [], today: null, maxDays: 31,
+  session: null, calendars: [], today: null, maxDays: 31, holidays: {},
   month: null,                 // その月の1日
   week: null,                  // 週表示の日曜
   days: new Set(),             // 選んだ日（"YYYY-MM-DD"）
@@ -158,9 +158,11 @@ function renderMonth() {
     if (d.getMonth() !== S.month.getMonth()) b.classList.add("other");
     if (d < S.today) b.classList.add("past");
     if (key === iso(S.today)) b.classList.add("today");
-    if (d.getDay() === 0) b.classList.add("sun");
-    if (d.getDay() === 6) b.classList.add("sat");
-    let label = md(d);
+    const hol = S.kind === "match" ? S.holidays[key] : "";   // 祝日の色は /match だけ（日曜と同じ色・名前はカーソルで）
+    if (d.getDay() === 0 || hol) b.classList.add("sun");
+    else if (d.getDay() === 6) b.classList.add("sat");
+    if (hol) { b.classList.add("hol"); b.title = hol; }
+    let label = md(d) + (hol ? ` ${hol}` : "");
     if (S.kind === "date" || S.kind === "match") {   // 範囲をタップで選ぶ画面
       const st = freeState(key);
       if (st) b.classList.add(st);
@@ -996,6 +998,7 @@ async function main() {
   S.kind = st.mode === "date" || st.mode === "match" ? st.mode : "add";
   setupKind();
   S.today = fromIso(st.today);
+  S.holidays = st.holidays || {};
   S.maxDays = st.max_days;
   M.maxDays = st.match_max_days || M.maxDays;
   S.month = new Date(S.today.getFullYear(), S.today.getMonth(), 1);

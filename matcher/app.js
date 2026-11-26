@@ -123,13 +123,14 @@ function tapRange(R, key) {
 function initCreate() {
   $("create").hidden = false;
   const now = new Date();
-  const C = { month: new Date(now.getFullYear(), now.getMonth(), 1), start: null, end: null };
+  const C = { month: new Date(now.getFullYear(), now.getMonth(), 1), start: null, end: null, hol: {} };
   C.redraw = () => {
     renderPicker($("cCal"), C, (iso, d, wd) => {
       const inr = C.start !== null && (C.end === null ? iso === C.start : C.start <= iso && iso <= C.end);
       const past = iso < todayIso();
       return el("button", { type: "button", disabled: past, class: "pday" + (inr ? " on" : "") + (iso === C.start || iso === C.end ? " edge" : "")
-        + (wd === 0 ? " sun" : wd === 6 ? " sat" : ""), "aria-pressed": String(inr), "aria-label": md(iso),
+        + (C.hol[iso] || wd === 0 ? " sun" : wd === 6 ? " sat" : "") + (C.hol[iso] ? " hol" : ""), title: C.hol[iso] || "",
+        "aria-pressed": String(inr), "aria-label": md(iso) + (C.hol[iso] ? " " + C.hol[iso] : ""),
         onclick: () => { tapRange(C, iso); C.redraw(); } }, String(d));
     });
     $("cSum").textContent = C.start === null ? "日程が未選択"
@@ -137,6 +138,8 @@ function initCreate() {
         : `${md(C.start)}〜${md(C.end)}（${daysBetween(dateOf(C.start), dateOf(C.end)) + 1}日）`;
   };
   C.redraw();
+  // 祝日の色（読めなくても作るのには困らないので、失敗は黙って無視する）
+  fetch("/m/api/holidays").then((r) => r.json()).then((j) => { if (j && j.holidays) { C.hol = j.holidays; C.redraw(); } }).catch(() => {});
   const getSlots = slotPicker($("cSlots"), { d: [600, 1080], n: [1260, 1440] });   // 初期値：昼 10〜18時、夜 21〜24時
   $("createForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -343,7 +346,7 @@ function heatLevel(c) {
    調整のページ
    ================================================================= */
 const S = {
-  eid: document.body.dataset.event, data: null, keys: null, current: null, bulkDays: new Set(), bulkSlots: new Set(["d", "n"]),
+  eid: document.body.dataset.event, data: null, keys: null, current: null, bulkDates: new Set(), pickMode: false, bulkSlots: new Set(["d", "n"]),
   unsaved: false, saving: false, selectedDay: null, pending: null, joining: false,
 };
 
@@ -456,8 +459,8 @@ function renderOverview() {
         style: { background: `var(--heat${lv})`, color: `var(--heat-ink${lv})` } }, el("span", { class: "lbl", text: label }));
     });
     const t = S.data.tally[iso];
-    return el("button", { type: "button", class: "cell in" + (S.selectedDay === iso ? " sel" : "") + (wd === 0 ? " sun" : wd === 6 ? " sat" : ""),
-      "aria-label": `${md(iso)} 昼 ○${t.d.o} △${t.d.t} ✕${t.d.x}、夜 ○${t.n.o} △${t.n.t} ✕${t.n.x}`, onclick: () => selectDay(iso) },
+    return el("button", { type: "button", class: "cell in" + (S.selectedDay === iso ? " sel" : "") + dayClass(iso, wd), title: holName(iso),
+      "aria-label": `${md(iso)}${holName(iso) ? " " + holName(iso) : ""} 昼 ○${t.d.o} △${t.d.t} ✕${t.d.x}、夜 ○${t.n.o} △${t.n.t} ✕${t.n.x}`, onclick: () => selectDay(iso) },
     el("span", { class: "dn", text: d }), ...halves);
   }));
 }
@@ -471,7 +474,7 @@ function renderDay() {
   if (!iso || !S.data.event.days.includes(iso)) { box.hidden = true; return; }
   box.hidden = false; box.textContent = "";
   const t = S.data.tally[iso];
-  box.append(el("div", { class: "head-row" }, el("h3", { text: md(iso) }), el("button", { type: "button", class: "small", text: "閉じる", onclick: () => { S.selectedDay = null; renderOverview(); renderDay(); } })));
+  box.append(el("div", { class: "head-row" }, el("h3", { text: md(iso) + (holName(iso) ? ` ${holName(iso)}` : "") }), el("button", { type: "button", class: "small", text: "閉じる", onclick: () => { S.selectedDay = null; renderOverview(); renderDay(); } })));
   const count = (c) => `○${c.o} △${c.t} ✕${c.x}${c["-"] ? ` 未${c["-"]}` : ""}`;
   box.append(el("p", { class: "note", text: `昼 ${count(t.d)}　／　夜 ${count(t.n)}` }));
   if (!S.data.people.length) return;
@@ -505,7 +508,7 @@ function renderEdit() {
   renderPicker($("eCal"), E, (iso, d, wd) => {
     const isCand = cand.has(iso), past = iso < todayIso();
     const st = E.rm.has(iso) ? " rm" : E.add.has(iso) ? " add" : isCand ? " on" : "";
-    return el("button", { type: "button", disabled: past && !isCand, class: "pday" + st + (wd === 0 ? " sun" : wd === 6 ? " sat" : ""),
+    return el("button", { type: "button", disabled: past && !isCand, class: "pday" + st + pickDayClass(iso, wd), title: pickHolName(iso),
       "aria-label": md(iso) + (isCand ? "（候補日）" : "") + (E.add.has(iso) ? "（足す）" : "") + (E.rm.has(iso) ? "（消す）" : ""),
       onclick: () => {
         if (isCand) {
@@ -615,27 +618,36 @@ function renderEditor() {
   box.append(seg);
   if (p.mode === "detail") box.append(detailPanel(p));
 
-  // まとめて選択：曜日 × 時間帯で枠を選び（自分のカレンダーに枠線で出る）、そのあと ○・△・✕・自動に戻す を押して付ける
+  // まとめて選択：日付 × 時間帯で枠を選び（自分のカレンダーに枠線で出る）、そのあと ○・△・✕・自動に戻す を押して付ける
   const clearName = p.mode === "detail" ? "自動に戻す" : "消す";
-  const wdBtns = WD.map((w, i) => el("button", { type: "button", class: "tg" + (S.bulkDays.has(i) ? " on" : "") + (i === 0 ? " sun" : i === 6 ? " sat" : ""),
-    "aria-pressed": String(S.bulkDays.has(i)), onclick: () => { toggleSet(S.bulkDays, i); renderEditor(); } }, w));
-  // 全部・平日・土日：その曜日がすべて選ばれていれば外し、そうでなければ足す（利用者の指定）
-  // 全部・平日・土日：押すと、その曜日だけが選ばれた状態にする（例：日月火 →「平日」で月火水木金）。
-  // すでにその曜日だけが選ばれているときにもう一度押すと、外す（利用者の指定）
-  const same = (list) => list.length === S.bulkDays.size && list.every((i) => S.bulkDays.has(i));
+  // まとめて選択は「日付の集まり」を選ぶ。曜日のボタンは、その曜日の日をまとめて選ぶ・外す近道。
+  // 曜日のボタンと「平日」は祝日を除く（利用者の指定 a）。「土日」は土日の祝日も含み、「土日祝」は土日と祝日
+  const wdOn = (i) => { const ds = datesOfWeekday(i); return ds.length > 0 && ds.every((x) => S.bulkDates.has(x)); };
+  const wdBtns = WD.map((w, i) => el("button", { type: "button", class: "tg" + (wdOn(i) ? " on" : "") + (i === 0 ? " sun" : i === 6 ? " sat" : ""),
+    "aria-pressed": String(wdOn(i)), onclick: () => { toggleWeekday(i); renderEditor(); } }, w));
+  // 全部・平日・土日・土日祝：押すと、その日だけが選ばれた状態にする。すでにその日だけが選ばれているときにもう一度押すと、外す
+  const same = (list) => list.length === S.bulkDates.size && list.every((x) => S.bulkDates.has(x));
   const preset = (label, list) => el("button", { type: "button", class: "small" + (list.length && same(list) ? " on" : ""), text: label,
     onclick: () => {
-      S.bulkDays = list.length && !same(list) ? new Set(list) : new Set();
+      S.bulkDates = list.length && !same(list) ? new Set(list) : new Set();
       renderEditor();
     } });
+  const evDays = S.data.event.days, wdOf = (x) => dateOf(x).getDay();
   const slotBtns = ["d", "n"].map((slot) => el("button", { type: "button", class: "tg" + (S.bulkSlots.has(slot) ? " on" : ""),
     "aria-pressed": String(S.bulkSlots.has(slot)), onclick: () => { toggleSet(S.bulkSlots, slot); renderEditor(); } }, slotLabel(slot)));
   const { targets } = bulkTargets();
   const bulk = el("div", { class: "bulk" },
     el("p", { class: "cap", text: "まとめて選択" }),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "曜日" }), el("div", { class: "tgs" }, ...wdBtns),
-      el("div", { class: "tgs" }, preset("全部", [0, 1, 2, 3, 4, 5, 6]), preset("平日", [1, 2, 3, 4, 5]), preset("土日", [0, 6]),
+      el("div", { class: "tgs" }, preset("全部", evDays.slice()),
+        preset("平日", evDays.filter((x) => wdOf(x) >= 1 && wdOf(x) <= 5 && !isHol(x))),
+        preset("土日", evDays.filter((x) => wdOf(x) === 0 || wdOf(x) === 6)),
+        preset("土日祝", evDays.filter((x) => wdOf(x) === 0 || wdOf(x) === 6 || isHol(x))),
         preset("解除", []))),
+    el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "日付" }),
+      el("button", { type: "button", class: "tg pickmode" + (S.pickMode ? " on" : ""), "aria-pressed": String(S.pickMode),
+        onclick: () => { S.pickMode = !S.pickMode; renderEditor(); } }, S.pickMode ? "日付をタップして選ぶ：オン" : "日付をタップして選ぶ"),
+      el("span", { class: "note", text: S.bulkDates.size ? `${S.bulkDates.size}日を選んでいます` : "" })),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "時間帯" }), el("div", { class: "tgs" }, ...slotBtns)),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "選んだ枠に" }),
       el("div", { class: "tgs" }, ...[["o", "○"], ["t", "△"], ["x", "✕"], ["clear", clearName]].map(([k, label]) =>
@@ -654,7 +666,7 @@ function renderEditor() {
     const halves = ["d", "n"].map((slot) => {
       const manual = (p.marks[iso] || {})[slot], auto = autoMark(p, iso, slot), m = manual || auto;
       const fixed = isFixed(p, iso, slot);
-      const picked = S.bulkSlots.has(slot) && S.bulkDays.has(wd) && !protectedSlot(p, iso, slot);   // まとめて選択で変わる枠
+      const picked = S.bulkSlots.has(slot) && S.bulkDates.has(iso) && !protectedSlot(p, iso, slot);   // まとめて選択で変わる枠
       const autoText = p.mode === "detail" ? (auto ? `自動${MARK_TEXT[auto]}` : "自動") : "−";
       // メニュー：固定していない枠は、今の状態（自動・まとめて付けた印・未入力）を先頭に出す。○△✕ を選ぶと固定になる
       const opts = [];
@@ -670,9 +682,14 @@ function renderEditor() {
         title: fixed ? "手で選んだ枠（まとめて選択では変わりません）" : "" },
         el("small", { text: SLOT_TEXT[slot] }), el("b", { "aria-hidden": "true", text: m ? MARK_TEXT[m] : "−" }), sel);
     });
-    return el("div", { class: "cell in" + (wd === 0 ? " sun" : wd === 6 ? " sat" : "") }, el("span", { class: "dn", text: d }), ...halves);
-  }, (w, i) => el("button", { type: "button", class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : "") + (S.bulkDays.has(i) ? " on" : ""),
-    "aria-pressed": String(S.bulkDays.has(i)), title: "押すと「まとめて選択」の曜日に選ばれます", onclick: () => { toggleSet(S.bulkDays, i); renderEditor(); } }, w)));
+    // 日付をタップして選ぶモードの間は、日の上に透明なボタンをかぶせて、タップでその日を選ぶ・外す（メニューは開かない）
+    const chosen = S.bulkDates.has(iso);
+    const pick = S.pickMode ? el("button", { type: "button", class: "daypick", "aria-pressed": String(chosen), "aria-label": `${md(iso)}${holName(iso) ? " " + holName(iso) : ""}を${chosen ? "外す" : "選ぶ"}`,
+      onclick: () => { if (chosen) S.bulkDates.delete(iso); else S.bulkDates.add(iso); renderEditor(); } }) : null;
+    return el("div", { class: "cell in" + dayClass(iso, wd) + (chosen ? " daysel" : ""), title: holName(iso) },
+      el("span", { class: "dn", text: d }), ...halves, pick);
+  }, (w, i) => el("button", { type: "button", class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : "") + (datesOfWeekday(i).length && datesOfWeekday(i).every((x) => S.bulkDates.has(x)) ? " on" : ""),
+    "aria-pressed": String(datesOfWeekday(i).length > 0 && datesOfWeekday(i).every((x) => S.bulkDates.has(x))), title: "押すと、この曜日の日（祝日を除く）をまとめて選ぶ・外す", onclick: () => { toggleWeekday(i); renderEditor(); } }, w)));
   box.append(cal);
   if (p.mode === "detail" && Object.keys(p.marks).length) box.append(el("div", { class: "row" }, el("button", { type: "button", class: "small", text: "手で付けた印をすべて消す（自動に戻す）", onclick: () => { p.marks = {}; p.fixed = {}; S.unsaved = true; renderEditor(); } })));
 
@@ -696,18 +713,31 @@ function setMark(iso, slot, mark) {          // 枠のメニューで選んだ�
   S.unsaved = true; renderEditor();
 }
 function toggleSet(set, v) { if (set.has(v)) set.delete(v); else set.add(v); }
-/* まとめて塗る対象の枠：選んだ曜日（選ばなければ全部）× 選んだ時間帯 */
-/* まとめて選択の対象：選んだ曜日 × 選んだ時間帯の枠（曜日を何も選んでいなければ無し）。
+/* まとめて選択の対象：選んだ日付 × 選んだ時間帯の枠（日付を何も選んでいなければ無し）。
    ただし、プルダウンで個別に選んだ枠と、詳細入力で予定があって ✕ になっている枠は変えない（利用者の指定） */
 function protectedSlot(p, iso, slot) {
   return isFixed(p, iso, slot) || autoMark(p, iso, slot) === "x";
+}
+/* 祝日（作ったときに内閣府の一覧から読み込んだもの） */
+const holName = (iso) => ((S.data && S.data.event.holidays) || {})[iso] || "";
+const isHol = (iso) => !!holName(iso);
+const dayClass = (iso, wd) => (isHol(iso) || wd === 0 ? " sun" : wd === 6 ? " sat" : "") + (isHol(iso) ? " hol" : "");   // 祝日は日曜と同じ色
+/* 「候補日を足す」カレンダーでは、候補日の外の祝日も色を付ける */
+const pickHolName = (iso) => holName(iso) || ((S.data && S.data.event.picker_holidays) || {})[iso] || "";
+const pickDayClass = (iso, wd) => (pickHolName(iso) || wd === 0 ? " sun" : wd === 6 ? " sat" : "") + (pickHolName(iso) ? " hol" : "");
+/* 曜日のボタンが選ぶ日：その曜日の候補日のうち、祝日でない日（利用者の指定 a） */
+const datesOfWeekday = (i) => S.data.event.days.filter((x) => dateOf(x).getDay() === i && !isHol(x));
+function toggleWeekday(i) {
+  const ds = datesOfWeekday(i);
+  if (ds.length && ds.every((x) => S.bulkDates.has(x))) ds.forEach((x) => S.bulkDates.delete(x));
+  else ds.forEach((x) => S.bulkDates.add(x));
 }
 function bulkTargets() {
   const p = me(), targets = [];
   let skipped = 0;
   if (!p) return { targets, skipped };
   for (const iso of S.data.event.days) {
-    if (!S.bulkDays.has(dateOf(iso).getDay())) continue;
+    if (!S.bulkDates.has(iso)) continue;
     for (const slot of ["d", "n"]) {
       if (!S.bulkSlots.has(slot)) continue;
       if (protectedSlot(p, iso, slot)) skipped++; else targets.push([iso, slot]);
