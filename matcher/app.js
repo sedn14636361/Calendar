@@ -347,7 +347,7 @@ function heatLevel(c) {
    調整のページ
    ================================================================= */
 const S = {
-  eid: document.body.dataset.event, data: null, keys: null, current: null, bulkDates: new Set(), pickMode: false, bulkSlots: new Set(["d", "n"]),
+  eid: document.body.dataset.event, data: null, keys: null, current: null, bulkDates: new Set(), tapDates: new Set(), pickMode: false, bulkSlots: new Set(["d", "n"]),
   unsaved: false, saving: false, selectedDay: null, pending: null, joining: false,
 };
 
@@ -631,6 +631,7 @@ function renderEditor() {
   const preset = (label, list) => el("button", { type: "button", class: "small" + (list.length && same(list) ? " on" : ""), text: label,
     onclick: () => {
       S.bulkDates = list.length && !same(list) ? new Set(list) : new Set();
+      S.tapDates = new Set();
       renderEditor();
     } });
   const evDays = S.data.event.days, wdOf = (x) => dateOf(x).getDay();
@@ -648,6 +649,8 @@ function renderEditor() {
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "日付" }),
       el("button", { type: "button", class: "tg pickmode" + (S.pickMode ? " on" : ""), "aria-pressed": String(S.pickMode),
         onclick: () => { S.pickMode = !S.pickMode; renderEditor(); } }, S.pickMode ? "日付をタップして選ぶ：オン" : "日付をタップして選ぶ"),
+      el("button", { type: "button", class: "small clearsel", disabled: !S.bulkDates.size, text: "選択解除",
+        onclick: () => { S.bulkDates = new Set(); S.tapDates = new Set(); renderEditor(); } }),
       el("span", { class: "note", text: S.bulkDates.size ? `${S.bulkDates.size}日を選んでいます` : "" })),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "時間帯" }), el("div", { class: "tgs" }, ...slotBtns)),
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "選んだ枠に" }),
@@ -660,7 +663,7 @@ function renderEditor() {
 
   // 自分のカレンダー
   const days = new Set(S.data.event.days);
-  const cal = el("div", { class: "months mine" });
+  const cal = el("div", { class: "months mine" + (S.pickMode ? " picking" : "") });
   for (const ym of monthsOf(S.data.event.days)) cal.append(monthGrid(ym, (iso, d, wd) => {
     if (!days.has(iso)) return el("div", { class: "cell out" }, el("span", { class: "dn", text: d }));
     // 枠ごとのプルダウンメニュー（利用者の指定）。詳細入力では「自動」（予定から決まった ○✕）も選べる
@@ -685,8 +688,9 @@ function renderEditor() {
     });
     // 日付をタップして選ぶモードの間は、日の上に透明なボタンをかぶせて、タップでその日を選ぶ・外す（メニューは開かない）
     const chosen = S.bulkDates.has(iso);
-    const pick = S.pickMode ? el("button", { type: "button", class: "daypick", "aria-pressed": String(chosen), "aria-label": `${md(iso)}${holName(iso) ? " " + holName(iso) : ""}を${chosen ? "外す" : "選ぶ"}`,
-      onclick: () => { if (chosen) S.bulkDates.delete(iso); else S.bulkDates.add(iso); renderEditor(); } }) : null;
+    const pick = S.pickMode ? el("button", { type: "button", class: "daypick", "data-iso": iso, "aria-pressed": String(chosen), "aria-label": `${md(iso)}${holName(iso) ? " " + holName(iso) : ""}を${chosen ? "外す" : "選ぶ"}`,
+      onpointerdown: (e) => startDrag(e, iso),
+      onclick: () => { if (S.dragDone) { S.dragDone = false; return; } tapPick(iso, !chosen); renderEditor(); } }) : null;
     return el("div", { class: "cell in" + dayClass(iso, wd) + (chosen ? " daysel" : ""), title: holName(iso) },
       el("span", { class: "dn", text: d }), ...halves, pick);
   }, (w, i) => el("button", { type: "button", class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : "") + (datesOfWeekday(i).length && datesOfWeekday(i).every((x) => S.bulkDates.has(x)) ? " on" : ""),
@@ -730,8 +734,33 @@ const pickDayClass = (iso, wd) => (pickHolName(iso) || wd === 0 ? " sun" : wd ==
 const datesOfWeekday = (i) => S.data.event.days.filter((x) => dateOf(x).getDay() === i && !isHol(x));
 function toggleWeekday(i) {
   const ds = datesOfWeekday(i);
-  if (ds.length && ds.every((x) => S.bulkDates.has(x))) ds.forEach((x) => S.bulkDates.delete(x));
+  if (ds.length && ds.every((x) => S.bulkDates.has(x))) ds.forEach((x) => { S.bulkDates.delete(x); S.tapDates.delete(x); });
   else ds.forEach((x) => S.bulkDates.add(x));
+}
+/* 「日付をタップして選ぶ」で選んだ日（S.tapDates）。ここに ○△✕ をまとめて付けると、手で選んだ枠と同じ「固定」になる（利用者の指定） */
+function tapPick(iso, on) {
+  if (on) { S.bulkDates.add(iso); S.tapDates.add(iso); } else { S.bulkDates.delete(iso); S.tapDates.delete(iso); }
+}
+/* PC：マウスで日をなぞって、まとめて選ぶ・外す（タップで選ぶモードの間だけ。選ばれている日から始めると外す）。
+   なぞっている間は描き直さず、印だけを付け替えて、離したときに描き直す */
+function startDrag(e, iso) {
+  if (e.pointerType !== "mouse" || e.button !== 0) return;
+  e.preventDefault();
+  const on = !S.bulkDates.has(iso), seen = new Set();
+  const mark = (x) => {
+    if (!x || seen.has(x)) return;
+    seen.add(x); tapPick(x, on);
+    const b = document.querySelector(`.daypick[data-iso="${x}"]`);
+    if (b) { b.setAttribute("aria-pressed", String(on)); b.closest(".cell").classList.toggle("daysel", on); }
+  };
+  mark(iso);
+  const move = (ev) => { const t = document.elementFromPoint(ev.clientX, ev.clientY); mark(t && t.closest && t.closest(".daypick") && t.closest(".daypick").dataset.iso); };
+  const up = () => {
+    document.removeEventListener("pointermove", move); document.removeEventListener("pointerup", up);
+    S.dragDone = true; setTimeout(() => { S.dragDone = false; }, 0);   // 押した日のクリックで、もう一度切り替わらないように
+    renderEditor();
+  };
+  document.addEventListener("pointermove", move); document.addEventListener("pointerup", up);
 }
 function bulkTargets() {
   const p = me(), targets = [];
@@ -748,10 +777,13 @@ function bulkTargets() {
 }
 function paintBulk(mark) {
   const p = me(); if (!p) return;
+  p.fixed = p.fixed || {};
   for (const [iso, slot] of bulkTargets().targets) {
     const row = { ...(p.marks[iso] || {}) };
     if (mark === "clear") delete row[slot]; else row[slot] = mark;
     if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
+    // タップ（なぞり）で選んだ日に付けた ○△✕ は固定にする：あとの曜日などのまとめて選択や、予定からの自動の ○✕ で変わらない
+    if (mark !== "clear" && S.tapDates.has(iso)) p.fixed[iso] = { ...(p.fixed[iso] || {}), [slot]: true };
   }
   S.unsaved = true; renderEditor();
 }

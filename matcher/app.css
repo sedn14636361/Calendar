@@ -282,3 +282,5 @@ details.box > summary { cursor: pointer; }
 /* ボタンを押したあとの知らせ（作りました・エラー）は、ボタンのすぐ下に出す */
 .act-status { margin-top: 8px; white-space: pre-line; }
 .act-status:empty { display: none; }
+/* なぞって選ぶ間に、文字が選択されないように */
+.months.mine.picking { user-select: none; -webkit-user-select: none; }
