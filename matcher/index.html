@@ -18,6 +18,12 @@
     <p class="lead" id="lead">URL を送るだけで、みんなの空いている日をカレンダーで見比べられる日程あわせです。</p>
     <p class="desc" id="desc" hidden></p>
     <div class="palette" id="palette" hidden></div>
+    <div class="tone" id="toneBox" role="radiogroup" aria-label="雰囲気（このブラウザでの見え方）" hidden>
+      <span class="lbl">雰囲気</span>
+      <button type="button" data-tone="auto" role="radio">おまかせ</button>
+      <button type="button" data-tone="light" role="radio">明るめ</button>
+      <button type="button" data-tone="dark" role="radio">暗め</button>
+    </div>
   </header>
 
   <p class="status" id="status" role="status"></p>
@@ -36,6 +42,7 @@
         <p class="pick-sum" id="cSum"></p>
       </div>
       <div class="field"><span>昼と夜の時間帯</span><div id="cSlots" class="slots"></div></div>
+      <label class="field"><span>雰囲気</span><select id="cTone"><option value="auto">おまかせ（配色のまま）</option><option value="light">明るめ</option><option value="dark">暗め</option></select></label>
       <p class="note">タイトルから「ことばパレット」で配色を作ります（そのためにタイトルだけを送ります）。</p>
       <div class="row"><button class="primary" id="cGo" type="submit">作る</button></div>
     </form>
@@ -88,6 +95,7 @@
       <form id="editForm" class="edit">
         <label class="field"><span>タイトル</span><input id="eTitle" required autocomplete="off"></label>
         <label class="field"><span>概要</span><textarea id="eDesc" rows="3"></textarea></label>
+        <label class="field"><span>雰囲気（全員の見え方。各自がページの上で切り替えることもできます）</span><select id="eTone"><option value="auto">おまかせ（配色のまま）</option><option value="light">明るめ</option><option value="dark">暗め</option></select></label>
         <div class="field"><span>昼と夜の時間帯</span><div id="eSlots" class="slots"></div>
           <p class="note">変えると、詳細入力の人の自動の ○✕ は新しい時間帯で計算し直されます。</p></div>
         <div class="field"><span>候補日を足す</span>

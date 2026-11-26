@@ -62,7 +62,20 @@ function remember(ev) {
   store.set("awasegoyomi:history", h.slice(0, 20));
 }
 
-/* ---------- 配色（サーバーが決めた CSS の変数をそのまま当てる） ---------- */
+/* ---------- 配色（サーバーが決めた CSS の変数をそのまま当てる） ----------
+   雰囲気は、作った人が日程あわせごとに決め（ev.theme）、見る人もこのブラウザで「明るめ」「暗め」に切り替えられる（ev.themes） */
+const viewerTone = () => store.get("awasegoyomi:tone", "auto");
+function themeFor(ev) {
+  const t = viewerTone();
+  return t !== "auto" && ev.themes && ev.themes[t] ? ev.themes[t] : ev.theme;
+}
+function renderTone() {
+  const box = $("toneBox"); box.hidden = false;
+  for (const b of box.querySelectorAll("button")) {
+    b.setAttribute("aria-checked", String(b.dataset.tone === viewerTone()));
+    b.onclick = () => { store.set("awasegoyomi:tone", b.dataset.tone); renderTone(); if (S.data) applyTheme(themeFor(S.data.event)); };
+  }
+}
 function applyTheme(theme) {
   const root = document.documentElement.style;
   for (const [k, v] of Object.entries(theme || {})) root.setProperty(k, v);
@@ -132,7 +145,7 @@ function initCreate() {
     try {
       const sl = getSlots();
       if (sl.d[0] >= sl.d[1] || sl.n[0] >= sl.n[1]) { setStatus("時間帯の終わりは、始まりより後にしてください", true); btn.disabled = false; return; }
-      const d = await api("/m/api/create", { title: $("cTitle").value, description: $("cDesc").value, first: C.start, last: C.end, slots: sl });
+      const d = await api("/m/api/create", { title: $("cTitle").value, description: $("cDesc").value, first: C.start, last: C.end, slots: sl, tone: $("cTone").value });
       saveKeys(d.id, { people: {}, admin: d.admin });
       location.href = `/m/${d.id}`;
     } catch (e) { setStatus(e.message, true); btn.disabled = false; }
@@ -345,7 +358,9 @@ function initEvent() {
   if (location.hash) { saveKeys(S.eid, S.keys); history.replaceState(null, "", location.pathname); }
   $("joinForm").addEventListener("submit", onJoin);
   $("jCancel").addEventListener("click", () => { S.joining = false; renderMine(); });
-  $("copyUrl").addEventListener("click", () => copyText(location.origin + location.pathname, $("copyUrl"), "コピーしました"));
+  // コピーする URL には、中身が変わるたびに変わる印（?v=…）を付ける。Discord はプレビューを約30分キャッシュするが、
+  // URL が変われば取り直すので、貼り直すと最新のプレビューになる
+  $("copyUrl").addEventListener("click", () => copyText(`${location.origin}${location.pathname}?v=${S.data ? S.data.event.version : ""}`, $("copyUrl"), "コピーしました"));
   $("saveImg").href = `/m/${S.eid}/image.png`;
   $("saveImg").setAttribute("download", "awasegoyomi.png");
   $("removeEvent").addEventListener("click", onRemoveEvent);
@@ -389,7 +404,7 @@ function accept(d) {
   const contiguous = daysBetween(dateOf(ev.first), dateOf(ev.last)) + 1 === ev.days.length;
   $("lead").textContent = `${md(ev.first)} 〜 ${md(ev.last)}${contiguous ? "" : `（候補 ${ev.days.length}日）`}・${d.people.length}人が入力`;
   $("desc").textContent = ev.description || ""; $("desc").hidden = !ev.description;
-  applyTheme(ev.theme); renderPalette(ev.palette); remember(ev);
+  applyTheme(themeFor(ev)); renderTone(); renderPalette(ev.palette); remember(ev);
   $("event").hidden = false;
   renderBest(); renderOverview(); renderDay(); renderPeople(); renderMine(); renderEdit();
 }
@@ -406,7 +421,7 @@ function renderBest() {
     ol.append(el("li", {}, el("button", { type: "button", class: "best-item" + (all ? " all" : ok ? " ok" : ""), onclick: () => selectDay(b.day) },
       el("span", { class: "when", text: `${md(b.day)} ${SLOT_TEXT[b.slot]}` }),
       el("span", { class: "counts" }, countChip("o", b.o), countChip("t", b.t), countChip("x", b.x), b["-"] ? el("span", { class: "c none", text: `未${b["-"]}` }) : null),
-      all ? el("span", { class: "badge", text: "★ 全員 ○" }) : ok ? el("span", { class: "badge soft", text: "✕なし" }) : null)));
+      !all && ok ? el("span", { class: "badge soft", text: "✕なし" }) : null)));   // 「★ 全員 ○」は出さない（利用者の指定）
   }
 }
 const countChip = (m, v) => el("span", { class: `c m-${m}`, text: `${MARK_TEXT[m]}${v}` });
@@ -479,6 +494,7 @@ function renderEdit() {
   if (!E.dirty) {
     $("eTitle").value = ev.title; $("eDesc").value = ev.description || "";
     E.getSlots = slotPicker($("eSlots"), S.data.slots, () => { E.dirty = true; });
+    $("eTone").value = ev.tone || "auto"; $("eTone").onchange = () => { E.dirty = true; };
   }
   if (!E.month) { const f = dateOf(ev.first); E.month = new Date(f.getFullYear(), f.getMonth(), 1); }
   $("eNote").textContent = admin
@@ -510,7 +526,7 @@ async function onSaveEdit(ev) {
   try {
     const sl = E.getSlots();
     if (sl.d[0] >= sl.d[1] || sl.n[0] >= sl.n[1]) { setStatus("時間帯の終わりは、始まりより後にしてください", true); return; }
-    const d = await api(`/m/api/event/${S.eid}/edit`, { title: $("eTitle").value, description: $("eDesc").value, slots: sl,
+    const d = await api(`/m/api/event/${S.eid}/edit`, { title: $("eTitle").value, description: $("eDesc").value, slots: sl, tone: $("eTone").value,
       add_days: [...E.add], remove_days: [...E.rm], admin: S.keys.admin });
     E.dirty = false; E.add.clear(); E.rm.clear();
     accept(d); setStatus("保存しました");
