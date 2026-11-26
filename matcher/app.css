@@ -401,4 +401,12 @@ button.wd.on { padding-left: 0; padding-right: 0; }
 #best > li.cut { display: none; }
 /* 月を移るボタン（みんなのカレンダー。月を横に並べる広い画面で、前・次の月があるときだけ） */
 .mnav { display: flex; gap: 8px; }
+.mnav button { min-width: 44px; justify-content: center; font-size: 18px; }
 .mnav #mNext { margin-left: auto; }
+/* 「選ばれている」の見せ方をそろえる（利用者の指定：修正案1）。雰囲気・入力のしかたも、選ぶボタンと同じ「淡い地＋✓＋濃い文字」
+   （M3 のセグメントボタン）。濃い色で塗るのは主な操作（保存する・参加するなど）と、色だけで見せる指定の複数選択モードだけにする */
+.tone button[aria-checked="true"] { background: var(--heat2); color: var(--heat-ink2); border-color: var(--ai); }
+.tone button[aria-checked="true"]::before { content: "✓"; margin-right: 2px; font-weight: 700; }
+.seg-btn.on, .seg input:checked + span { background: var(--heat2); color: var(--heat-ink2); box-shadow: none; border-color: var(--ai); }
+.seg-btn.on small, .seg input:checked + span small { color: var(--heat-ink2); }
+.seg-btn.on > span:first-child::before, .seg input:checked + span::before { content: "✓ "; font-weight: 700; }

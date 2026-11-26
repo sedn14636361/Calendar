@@ -514,7 +514,7 @@ function updateMonthNav() {
   if (nav.hidden) return;
   const i = monthIndex(), prev = $("mPrev"), next = $("mNext"), had = document.activeElement;
   const set = (b, m, text) => { b.hidden = !m; if (m) { b.textContent = text(Number(m.dataset.ym.slice(5))); b.setAttribute("aria-label", `${ymText(m.dataset.ym)}を見る`); } };
-  set(prev, ms[i - 1], (n) => `‹ ${n}月`); set(next, ms[i + 1], (n) => `${n}月 ›`);
+  set(prev, ms[i - 1], () => "‹"); set(next, ms[i + 1], () => "›");   // 画面は「‹」「›」だけ（利用者の指定）。読み上げには月を伝える
   if (had && had.hidden) (had === prev ? next : prev).focus();   // 押したボタンが端で消えたら、もう一方に移る
 }
 function goMonth(step) {
