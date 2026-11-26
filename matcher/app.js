@@ -212,7 +212,7 @@ function parseCSV(text) {
   return out;
 }
 const pad5 = (t) => (t || "").replace(/^(\d):/, "0$1:");
-/* 行の終わりの印（「入力」をエクスポートしたテキスト）：✕ か印なし＝予定、△＝△ を付ける時間、○＝予定なし */
+/* 行の終わりの印（「カレンダー」の入力をエクスポートしたテキスト）：✕ か印なし＝予定、△＝△ を付ける時間、○＝予定なし */
 const LINE_MARK = { "○": "o", "◯": "o", "〇": "o", "△": "t", "✕": "x", "×": "x" };
 function parseSimpleLines(text) {
   const timedRe = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}:\d{2})\s*[-〜~]\s*(\d{1,2}:\d{2})(?:\s+([○◯〇△✕×]))?/;
@@ -374,6 +374,10 @@ function initEvent() {
   $("editForm").addEventListener("submit", onSaveEdit);
   $("eCancel").addEventListener("click", () => { E.dirty = false; E.add.clear(); E.rm.clear(); renderEdit(); setStatus("", false, "eStatus"); });
   $("jumpMine").addEventListener("click", jumpToMine);
+  $("mPrev").addEventListener("click", () => goMonth(-1));
+  $("mNext").addEventListener("click", () => goMonth(1));
+  $("overview").addEventListener("scroll", queueMonthNav, { passive: true });
+  window.addEventListener("resize", queueMonthNav);
   for (const id of ["eTitle", "eDesc"]) $(id).addEventListener("input", () => { E.dirty = true; });
   load(true);
   // ほかの人の入力を30秒ごとに取り込む。入力欄を操作している間と、保存を待っている間は描き直さない
@@ -422,7 +426,7 @@ function accept(d) {
 function renderBest() {
   const ol = $("best"); ol.textContent = "";
   const n = S.data.people.length;
-  if (!n) { $("bestNote").textContent = "まだ誰も入力していません。下の「入力」から参加してください。"; return; }
+  if (!n) { $("bestNote").textContent = "まだ誰も入力していません。下の「あなたの入力」から参加してください。"; return; }
   if (!S.data.best.length) { $("bestNote").textContent = "○ か △ の付いた枠がまだありません。"; return; }
   $("bestNote").textContent = "✕（と未入力）の人が少ない順、次に ○ の多い順です。";
   for (const b of S.data.best) {
@@ -477,7 +481,7 @@ function renderOverview() {
   const months = monthsOf(S.data.event.days), multi = months.length > 1;
   box.classList.toggle("multi", multi);
   $("monthHint").hidden = !multi;
-  $("monthHint").textContent = `${months.length}か月あります。横にスクロールすると、ほかの月を見られます（矢印キーでも動かせます）`;
+  $("monthHint").textContent = `${months.length}か月あります。「‹」「›」のボタンか、横にスクロールすると、ほかの月を見られます`;
   if (multi) { box.tabIndex = 0; box.setAttribute("role", "region"); box.setAttribute("aria-label", "みんなのカレンダー（月ごと）"); }
   else { box.removeAttribute("tabindex"); box.removeAttribute("role"); box.removeAttribute("aria-label"); }
   for (const ym of months) { const g = monthGrid(ym, (iso, d, wd) => {
@@ -495,7 +499,32 @@ function renderOverview() {
     el("span", { class: "dn", text: d }), ...halves);
   }); g.dataset.ym = ym; box.append(g); }
   box.scrollLeft = keep;
+  updateMonthNav();
 }
+/* 月を移るボタン（月を横に並べる広い画面だけ）。前・次の月があるときだけ出し、日程あわせの期間に無い月には移らない（利用者の指定） */
+const ymText = (ym) => `${Number(ym.slice(0, 4))}年${Number(ym.slice(5))}月`;
+function monthIndex() {
+  const box = $("overview"), left = box.getBoundingClientRect().left; let best = 0, d = Infinity;
+  [...box.querySelectorAll(".month")].forEach((m, i) => { const x = Math.abs(m.getBoundingClientRect().left - left); if (x < d) { d = x; best = i; } });
+  return best;
+}
+function updateMonthNav() {
+  const box = $("overview"), nav = $("monthNav"), ms = [...box.querySelectorAll(".month")];
+  nav.hidden = !(box.classList.contains("multi") && box.scrollWidth > box.clientWidth + 1);   // 月を縦に並べる狭い画面では出さない
+  if (nav.hidden) return;
+  const i = monthIndex(), prev = $("mPrev"), next = $("mNext"), had = document.activeElement;
+  const set = (b, m, text) => { b.hidden = !m; if (m) { b.textContent = text(Number(m.dataset.ym.slice(5))); b.setAttribute("aria-label", `${ymText(m.dataset.ym)}を見る`); } };
+  set(prev, ms[i - 1], (n) => `‹ ${n}月`); set(next, ms[i + 1], (n) => `${n}月 ›`);
+  if (had && had.hidden) (had === prev ? next : prev).focus();   // 押したボタンが端で消えたら、もう一方に移る
+}
+function goMonth(step) {
+  const box = $("overview"), ms = [...box.querySelectorAll(".month")], m = ms[Math.max(0, Math.min(ms.length - 1, monthIndex() + step))];
+  if (!m) return;
+  box.scrollTo({ left: box.scrollLeft + m.getBoundingClientRect().left - box.getBoundingClientRect().left,
+    behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+}
+let navQueued = false;
+const queueMonthNav = () => { if (navQueued) return; navQueued = true; requestAnimationFrame(() => { navQueued = false; if (S.data) updateMonthNav(); }); };
 function selectDay(iso) {
   S.selectedDay = iso; renderOverview(); renderDay(); fitBest();
   // 月を横に並べているときは、選んだ日の月まで横に動かす（候補から別の月の日を選んだとき）
@@ -579,7 +608,7 @@ function renderPeople() {
   $("adminRow").hidden = !admin;
   if (!S.data.people.length) ul.append(el("li", { class: "note", text: "まだいません" }));
   for (const p of S.data.people) {
-    // 誰でも、どの参加者の入力も編集・削除できる（利用者の指定）。「編集する」で「入力」の欄にその人を出す
+    // 誰でも、どの参加者の入力も編集・削除できる（利用者の指定）。「編集する」で「あなたの入力」の欄にその人を出す
     const own = !!S.keys.people[p.id];
     ul.append(el("li", { class: "person" + (p.id === S.current && !S.joining ? " own" : "") },
       el("i", { class: "dot", style: { background: p.color } }), el("span", { class: "nm", text: p.name }),
@@ -621,7 +650,7 @@ async function jumpToMine() {
   $("jName").focus({ preventScroll: true });
 }
 
-/* 「入力」の欄で編集する人を選ぶ。誰でも、どの参加者でも選べる（ブラウザの記録を消しても直せるように） */
+/* 「あなたの入力」の欄で編集する人を選ぶ。誰でも、どの参加者でも選べる（ブラウザの記録を消しても直せるように） */
 async function pickPerson(pid, scroll) {
   if (pid !== S.current && !(await settleUnsaved())) return false;
   if (pid !== S.current) { S.undo = null; S.roughTab = "input"; setStatus("", false, "mStatus"); }
@@ -657,7 +686,7 @@ function renderEditor() {
   box.append(el("label", { class: "field" }, el("span", { text: "メモ（みんなに見えます）" }), memoIn));
 
   const seg = el("div", { class: "seg two", role: "radiogroup", "aria-label": "入力のしかた" });
-  for (const [mode, label, sub] of [["rough", "入力", "自分で ○△✕"], ["detail", "インポート", "読み込んで ○✕"]]) {
+  for (const [mode, label, sub] of [["rough", "カレンダー", "自分で ○△✕"], ["detail", "インポート", "読み込んで ○✕"]]) {
     seg.append(el("button", { type: "button", role: "radio", "aria-checked": String(p.mode === mode), class: "seg-btn" + (p.mode === mode ? " on" : ""),
       onclick: () => { if (p.mode !== mode) { p.mode = mode; S.unsaved = true; renderEditor(); } } }, el("span", { text: label }), el("small", { text: sub })));
   }
@@ -670,7 +699,7 @@ function renderEditor() {
     const tabBtn = (id, label) => el("button", { type: "button", role: "tab", id: `tab-${id}`, class: "ptab", "aria-selected": String(tab === id),
       "aria-controls": "roughPanel", tabindex: tab === id ? "0" : "-1", onclick: () => setRoughTab(id),
       onkeydown: (e) => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); const to = tab === "input" ? "export" : "input"; setRoughTab(to); $(`tab-${to}`).focus(); } } }, label);
-    box.append(el("div", { class: "ptabs", role: "tablist", "aria-label": "入力" }, tabBtn("input", "入力する"), tabBtn("export", "出力する")));
+    box.append(el("div", { class: "ptabs", role: "tablist", "aria-label": "カレンダー" }, tabBtn("input", "入力する"), tabBtn("export", "出力する")));
     area = el("div", { class: "tabpanel", role: "tabpanel", id: "roughPanel", "aria-labelledby": `tab-${tab}` });
     box.append(area);
     if (tab === "export") area.append(exportPanel(p));   // 入力内容の書き出し（ほかの日程あわせのインポートで使える）
@@ -924,7 +953,7 @@ function detailPanel(p) {
       el("p", { text: "テキスト：1行に1件、「2026-12-04 19:00-20:30」か「2026-12-05 終日」。" }),
       el("p", { text: "CSV：「2026-12-04,19:00,20:30」か「2026-12-05,終日」。" }),
       el("p", { text: "終日の予定は、その日の昼も夜も ✕ になります。" }),
-      el("p", { text: "あわせ暦のエクスポート：ほかの日程あわせの「入力」の「出力する」タブで作ったテキスト（「2026-12-04 10:00-18:00 △」のように行の終わりに ○△✕）。✕ は予定、△ は重なる枠に △（固定）、○ は予定なしとして取り込みます。" })),
+      el("p", { text: "あわせ暦のエクスポート：ほかの日程あわせの「カレンダー」の「出力する」タブで作ったテキスト（「2026-12-04 10:00-18:00 △」のように行の終わりに ○△✕）。✕ は予定、△ は重なる枠に △（固定）、○ は予定なしとして取り込みます。" })),
     el("p", { class: "status act-status", id: "dStatus", role: "status" }));   // 読み込み・予定を足すときの知らせ（ボタンの近くに出す）
 
   if (S.pending && S.pending.pid === p.id) {

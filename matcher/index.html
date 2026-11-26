@@ -76,18 +76,19 @@
         <span class="hl"><i class="sw l1" aria-hidden="true"></i><i class="sw l2" aria-hidden="true"></i><i class="sw l3" aria-hidden="true"></i><i class="sw l4" aria-hidden="true"></i><i class="sw l5" aria-hidden="true"></i><span>✕なし：濃いほど ○ が多い（いちばん濃いのは全員 ○）</span></span>
       </p>
       <p class="note scroll-hint" id="monthHint" hidden></p>
+      <div class="mnav" id="monthNav" hidden><button type="button" id="mPrev" class="small"></button><button type="button" id="mNext" class="small"></button></div>
       <div id="overview" class="months"></div>
       <section id="day" class="day" hidden aria-live="polite"></section>
     </section>
 
     <section class="box" id="mine">
-      <h2 class="cap">入力</h2>
+      <h2 class="cap">あなたの入力</h2>
       <div class="tabs" id="myTabs" role="tablist"></div>
       <form id="joinForm" class="join">
         <label class="field"><span>名前</span><input id="jName" required autocomplete="nickname" placeholder="例：たなか"></label>
         <fieldset class="field"><legend>入力のしかた</legend>
           <div class="seg">
-            <label><input type="radio" name="jMode" value="rough" checked><span>入力<small>日ごとに ○△✕ を付ける</small></span></label>
+            <label><input type="radio" name="jMode" value="rough" checked><span>カレンダー<small>日ごとに ○△✕ を付ける</small></span></label>
             <label><input type="radio" name="jMode" value="detail"><span>インポート<small>予定やファイルを読み込んで ○✕ を付ける</small></span></label>
           </div>
         </fieldset>
@@ -132,7 +133,7 @@
       <ul>
         <li><b>URL を知っている人は誰でも</b>、全員の名前・メモ・○△✕ を見られ、直したり削除したりできます。誰が直したかは残りません。</li>
         <li>名前は本名でなくニックネームで構いません。メモに連絡先などは書かないでください。</li>
-        <li>インポートでは、予定の<b>名前は送らず</b>、日付と時刻だけを送ります。その日時は、ほかの人も見られます。生活の時間帯を知られたくないときは、「入力」を使ってください。</li>
+        <li>インポートでは、予定の<b>名前は送らず</b>、日付と時刻だけを送ります。その日時は、ほかの人も見られます。生活の時間帯を知られたくないときは、「カレンダー」を使ってください。</li>
         <li>Discord の /match で作った人は、Google カレンダーの予定の日時（名前は除く）から、自分の ○✕ が自動で入っていることがあります。その日時も、ほかの人が見られます。</li>
         <li>入力は、この日程あわせを用意した人の Google スプレッドシートに保存されます。削除や、最後の候補日から90日たったときの自動の削除のあとも、スプレッドシートの変更履歴には残ります。</li>
         <li>配色を作るため、タイトルだけを「ことばパレット」（Cloudflare Workers AI）に送ります。文字の形（フォント）は Google Fonts から読み込みます。</li>
