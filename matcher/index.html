@@ -87,7 +87,7 @@
         <fieldset class="field"><legend>入力のしかた</legend>
           <div class="seg">
             <label><input type="radio" name="jMode" value="rough" checked><span>大雑把入力<small>日ごとに ○△✕ を付ける</small></span></label>
-            <label><input type="radio" name="jMode" value="detail"><span>詳細入力<small>予定の時間から ○✕ を自動で付ける</small></span></label>
+            <label><input type="radio" name="jMode" value="detail"><span>インポート<small>予定やファイルを読み込んで ○✕ を付ける</small></span></label>
           </div>
         </fieldset>
         <div class="row"><button class="primary" type="submit">参加する</button>
@@ -104,7 +104,7 @@
         <label class="field"><span>概要</span><textarea id="eDesc" rows="3"></textarea></label>
         <label class="field"><span>雰囲気（全員の見え方。各自がページの上で切り替えることもできます）</span><select id="eTone"><option value="auto">おまかせ（配色のまま）</option><option value="light">明るめ</option><option value="dark">暗め</option></select></label>
         <div class="field"><span>昼と夜の時間帯</span><div id="eSlots" class="slots"></div>
-          <p class="note">変えると、詳細入力の人の自動の ○✕ は新しい時間帯で計算し直されます。</p></div>
+          <p class="note">変えると、インポートの人の自動の ○✕ は新しい時間帯で計算し直されます。</p></div>
         <div class="field"><span>候補日を足す</span>
           <p class="note" id="eNote">足したい日をタップしてください（もう一度タップで取り消し）。</p>
           <div id="eCal" class="picker"></div>
@@ -131,7 +131,7 @@
       <ul>
         <li><b>URL を知っている人は誰でも</b>、全員の名前・メモ・○△✕ を見られ、直したり削除したりできます。誰が直したかは残りません。</li>
         <li>名前は本名でなくニックネームで構いません。メモに連絡先などは書かないでください。</li>
-        <li>詳細入力では、予定の<b>名前は送らず</b>、日付と時刻だけを送ります。その日時は、ほかの人も見られます。生活の時間帯を知られたくないときは、大雑把入力を使ってください。</li>
+        <li>インポートでは、予定の<b>名前は送らず</b>、日付と時刻だけを送ります。その日時は、ほかの人も見られます。生活の時間帯を知られたくないときは、大雑把入力を使ってください。</li>
         <li>入力は、この日程あわせを用意した人の Google スプレッドシートに保存されます。削除や、最後の候補日から90日たったときの自動の削除のあとも、スプレッドシートの変更履歴には残ります。</li>
         <li>配色を作るため、タイトルだけを「ことばパレット」（Cloudflare Workers AI）に送ります。文字の形（フォント）は Google Fonts から読み込みます。</li>
         <li>このブラウザには、編集の鍵と、開いた日程あわせの一覧だけを残します。</li>

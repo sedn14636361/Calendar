@@ -1,7 +1,7 @@
 /* あわせ暦：日程あわせのページ（/m）
    ・作るページ（/m）と、調整のページ（/m/<id>）の両方をこのファイルで動かす
    ・大雑把入力：ペン（○△✕／消す）を選んで、日の「昼」「夜」をタップして塗る
-   ・詳細入力　：ICS・CSV・JSON・テキストの予定を読み、時間だけにして送る（予定の名前は送らない）。
+   ・インポート　：ICS・CSV・JSON・テキストの予定を読み、時間だけにして送る（予定の名前は送らない）。
                  ○✕ はサーバーが予定の時間から自動で決める。△ は本人がペンで付ける
    ・利用者の入力（名前など）は必ず textContent で表示する（HTML として扱わない） */
 "use strict";
@@ -211,8 +211,10 @@ function parseCSV(text) {
   return out;
 }
 const pad5 = (t) => (t || "").replace(/^(\d):/, "0$1:");
+/* 行の終わりの印（大雑把入力を「出力」したテキスト）：✕ か印なし＝予定、△＝△ を付ける時間、○＝予定なし */
+const LINE_MARK = { "○": "o", "◯": "o", "〇": "o", "△": "t", "✕": "x", "×": "x" };
 function parseSimpleLines(text) {
-  const timedRe = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}:\d{2})\s*[-〜~]\s*(\d{1,2}:\d{2})/;
+  const timedRe = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(\d{1,2}:\d{2})\s*[-〜~]\s*(\d{1,2}:\d{2})(?:\s+([○◯〇△✕×]))?/;
   const allDayRe = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s+(終日|allday|all day)/i;
   const out = [];
   for (const raw of text.split(/\r\n|\n/)) {
@@ -224,7 +226,7 @@ function parseSimpleLines(text) {
     const st = new Date(`${base}T${pad5(m[4])}:00`); let en = new Date(`${base}T${pad5(m[5])}:00`);
     if (isNaN(st) || isNaN(en)) continue;
     if (en <= st) en = addDays(en, 1);                 // 23:00-1:00 のように日をまたぐ書き方
-    out.push({ start: st, end: en, rrule: null, allDay: false });
+    out.push({ start: st, end: en, rrule: null, allDay: false, mark: LINE_MARK[m[6]] || "x" });
   }
   return out;
 }
@@ -234,7 +236,7 @@ function detectAndParse(text, filename = "") {
   try { const j = JSON.parse(text); if (Array.isArray(j) || j.events) return { events: parseJSONEvents(text), format: "JSON" }; } catch (_) { /* JSON ではない */ }
   if (name.endsWith(".csv") || /^\s*\d{4}-\d{2}-\d{2}\s*,/.test(text)) { const ev = parseCSV(text); if (ev.length) return { events: ev, format: "CSV" }; }
   const simple = parseSimpleLines(text);
-  if (simple.length) return { events: simple, format: "テキスト" };
+  if (simple.length) return { events: simple, format: simple.some((e) => e.mark && e.mark !== "x") || text.includes(EXPORT_HEAD) ? "あわせ暦の出力" : "テキスト" };
   throw new Error("形式を読み取れませんでした（ヘルプの書き方を見てください）");
 }
 const WD_CODE = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
@@ -624,7 +626,7 @@ function renderEditor() {
   box.append(el("label", { class: "field" }, el("span", { text: "メモ（みんなに見えます）" }), memoIn));
 
   const seg = el("div", { class: "seg two", role: "radiogroup", "aria-label": "入力のしかた" });
-  for (const [mode, label, sub] of [["rough", "大雑把入力", "自分で ○△✕"], ["detail", "詳細入力", "予定から ○✕"]]) {
+  for (const [mode, label, sub] of [["rough", "大雑把入力", "自分で ○△✕"], ["detail", "インポート", "読み込んで ○✕"]]) {
     seg.append(el("button", { type: "button", role: "radio", "aria-checked": String(p.mode === mode), class: "seg-btn" + (p.mode === mode ? " on" : ""),
       onclick: () => { if (p.mode !== mode) { p.mode = mode; S.unsaved = true; renderEditor(); } } }, el("span", { text: label }), el("small", { text: sub })));
   }
@@ -680,7 +682,7 @@ function renderEditor() {
   const cal = el("div", { class: "months mine" + (S.pickMode ? " picking" : "") });
   for (const ym of monthsOf(S.data.event.days)) cal.append(monthGrid(ym, (iso, d, wd) => {
     if (!days.has(iso)) return el("div", { class: "cell out" }, el("span", { class: "dn", text: d }));
-    // 枠ごとのプルダウンメニュー（利用者の指定）。詳細入力では「自動」（予定から決まった ○✕）も選べる
+    // 枠ごとのプルダウンメニュー（利用者の指定）。インポートでは「自動」（予定から決まった ○✕）も選べる
     const halves = ["d", "n"].map((slot) => {
       const manual = (p.marks[iso] || {})[slot], auto = autoMark(p, iso, slot), m = manual || auto;
       const fixed = isFixed(p, iso, slot);
@@ -717,6 +719,7 @@ function renderEditor() {
     onclick: () => setPickMode(false) }, el("span", { text: "複数選択モード" }), el("b", { "aria-hidden": "true", text: "✕" })));
   if (p.mode === "detail" && Object.keys(p.marks).length) box.append(el("div", { class: "row" }, el("button", { type: "button", class: "small", text: "手で付けた印をすべて消す（自動に戻す）", onclick: () => { p.marks = {}; p.fixed = {}; S.unsaved = true; renderEditor(); } })));
 
+  if (p.mode === "rough") box.append(exportPanel(p));   // 入力内容の書き出し（ほかの日程あわせのインポートで使える）
   // 保存のバー：変更は「保存する」を押すまで反映しない（利用者の指定）
   box.append(el("div", { class: "savebar" + (S.unsaved ? " unsaved" : "") },
     el("p", { class: "status", id: "saveState", role: "status", text: S.saving ? "保存しています…" : S.unsaved ? "保存していない変更があります" : (S.savedOnce ? "保存しました" : "") }),
@@ -741,7 +744,7 @@ function setMark(iso, slot, mark) {          // 枠のメニューで選んだ�
 }
 function toggleSet(set, v) { if (set.has(v)) set.delete(v); else set.add(v); }
 /* まとめて選択の対象：選んだ日付 × 選んだ時間帯の枠（日付を何も選んでいなければ無し）。
-   ただし、固定の枠（プルダウンで個別に選んだ枠など）と、詳細入力で予定があって ✕ になっている枠は変えない（利用者の指定）。
+   ただし、固定の枠（プルダウンで個別に選んだ枠など）と、インポートで予定があって ✕ になっている枠は変えない（利用者の指定）。
    複数選択モードで選んだ日だけは、固定の枠も上書きできる（利用者の指定） */
 function protectedSlot(p, iso, slot) {
   return (isFixed(p, iso, slot) && !S.tapDates.has(iso)) || autoMark(p, iso, slot) === "x";
@@ -855,7 +858,7 @@ async function saveNow(extra) {
 }
 window.addEventListener("beforeunload", (e) => { if (S.unsaved) { e.preventDefault(); e.returnValue = ""; } });
 
-/* ---------- 詳細入力：予定の読み込みと、共有中の予定 ---------- */
+/* ---------- インポート：予定の読み込みと、共有中の予定 ---------- */
 function detailPanel(p) {
   const box = el("div", { class: "detail" });
   const file = el("input", { type: "file", accept: ".ics,.json,.csv,.txt,text/calendar,application/json,text/csv,text/plain", class: "visually-hidden", id: "dFile" });
@@ -867,7 +870,7 @@ function detailPanel(p) {
   const paste = el("textarea", { id: "dPaste", rows: 4, placeholder: "例：\n2026-12-04 19:00-20:30\n2026-12-05 終日\n（ICS の中身をそのまま貼っても読めます）" });
   paste.value = S.pasteText || "";
   paste.addEventListener("input", () => { S.pasteText = paste.value; });
-  box.append(el("p", { class: "note", text: "Google カレンダーなどから書き出した .ics を選ぶか、予定を貼り付けてください。予定の名前は読み込んだ時点で捨て、時間だけを送ります。" }),
+  box.append(el("p", { class: "note", text: "Google カレンダーなどから書き出した .ics を選ぶか、予定を貼り付けてください。予定の名前は読み込んだ時点で捨て、時間だけを送ります。ほかの日程あわせの大雑把入力で「出力」したファイル・テキストも読めます（○△✕ を取り込みます）。" }),
     el("div", { class: "row" }, el("label", { class: "btn", for: "dFile" }, "ファイルを選ぶ（.ics/.csv/.json/.txt）"), file),
     paste,
     el("div", { class: "row" }, el("button", { type: "button", text: "貼り付けた内容を読む", onclick: () => { try { if (paste.value.trim()) { readEvents(paste.value, ""); S.pasteText = ""; } } catch (e) { setStatus(`読み込めませんでした：${e.message}`, true, "dStatus"); } } }),
@@ -876,7 +879,8 @@ function detailPanel(p) {
       el("p", { text: "ICS：Google カレンダーの「設定」→ 対象のカレンダー →「エクスポート」で書き出せます（繰り返しの予定にも対応）。" }),
       el("p", { text: "テキスト：1行に1件、「2026-12-04 19:00-20:30」か「2026-12-05 終日」。" }),
       el("p", { text: "CSV：「2026-12-04,19:00,20:30」か「2026-12-05,終日」。" }),
-      el("p", { text: "終日の予定は、その日の昼も夜も ✕ になります。" })),
+      el("p", { text: "終日の予定は、その日の昼も夜も ✕ になります。" }),
+      el("p", { text: "あわせ暦の出力：大雑把入力の「入力内容を出力」で作ったテキスト（「2026-12-04 10:00-18:00 △」のように行の終わりに ○△✕）。✕ は予定、△ は重なる枠に △（固定）、○ は予定なしとして取り込みます。" })),
     el("p", { class: "status act-status", id: "dStatus", role: "status" }));   // 読み込み・予定を足すときの知らせ（ボタンの近くに出す）
 
   if (S.pending && S.pending.pid === p.id) {
@@ -885,10 +889,11 @@ function detailPanel(p) {
     for (const iso of keys) list.append(el("li", {}, el("span", { class: "d", text: md(iso) }), el("span", { text: pv.busy[iso].map(([s, e]) => s === 0 && e === 1440 ? "終日" : `${fmtHM(s)}–${fmtHM(e)}`).join("、") })));
     box.append(el("div", { class: "preview" },
       el("p", { class: "cap", text: `読み込んだ予定（${pv.format}・${pv.count}件 → 期間内 ${keys.length}日）` }),
-      keys.length ? list : el("p", { class: "note", text: "期間内の予定はありませんでした（全部 ○ になります）" }),
+      keys.length ? list : el("p", { class: "note", text: "期間内の予定（✕）はありませんでした" }),
+      pv.format === "あわせ暦の出力" ? importNote(p, pv) : null,
       el("div", { class: "row" },
-        el("button", { type: "button", class: "primary", text: p.busy_set ? "今の予定と置き換えて共有" : "この時間を共有する", onclick: () => { S.pending = null; saveNow({ busy: pv.busy }); } }),
-        p.busy_set ? el("button", { type: "button", text: "今の予定に足して共有", onclick: () => { S.pending = null; saveNow({ busy: unionBusy(p.busy, pv.busy) }); } }) : null,
+        el("button", { type: "button", class: "primary", text: p.busy_set ? "今の予定と置き換えて共有" : "この時間を共有する", onclick: () => shareImport(p, pv.busy, pv.tent) }),
+        p.busy_set ? el("button", { type: "button", text: "今の予定に足して共有", onclick: () => { const b = unionBusy(p.busy, pv.busy); shareImport(p, b, pv.tent); } }) : null,
         el("button", { type: "button", class: "small", text: "やめる", onclick: () => { S.pending = null; renderEditor(); } }))));
   }
 
@@ -930,10 +935,76 @@ function detailPanel(p) {
   box.append(shared);
   return box;
 }
+/* あわせ暦の出力を読んだときの案内：△ を付ける枠の数と、未入力だった枠が ○ になること */
+function importNote(p, pv) {
+  const n = applyTentative(p, pv.busy, pv.tent).n;
+  const parts = [`△ を付ける枠：${n}（固定。予定（✕）と重なる枠は ✕ のまま）`];
+  if (pv.missing) parts.push(`書き出した内容に無い（未入力だった）${pv.missing}枠は、予定が無いので ○ になります。行けるか分からない枠は、共有したあとにメニューで △ や ✕ を選んでください`);
+  return el("p", { class: "note", text: parts.join("。") + "。" });
+}
 function readEvents(text, name) {
   const { events, format } = detectAndParse(text, name);
-  S.pending = { pid: S.current, busy: busyFromEvents(events, busyDays()), format, count: events.length };
+  const days = busyDays(), of = (m) => events.filter((e) => (e.mark || "x") === m);
+  const pv = { pid: S.current, busy: busyFromEvents(of("x"), days), format, count: events.length, tent: {}, missing: 0 };
+  // あわせ暦の出力：△ の時間と、書き出した内容に無かった（未入力だった）枠の数も持つ
+  if (format === "あわせ暦の出力") {
+    pv.tent = busyFromEvents(of("t"), days);
+    const all = busyFromEvents(events, days);
+    for (const iso of S.data.event.days) for (const slot of ["d", "n"]) if (busyMark(all[iso], slot, all[nextIso(iso)]) === "o") pv.missing++;
+  }
+  S.pending = pv;
   renderEditor();
+}
+/* インポートで共有するとき：△ の時間に重なる枠に △ を付けて固定する（利用者の指定）。予定（✕）と重なる枠は ✕ のまま */
+function applyTentative(p, busy, tent) {
+  const marks = JSON.parse(JSON.stringify(p.marks || {})), fixed = JSON.parse(JSON.stringify(p.fixed || {}));
+  let n = 0;
+  for (const iso of S.data.event.days) for (const slot of ["d", "n"]) {
+    if (busyMark(tent[iso], slot, tent[nextIso(iso)]) !== "x") continue;            // △ の時間と重ならない
+    if (busyMark(busy[iso], slot, busy[nextIso(iso)]) === "x") continue;            // 予定と重なる（✕ が優先）
+    (marks[iso] = marks[iso] || {})[slot] = "t"; (fixed[iso] = fixed[iso] || {})[slot] = true; n++;
+  }
+  return { marks, fixed, n };
+}
+function shareImport(p, busy, tent) {
+  S.pending = null;
+  const t = applyTentative(p, busy, tent);
+  if (t.n) { p.marks = t.marks; p.fixed = t.fixed; S.unsaved = true; }   // 印も一緒に送る（saveNow はまだ保存していない変更をまとめて送る）
+  saveNow({ busy });
+}
+
+/* ---------- 大雑把入力の書き出し（ほかの日程あわせの「インポート」で読める形） ---------- */
+const EXPORT_HEAD = "# あわせ暦の大雑把入力";
+function exportText(p) {
+  const hm = (m) => fmtHM(m % 1440), lines = [];
+  for (const iso of [...S.data.event.days].sort()) for (const slot of ["d", "n"]) {
+    const m = (p.marks[iso] || {})[slot]; if (!m) continue;
+    let [s, e] = SLOT_RANGE[slot], day = iso;
+    if (s >= 1440) { day = nextIso(iso); s -= 1440; e -= 1440; }   // 夜が 24時を過ぎてから始まるときは、翌日の日付で書く
+    lines.push(`${day} ${hm(s)}-${hm(e)} ${MARK_TEXT[m]}`);
+  }
+  const one = (t) => String(t || "").replace(/\s+/g, " ").trim();
+  return { count: lines.length, text: [
+    `${EXPORT_HEAD}（${one(S.data.event.title)}／${one(p.name)}）`,
+    "# ほかの日程あわせの「インポート」で、このテキストを貼るか、このファイルを選ぶと、同じ ○△✕ を取り込めます",
+    "# 時刻で合わせるので、昼・夜の時間帯がちがう日程あわせでも使えます（✕＝予定あり、△＝△、○＝空き）",
+    "# 未入力の枠は書いていません。インポートでは、予定の無い時間は ○ になります",
+    ...lines, ""].join("\n") };
+}
+function exportPanel(p) {
+  const { text, count } = exportText(p);
+  const save = el("button", { type: "button", class: "small", disabled: !count, text: "ファイルに保存（.txt）", onclick: () => {
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    const a = el("a", { href: url, download: `awasegoyomi-${S.eid}-${p.id}.txt` });   // 名前は英数字だけ（日本語の名前は、ブラウザによって「download」に置き換わることがある。タイトルと名前はファイルの1行目にある）
+    document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } });
+  const copy = el("button", { type: "button", class: "small", disabled: !count, text: "コピー", onclick: (e) => copyText(text, e.currentTarget, "コピーしました") });
+  return el("div", { class: "export" },
+    el("p", { class: "cap", text: "入力内容を出力" }),
+    el("p", { class: "note", text: count
+      ? `今の ○△✕（${count}枠）を書き出します。ほかの日程あわせの「インポート」で読み込むと、同じ入力を使えます（時刻で合わせるので、昼・夜の時間帯がちがっても使えます）。未入力の枠は書き出さないので、インポートすると ○ になります。`
+      : "まだ ○△✕ がありません。印を付けると、ほかの日程あわせの「インポート」で使える形で書き出せます。" }),
+    el("div", { class: "row" }, save, copy));
 }
 
 async function copyText(text, btn, msg) {

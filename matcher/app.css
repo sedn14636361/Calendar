@@ -357,3 +357,6 @@ button.wd.on { padding-left: 0; padding-right: 0; }
   #bestBox { grid-column: 2; grid-row: 1; }
   #mine, #editBox, #peopleBox { grid-column: 1 / -1; }
 }
+
+/* 大雑把入力の書き出し（入力内容を出力） */
+.export { display: grid; gap: 8px; border-top: 1px dashed var(--rule); padding-top: 10px; }
