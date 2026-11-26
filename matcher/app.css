@@ -298,3 +298,14 @@ details.box > summary { cursor: pointer; }
 .pickfloat { position: fixed; z-index: 20; bottom: calc(env(safe-area-inset-bottom, 0px) + var(--savebar-h, 0px) + 12px); right: calc(env(safe-area-inset-right, 0px) + 12px);
   display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 14px; border-radius: 999px;
   background: var(--ai); color: var(--ai-ink); border: 1px solid var(--ai); font-weight: 700; box-shadow: 0 2px 10px rgba(0, 0, 0, .25); }
+/* 知らせの行は、知らせがないときは場所を取らない（タイトルと「候補」の間が空きすぎないように。利用者の指定） */
+#status:empty { display: none; }
+/* 日を選ぶカレンダーの今日：数字の下に小さな点 */
+.pday { position: relative; }
+.pday.today { font-weight: 700; }
+.pday.today::after { content: ""; position: absolute; left: 50%; bottom: 5px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; }
+/* スマホなどの狭い画面では、印のメニューの ▾ を出さない（狭いマスで印とぶつかるため。マスを押すとメニューが開くのは同じ。利用者の指定） */
+@media (max-width: 700px) {
+  .paint::after { display: none; }
+  .paint b { padding-right: 0; }
+}

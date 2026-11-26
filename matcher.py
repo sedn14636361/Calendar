@@ -506,6 +506,10 @@ def build_theme(palette, tone="auto"):
     bg = ensure_contrast(bg, ["#ffffff" if dark else "#000000"], 7)
     sheet = mix(bg, "#ffffff", 0.06 if dark else 0.55)
     grounds = [bg, sheet]                                  # 文字が置かれる地（ページの地と、欄の地）
+    if dark:
+        # 暗い地では、配色の明るい色（橙など）をそのまま本文に使うと、見出しや強調との差が付かない（利用者の指定）。
+        # 本文は白に寄せ、色合いは少しだけ残す
+        ink = mix(ink, "#ffffff", 0.85)
     ink = ensure_contrast(ink, grounds)
     ink_soft = ensure_contrast(mix(ink, bg, 0.3), grounds)  # 薄めた文字色も、読める濃さまでしか薄めない
 
