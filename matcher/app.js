@@ -636,11 +636,12 @@ function renderEditor() {
   // まとめて選択は「日付の集まり」を選ぶ。曜日のボタンは、その曜日の日をまとめて選ぶ・外す近道。
   // 曜日のボタンと「平日」は祝日を除く（利用者の指定 a）。「土日」は土日の祝日も含み、「土日祝」は土日と祝日
   const wdOn = (i) => { const ds = datesOfWeekday(i); return ds.length > 0 && ds.every((x) => S.bulkDates.has(x)); };
-  const wdBtns = WD.map((w, i) => el("button", { type: "button", class: "tg" + (wdOn(i) ? " on" : "") + (i === 0 ? " sun" : i === 6 ? " sat" : ""),
+  const wdBtns = WD.map((w, i) => el("button", { type: "button", class: "tg wdt" + (wdOn(i) ? " on" : "") + (i === 0 ? " sun" : i === 6 ? " sat" : ""),
     "aria-pressed": String(wdOn(i)), onclick: () => { toggleWeekday(i); renderEditor(); } }, w));
   // 全部・平日・土日・土日祝：押すと、その日だけが選ばれた状態にする。すでにその日だけが選ばれているときにもう一度押すと、外す
   const same = (list) => list.length === S.bulkDates.size && list.every((x) => S.bulkDates.has(x));
   const preset = (label, list) => el("button", { type: "button", class: "small" + (list.length && same(list) ? " on" : ""), text: label,
+    "aria-pressed": label === "解除" ? null : String(!!(list.length && same(list))),
     onclick: () => {
       S.bulkDates = list.length && !same(list) ? new Set(list) : new Set();
       S.tapDates = new Set();
