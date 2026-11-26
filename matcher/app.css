@@ -381,6 +381,9 @@ button.wd.on { padding-left: 0; padding-right: 0; }
   .paint::after { display: none; }
   .paint b { padding-right: 0; }
 }
-/* 入力するカレンダー：どの日付の行も同じ高さにする（候補日の無い週だけ縮まないように。利用者の指定）。
-   1行目（曜日の見出し）はそのまま、日付の行はいちばん高い行にそろえる */
-.months.mine .grid { grid-template-rows: auto; grid-auto-rows: 1fr; }
+/* 入力するカレンダー：実際のカレンダーのように、マスを正方形にする（見比べながら入力しやすいように。利用者の指定）。
+   候補でない日は、いつも正方形（同じ週の候補日に合わせて縦に伸ばさない）。
+   候補日も正方形が基本だが、昼・夜の枠が収まらない狭い画面（スマホ）では、その分だけ縦に伸びる */
+.months.mine .cell { aspect-ratio: 1 / 1; }
+.months.mine .cell.out { align-self: start; }
+.months.mine .cell.in { min-height: auto; }     /* 中身（日付・昼・夜の枠）より縮めない */
