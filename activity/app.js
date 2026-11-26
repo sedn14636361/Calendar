@@ -67,6 +67,15 @@ function setStatus(text, isError) {
   s.classList.toggle("error", !!isError);
 }
 
+// ボタンを押したあとの知らせ（作りました・出力しました・エラー）は、そのボタンのすぐ下に出す（利用者の指定）
+function actStatus(text, isError) {
+  const id = { match: "make-status", date: "run-status" }[S.kind] || "add-status";
+  const s = $(id);
+  s.textContent = text;
+  s.classList.toggle("error", !!isError);
+  if (text) setStatus("");          // 上の行に古い知らせが残らないように
+}
+
 async function api(path, body) {
   const r = await fetch(path, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -409,14 +418,14 @@ async function runFree() {
   if (freeValid() || F.busy) return;
   F.busy = true;
   render();
-  setStatus("調べています…");
+  actStatus("調べています…");
   const req = api("api/free", freeBody());
   const clip = clipboardWithPromise(() => req.then((j) => j.copy));   // 押したその場で始める（上の 1）
   let j;
   try {
     j = await req;
   } catch (e) {
-    setStatus(e.message, true);
+    actStatus(e.message, true);
     F.busy = false;
     render();
     return;
@@ -427,15 +436,15 @@ async function runFree() {
   let ok = await clip;
   if (!ok) ok = await copyText(j.copy);
   setCopyStatus(ok);
-  // 困ったときだけ（カレンダーを読めなかった・チャンネルに出せなかった）、上の状態の行に知らせる
+  // 困ったときは（カレンダーを読めなかった・チャンネルに出せなかった）、出力するボタンの下に一緒に知らせる
   const trouble = [];
   if (j.note) trouble.push(j.note);
   if (!j.posted) trouble.push("チャンネルへの投稿に失敗しました。ボットの「メッセージを送信」の権限を確認してください");
   const head = ok ? "出力して、クリップボードにコピーしました" : "出力しました（コピーは手で行ってください）";
-  setStatus([head, ...trouble].join("\n"), !ok || trouble.length > 0);
+  actStatus([head, ...trouble].join("\n"), !ok || trouble.length > 0);
   F.busy = false;
   render();
-  $("free-result").scrollIntoView({ block: "start", behavior: "smooth" });
+  $("run-box").scrollIntoView({ block: "start", behavior: "smooth" });    // 出力するボタンの下の知らせと、結果が見えるように
 }
 
 // ---------- 日程あわせを作る画面（/match） ----------
@@ -495,7 +504,7 @@ async function makeMatch() {
   if (matchValid() || M.busy || M.done) return;
   M.busy = true;
   render();
-  setStatus("作っています…（配色を作るので、30秒ほどかかることがあります）");
+  actStatus("作っています…（配色を作るので、30秒ほどかかることがあります）");
   const req = api("api/match", { session: S.session, first: F.start, last: F.end,
     title: $("match-title").value, description: $("match-desc").value, slots: matchSlots(), tone: $("match-tone").value });
   const clip = clipboardWithPromise(() => req.then((j) => j.url));   // 押したその場でコピーを始める（iPhone 向け）
@@ -503,7 +512,7 @@ async function makeMatch() {
   try {
     j = await req;
   } catch (e) {
-    setStatus(e.message, true);
+    actStatus(e.message, true);
     M.busy = false;
     render();
     return;
@@ -518,9 +527,9 @@ async function makeMatch() {
   setShareStatus(ok);
   const head = ok ? "作りました。共有用の URL をコピーしました" : "作りました（URL のコピーは手で行ってください）";
   const trouble = j.posted ? [] : ["チャンネルへの投稿に失敗しました。ボットの「メッセージを送信」の権限を確認してください"];
-  setStatus([head, ...trouble].join("\n"), !ok || trouble.length > 0);
+  actStatus([head, ...trouble].join("\n"), !ok || trouble.length > 0);
   render();
-  $("match-result").scrollIntoView({ block: "start", behavior: "smooth" });
+  $("make-box").scrollIntoView({ block: "start", behavior: "smooth" });   // 作るボタンの下の知らせと、URL の欄が見えるように
 }
 
 // ---------- 日ごとの一覧 ----------
@@ -835,7 +844,7 @@ async function submit() {
   if (valid() || S.busy) return;
   S.busy = true;
   renderSummary();
-  setStatus("追加しています…");
+  actStatus("追加しています…");
   const body = { session: S.session, entries: entries(), name: $("name").value, calendar: $("calendar").value };
   try {
     const j = await api("api/add", body);
@@ -845,9 +854,10 @@ async function submit() {
     $("result").textContent = j.message
       .replace(/^\*\*(.*)\*\*$/gm, "$1")
       .replace(/^<(https?:\/\/\S+)>$/gm, "$1");
-    setStatus("追加しました。結果はチャンネルにも表示しています。");
+    actStatus("");
+    setStatus("追加しました。結果はチャンネルにも表示しています。");   // 下のバーは閉じるので、結果の上に出す
   } catch (e) {
-    setStatus(e.message, true);
+    actStatus(e.message, true);
   } finally {
     S.busy = false;
     renderSummary();
@@ -952,7 +962,8 @@ function wire() {
       if (!text) return;
       const ok = await copyText(text);
       if (setter) setter(ok);
-      else setStatus(ok ? "作った人用のリンクをコピーしました" : "自動でコピーできませんでした。リンクを長押ししてコピーしてください", !ok);
+      else { const st = $("admin-status"); st.classList.toggle("ok", ok); st.classList.toggle("ng", !ok);
+        st.textContent = ok ? "📋 作った人用のリンクをコピーしました" : "自動でコピーできませんでした。リンクを長押ししてコピーしてください"; }
       if (!ok) { const ta = $(box); ta.focus(); ta.select(); }
     });
   }

@@ -7,6 +7,7 @@
   --ok: #24477a; --maybe: #7a5f12; --ng: #5d636c; --sun: #b3261e; --sat: #2a56b0;
   --heat0: #ffffff; --heat1: #e4e9f1; --heat2: #c9d3e2; --heat3: #aebdd4; --heat4: #93a7c5; --heat5: #7891b7;
   --heat-ink0: #14161a; --heat-ink1: #14161a; --heat-ink2: #14161a; --heat-ink3: #14161a; --heat-ink4: #14161a; --heat-ink5: #14161a;
+  /* 日付（候補・月の見出し・日の詳細・日を選ぶカレンダー）はゴシック体にする（利用者の指定：明朝体を避ける）。明朝体はタイトルだけ */
   --f-display: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
   --f-body: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", "Yu Gothic", system-ui, sans-serif;
   --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
@@ -81,7 +82,7 @@ button:disabled { opacity: .55; cursor: default; }
 .best li { counter-increment: b; }
 .best-item { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 6px 12px; text-align: left; }
 .best-item::before { content: counter(b); font-family: var(--f-mono); color: var(--ink-soft); min-width: 1.2em; }
-.best-item .when { font-family: var(--f-display); font-weight: 700; font-size: 16px; }
+.best-item .when { font-family: var(--f-body); font-weight: 700; font-size: 16px; }
 .best-item.all { border-color: var(--ok); }
 .counts { display: inline-flex; gap: 8px; font-family: var(--f-mono); font-size: 14px; }
 .c.m-o { color: var(--ok); } .c.m-t { color: var(--maybe); } .c.m-x, .c.none { color: var(--ng); }
@@ -93,7 +94,7 @@ button:disabled { opacity: .55; cursor: default; }
 .months { display: grid; gap: 18px; }
 @media (min-width: 760px) { .months:not(.mine) { grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); } }
 .month { min-width: 0; }
-.mh { margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px; font-family: var(--f-display); }
+.mh { margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px; font-family: var(--f-body); }
 .mh .y { font-size: 13px; color: var(--ink-soft); }
 .mh .m { font-size: 22px; }
 .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }
@@ -116,7 +117,7 @@ button.cell { cursor: pointer; }
 
 /* 日の詳細 */
 .day { border-top: 1px solid var(--rule); padding-top: 12px; display: grid; gap: 8px; }
-.day h3 { margin: 0; font-family: var(--f-display); font-size: 20px; }
+.day h3 { margin: 0; font-family: var(--f-body); font-size: 20px; }
 .dtable { display: grid; grid-template-columns: minmax(5em, max-content) 2.2em 2.2em; gap: 6px 12px; align-items: center; }
 .dtable .th { font-size: 11px; color: var(--ink-soft); }
 .dtable .nm { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -214,7 +215,7 @@ button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; 
 .picker { display: grid; gap: 6px; max-width: 420px; }
 .picker .mh { display: none; }
 .pnav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.pnav .pm { font-family: var(--f-display); font-size: 18px; }
+.pnav .pm { font-family: var(--f-body); font-size: 18px; }
 .pday { justify-content: center; min-height: 40px; padding: 0; font-family: var(--f-mono); font-size: 14px; }
 .pday.sun { color: var(--sun); } .pday.sat { color: var(--sat); }
 .pday.on { background: var(--heat3); color: var(--heat-ink3); border-color: var(--ai); }
@@ -278,3 +279,9 @@ details.box > summary { cursor: pointer; }
 .daypick:focus-visible { outline: 2px solid var(--ai); outline-offset: -2px; }
 .months.mine .cell.daysel { box-shadow: inset 0 0 0 3px var(--ai); }
 .tg.pickmode { font-size: 13px; }
+
+/* ボタンを押したあとの知らせ（作りました・エラー）は、ボタンのすぐ下に出す */
+.act-status { margin-top: 8px; white-space: pre-line; }
+.act-status:empty { display: none; }
+/* なぞって選ぶ間に、文字が選択されないように */
+.months.mine.picking { user-select: none; -webkit-user-select: none; }
