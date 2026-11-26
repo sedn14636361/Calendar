@@ -431,7 +431,7 @@ function renderBest() {
 }
 const countChip = (m, v) => el("span", { class: `c m-${m}`, text: `${MARK_TEXT[m]}${v}` });
 
-/* ---------- みんなの空き（カレンダー） ---------- */
+/* ---------- みんなのカレンダー ---------- */
 function monthsOf(days) {
   const out = []; const seen = new Set();
   for (const iso of days) { const k = iso.slice(0, 7); if (!seen.has(k)) { seen.add(k); out.push(k); } }
@@ -454,11 +454,11 @@ function renderOverview() {
   for (const ym of monthsOf(S.data.event.days)) box.append(monthGrid(ym, (iso, d, wd) => {
     if (!days.has(iso)) return el("div", { class: "cell out" }, el("span", { class: "dn", text: d }));
     const halves = ["d", "n"].map((slot) => {
-      // 内訳はふだん出さない。カーソルを合わせると出し（title と CSS の :hover）、タップすると下に日の詳細を出す
+      // マスの中には ○△✕ の人数を出さない（カーソルを合わせても出さない。利用者の指定）。
+      // 内訳は、マスをタップすると下の日の詳細に出る。読み上げには、マスの aria-label で伝える
       const c = S.data.tally[iso][slot], lv = heatLevel(c);
-      const label = n ? `○${c.o}△${c.t}✕${c.x}` : "";   // マスが狭いので詰めて書く（title には読みやすい形で）
-      return el("span", { class: `half lv${lv}`, title: n ? `${SLOT_TEXT[slot]} ○${c.o} △${c.t} ✕${c.x}` : "",
-        style: { background: `var(--heat${lv})`, color: `var(--heat-ink${lv})` } }, el("span", { class: "lbl", text: label }));
+      return el("span", { class: `half lv${lv}`, "aria-hidden": "true",
+        style: { background: `var(--heat${lv})`, color: `var(--heat-ink${lv})` } });
     });
     const t = S.data.tally[iso];
     return el("button", { type: "button", class: "cell in" + (S.selectedDay === iso ? " sel" : "") + dayClass(iso, wd), title: holName(iso),
