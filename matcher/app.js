@@ -350,7 +350,7 @@ function heatLevel(c) {
    ================================================================= */
 const S = {
   eid: document.body.dataset.event, data: null, keys: null, current: null, bulkDates: new Set(), tapDates: new Set(), pickMode: false, bulkSlots: new Set(["d", "n"]),
-  unsaved: false, saving: false, selectedDay: null, pending: null, joining: false,
+  unsaved: false, saving: false, selectedDay: null, pending: null, joining: false, roughTab: "input",
 };
 
 function me() { return S.data && S.data.people.find((p) => p.id === S.current); }
@@ -593,7 +593,7 @@ async function jumpToMine() {
 /* 「入力」の欄で編集する人を選ぶ。誰でも、どの参加者でも選べる（ブラウザの記録を消しても直せるように） */
 async function pickPerson(pid, scroll) {
   if (pid !== S.current && !(await settleUnsaved())) return false;
-  if (pid !== S.current) { S.undo = null; setStatus("", false, "mStatus"); }
+  if (pid !== S.current) { S.undo = null; S.roughTab = "input"; setStatus("", false, "mStatus"); }
   S.current = pid; S.joining = !pid;
   renderMine(); renderPeople();
   if (scroll) $("mine").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -632,6 +632,18 @@ function renderEditor() {
   }
   box.append(seg);
   if (p.mode === "detail") box.append(detailPanel(p));
+  // 大雑把入力は「入力する」「出力する」のタブに分ける。出力（書き出し）はふだん格納しておき、タブで出す（利用者の指定）
+  const tab = p.mode === "rough" ? S.roughTab : "input";
+  let area = box;
+  if (p.mode === "rough") {
+    const tabBtn = (id, label) => el("button", { type: "button", role: "tab", id: `tab-${id}`, class: "ptab", "aria-selected": String(tab === id),
+      "aria-controls": "roughPanel", tabindex: tab === id ? "0" : "-1", onclick: () => setRoughTab(id),
+      onkeydown: (e) => { if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); const to = tab === "input" ? "export" : "input"; setRoughTab(to); $(`tab-${to}`).focus(); } } }, label);
+    box.append(el("div", { class: "ptabs", role: "tablist", "aria-label": "大雑把入力" }, tabBtn("input", "入力する"), tabBtn("export", "出力する")));
+    area = el("div", { class: "tabpanel", role: "tabpanel", id: "roughPanel", "aria-labelledby": `tab-${tab}` });
+    box.append(area);
+    if (tab === "export") area.append(exportPanel(p));   // 入力内容の書き出し（ほかの日程あわせのインポートで使える）
+  }
 
   // まとめて選択：日付 × 時間帯で枠を選び（自分のカレンダーに枠線で出る）、そのあと ○・△・✕・自動に戻す を押して付ける
   const clearName = p.mode === "detail" ? "自動に戻す" : "消す";
@@ -672,10 +684,10 @@ function renderEditor() {
     el("div", { class: "bulk-row" }, el("span", { class: "lbl", text: "選んだ枠に" }),
       el("div", { class: "tgs" }, ...[["o", "○"], ["t", "△"], ["x", "✕"], ["clear", clearName]].map(([k, label]) =>
         el("button", { type: "button", class: `apply pen-${k}`, disabled: !targets.length, onclick: () => paintBulk(k) }, label)))));
-  box.append(el("p", { class: "note", text: p.mode === "detail"
+  if (tab === "input") area.append(el("p", { class: "note", text: p.mode === "detail"
     ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。メニューで選んだ枠（太字・枠付き）は、自動の判定より優先され、曜日などのまとめて選択では変わりません（複数選択モードで選んだ日は上書きできます）。"
     : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。メニューで選んだ枠（太字・枠付き）は、曜日などのまとめて選択では変わりません（複数選択モードで選んだ日は上書きできます）。" }));
-  box.append(bulk);
+  if (tab === "input") area.append(bulk);
 
   // 自分のカレンダー
   const days = new Set(S.data.event.days);
@@ -713,13 +725,12 @@ function renderEditor() {
       el("span", { class: "dn", text: d }), ...halves, pick);
   }, (w, i) => el("button", { type: "button", class: "wd" + (i === 0 ? " sun" : i === 6 ? " sat" : "") + (datesOfWeekday(i).length && datesOfWeekday(i).every((x) => S.bulkDates.has(x)) ? " on" : ""),
     "aria-pressed": String(datesOfWeekday(i).length > 0 && datesOfWeekday(i).every((x) => S.bulkDates.has(x))), title: "押すと、この曜日の日（祝日を除く）をまとめて選ぶ・外す", onclick: () => { toggleWeekday(i); renderEditor(); } }, w)));
-  box.append(cal);
+  if (tab === "input") area.append(cal);
   // 複数選択モードの間は、画面の右下にいつでも終えられるボタンを出す（利用者の指定）
-  if (S.pickMode) box.append(el("button", { type: "button", class: "pickfloat", "aria-label": "複数選択モードを終える",
+  if (S.pickMode && tab === "input") box.append(el("button", { type: "button", class: "pickfloat", "aria-label": "複数選択モードを終える",
     onclick: () => setPickMode(false) }, el("span", { text: "複数選択モード" }), el("b", { "aria-hidden": "true", text: "✕" })));
   if (p.mode === "detail" && Object.keys(p.marks).length) box.append(el("div", { class: "row" }, el("button", { type: "button", class: "small", text: "手で付けた印をすべて消す（自動に戻す）", onclick: () => { p.marks = {}; p.fixed = {}; S.unsaved = true; renderEditor(); } })));
 
-  if (p.mode === "rough") box.append(exportPanel(p));   // 入力内容の書き出し（ほかの日程あわせのインポートで使える）
   // 保存のバー：変更は「保存する」を押すまで反映しない（利用者の指定）
   box.append(el("div", { class: "savebar" + (S.unsaved ? " unsaved" : "") },
     el("p", { class: "status", id: "saveState", role: "status", text: S.saving ? "保存しています…" : S.unsaved ? "保存していない変更があります" : (S.savedOnce ? "保存しました" : "") }),
@@ -764,6 +775,8 @@ function toggleWeekday(i) {
   else ds.forEach((x) => S.bulkDates.add(x));
 }
 function setPickMode(on) { S.pickMode = on; renderEditor(); }
+/* 大雑把入力のタブ（入力する・出力する）。出力に切り替えるときは、複数選択モードを終える（右下の「終える」ボタンが残らないように） */
+function setRoughTab(id) { if (id === "export") S.pickMode = false; S.roughTab = id; renderEditor(); }
 /* 複数選択モードで選んだ日（S.tapDates）。ここに ○△✕ をまとめて付けると、手で選んだ枠と同じ「固定」になる（利用者の指定） */
 function tapPick(iso, on) {
   if (on) { S.bulkDates.add(iso); S.tapDates.add(iso); } else { S.bulkDates.delete(iso); S.tapDates.delete(iso); }

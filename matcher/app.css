@@ -362,3 +362,14 @@ button.wd.on { padding-left: 0; padding-right: 0; }
 .export { display: grid; gap: 8px; border-top: 1px dashed var(--rule); padding-top: 10px; }
 /* 箇条書きの案内（書き出しの仕様・インポートの確認） */
 .spec { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+
+/* 大雑把入力のタブ（入力する・出力する）。M3 のタブ：選ばれたタブは下線と太字（色だけで見せない） */
+.ptabs { display: flex; border-bottom: 1px solid var(--rule); }
+.ptab { flex: 1; justify-content: center; position: relative; min-height: 48px; border: 0; border-radius: var(--r) var(--r) 0 0;
+  background: transparent; color: var(--ink-soft); font-weight: 500; }
+.ptab:hover { background: var(--paper); }
+.ptab[aria-selected="true"] { color: var(--ink); font-weight: 700; }
+.ptab[aria-selected="true"]::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--ai); }
+.ptab:focus-visible { outline-offset: -2px; }
+.tabpanel { display: grid; gap: 14px; min-width: 0; }
+.tabpanel > .export { border-top: 0; padding-top: 0; }
