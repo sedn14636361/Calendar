@@ -741,8 +741,8 @@ function toggleWeekday(i) {
 function tapPick(iso, on) {
   if (on) { S.bulkDates.add(iso); S.tapDates.add(iso); } else { S.bulkDates.delete(iso); S.tapDates.delete(iso); }
 }
-/* PC：マウスで日をなぞって、まとめて選ぶ・外す（タップで選ぶモードの間だけ。選ばれている日から始めると外す）。
-   なぞっている間は描き直さず、印だけを付け替えて、離したときに描き直す */
+/* PC：マウスで日をドラッグして、まとめて選ぶ・外す（タップで選ぶモードの間だけ。左ボタンを押している間だけ。選ばれている日から始めると外す）。
+   ドラッグしている間は描き直さず、印だけを付け替えて、離したときに描き直す */
 function startDrag(e, iso) {
   if (e.pointerType !== "mouse" || e.button !== 0) return;
   e.preventDefault();
@@ -782,7 +782,7 @@ function paintBulk(mark) {
     const row = { ...(p.marks[iso] || {}) };
     if (mark === "clear") delete row[slot]; else row[slot] = mark;
     if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
-    // タップ（なぞり）で選んだ日に付けた ○△✕ は固定にする：あとの曜日などのまとめて選択や、予定からの自動の ○✕ で変わらない
+    // タップ（ドラッグ）で選んだ日に付けた ○△✕ は固定にする：あとの曜日などのまとめて選択や、予定からの自動の ○✕ で変わらない
     if (mark !== "clear" && S.tapDates.has(iso)) p.fixed[iso] = { ...(p.fixed[iso] || {}), [slot]: true };
   }
   S.unsaved = true; renderEditor();
