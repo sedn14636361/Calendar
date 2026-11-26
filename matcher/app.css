@@ -107,12 +107,10 @@ button.cell { cursor: pointer; }
 .cell.sel { outline: 2px solid var(--ai); outline-offset: 1px; }
 .cell .dn { font-family: var(--f-mono); font-size: 11px; line-height: 1.2; padding-left: 2px; }
 .cell.sun .dn { color: var(--sun); } .cell.sat .dn { color: var(--sat); }
-/* 昼と夜の間に余白を置かない。内訳（○△✕ の人数）はふだん隠し、カーソルを合わせたときだけ出す */
+/* 昼と夜の間に余白を置かない。内訳（○△✕ の人数）はマスの中には出さない（タップすると下の日の詳細に出る） */
 .half { display: flex; align-items: center; justify-content: center; border-radius: 0; font-family: var(--f-mono); font-size: 10px; line-height: 1.1; letter-spacing: -.02em;
   white-space: nowrap; overflow: hidden; min-height: 18px; }
 .cell.in .half:nth-child(2) { border-radius: 2px 2px 0 0; } .cell.in .half:nth-child(3) { border-radius: 0 0 2px 2px; }
-.half .lbl { visibility: hidden; }
-@media (hover: hover) { .cell.in:hover .half .lbl, .cell.in:focus-visible .half .lbl { visibility: visible; } }
 @media (min-width: 560px) { .cell { min-height: 74px; } .half { font-size: 12.5px; } }
 
 /* 日の詳細 */
@@ -316,7 +314,7 @@ button, .btn, select, input:not([type="checkbox"]):not([type="radio"]):not([type
 details > summary { padding: 12px 0; }
 .brand a { display: inline-block; padding: 14px 0; margin: -14px 0; }
 
-/* みんなの空きの色の凡例（人数はマスに出さないまま、色の意味だけを示す） */
+/* みんなのカレンダーの色の凡例（人数はマスに出さないまま、色の意味だけを示す） */
 .heat-legend { align-items: center; }
 .heat-legend .hl { display: inline-flex; align-items: center; gap: 0; }
 .heat-legend .hl > span { margin-left: 6px; }
@@ -349,7 +347,7 @@ details > summary { padding: 12px 0; }
 button.wd.on { padding-left: 0; padding-right: 0; }
 .tg.wdt.on::before, button.wd.on::before { position: absolute; top: 0; left: 3px; font-size: 11px; margin: 0; }
 
-/* PC など広い画面（960px 以上）：みんなの空きと候補だけを左右に並べる。入力・直す・参加者は下に全幅で置く（利用者の指定） */
+/* PC など広い画面（960px 以上）：みんなのカレンダーと候補だけを左右に並べる。入力・直す・参加者は下に全幅で置く（利用者の指定） */
 @media (min-width: 960px) {
   body:not([data-event=""]) .wrap { max-width: 1200px; }
   #event { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
@@ -373,3 +371,13 @@ button.wd.on { padding-left: 0; padding-right: 0; }
 .ptab:focus-visible { outline-offset: -2px; }
 .tabpanel { display: grid; gap: 14px; min-width: 0; }
 .tabpanel > .export { border-top: 0; padding-top: 0; }
+
+/* 日を選ぶカレンダーの今日：数字の下に小さな点 */
+.pday { position: relative; }
+.pday.today { font-weight: 700; }
+.pday.today::after { content: ""; position: absolute; left: 50%; bottom: 5px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; }
+/* スマホなどの狭い画面では、印のメニューの ▾ を出さない（狭いマスで印とぶつかるため。マスを押すとメニューが開くのは同じ。利用者の指定） */
+@media (max-width: 700px) {
+  .paint::after { display: none; }
+  .paint b { padding-right: 0; }
+}

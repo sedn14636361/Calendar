@@ -2486,7 +2486,8 @@ async def _exchange_code(code):
                 _activity_log(f"利用者の確認に失敗しました（Discord の応答 HTTP {r.status}）")
                 raise ActivityError("Discord のログイン確認に失敗しました。画面を開き直してください", 502)
             user = await r.json()
-    return token, int(user["id"])
+    # 表示名（/match で作った人を参加者に加えるときの名前の初期値）。無ければユーザー名
+    return token, int(user["id"]), str(user.get("global_name") or user.get("username") or "")[:30]
 
 
 async def activity_start(code, now=None):
@@ -2495,7 +2496,9 @@ async def activity_start(code, now=None):
         raise ActivityError("この機能は有効になっていません（DISCORD_CLIENT_SECRET が設定されていません）", 503)
     if not isinstance(code, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", code):
         raise ActivityError("確認の情報が正しくありません。画面を開き直してください")
-    access_token, user_id = await _exchange_code(code)
+    got = await _exchange_code(code)
+    access_token, user_id = got[0], got[1]
+    user_name = got[2] if len(got) > 2 else ""
     now = now if now is not None else time.monotonic()
     with _activity_lock:
         has_ticket = _valid_ticket(user_id, now) is not None
@@ -2520,7 +2523,8 @@ async def activity_start(code, now=None):
             "today": today.isoformat(), "max_days": ADD_MAX_DAYS, "match_max_days": matcher.MAX_DAYS,
             "titles_until": (today + timedelta(days=DAYS_TO_SHOW)).isoformat(),
             # /match の日程のカレンダーで祝日に色を付ける（作るときには、あらためて内閣府の一覧を読み込む）
-            "holidays": matcher.upcoming_holidays(today) if kind == "match" else {}}
+            "holidays": matcher.upcoming_holidays(today) if kind == "match" else {},
+            "user_name": user_name if kind == "match" else ""}
 
 
 def _parse_iso_day(s):
@@ -2755,8 +2759,11 @@ async def activity_match(session_token, body, now=None):
         session, ticket = _session_for(session_token, now, "match")
         session["used"] = True                 # 作っている間に2回目を受け付けない（失敗したら戻す）
         channel, user_id = ticket["channel"], session["user_id"]
+    self_fill = body.get("self_fill") is True
     try:
         first, last = _parse_iso_day(body.get("first")), _parse_iso_day(body.get("last"))
+        if self_fill:                              # 名前は作る前に確かめる（作ってから名前の誤りで失敗しないように）
+            self_name = matcher.clean_text(body.get("self_name"), matcher.MAX_NAME, "名前")
         # 配色（ことばパレット）とスプレッドシートへの保存は時間がかかるので、ボットの処理を止めないよう別のスレッドで
         event, admin = await asyncio.to_thread(
             lambda: MATCHER.create(body.get("title"), first, last, f"discord:{user_id}",
@@ -2770,6 +2777,9 @@ async def activity_match(session_token, body, now=None):
         with _activity_lock:
             session["used"] = False
         raise
+    self_note = None
+    if self_fill:
+        self_note = await asyncio.to_thread(_add_creator_schedule, event["id"], self_name, first, last)
     url = MATCHER.url_for(event["id"])
     out = _ActivityChannel(channel)
     await out.send(match_announcement(event, url, f"{url}#a={admin}"), allowed_mentions=discord.AllowedMentions.none())
@@ -2777,7 +2787,31 @@ async def activity_match(session_token, body, now=None):
         _activity_log(f"チャンネルへの返信に失敗しました: {out.send_error}")
     _activity_log("日程あわせを作りました")
     return {"ok": True, "url": url, "admin_url": f"{url}#a={admin}", "posted": out.send_error is None,
-            "title": event["title"]}
+            "title": event["title"], "self_added": self_fill and self_note is None, "self_note": self_note}
+
+
+def _add_creator_schedule(eid, name, first, last):
+    """作った人を、ボットにつないだカレンダー（全部）の予定から「インポート」の参加者として加える（利用者の指定）。
+    予定の名前は使わず、時刻だけを渡す。カレンダーが1つでも読めないときは、間違った ○ を付けないよう加えない。
+    うまくいけば None、加えなかったときは理由を返す"""
+    start = datetime(first.year, first.month, first.day, tzinfo=JST)
+    end = datetime(last.year, last.month, last.day, tzinfo=JST) + timedelta(days=2)   # 最終日の翌日（夜の未明の分）まで
+    try:
+        events, failures = fetch_events_multi(start, end)
+    except Exception as e:
+        _activity_log(f"作った人の予定を読めませんでした: {type(e).__name__}")
+        return "カレンダーを読めなかったので、あなたの予定は入れていません。ページで入力してください"
+    if failures:
+        _activity_log(f"作った人の予定を入れませんでした（読めないカレンダー {len(failures)} 件）")
+        return f"読めないカレンダーが{len(failures)}件あったので、あなたの予定は入れていません。ページで入力してください"
+    try:
+        MATCHER.add_creator(eid, name, matcher.busy_from_google_events(events, first, last))
+    except matcher.MatcherError as e:
+        return f"あなたの予定を入れられませんでした（{e}）。ページで入力してください"
+    except Exception as e:                       # 日程あわせはもうできているので、ここで失敗しても作ったことにする
+        _activity_log(f"作った人の予定を入れられませんでした: {type(e).__name__}")
+        return "あなたの予定を入れられませんでした。ページで入力してください"
+    return None
 
 
 def _run_on_bot_loop(coro, timeout=120):

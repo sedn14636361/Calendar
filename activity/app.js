@@ -76,6 +76,11 @@ function actStatus(text, isError) {
   if (text) setStatus("");          // 上の行に古い知らせが残らないように
 }
 
+// このブラウザに覚えておく値（読めない・書けない環境でも動くように）
+const SELF_NAME_KEY = "awasegoyomi:selfName";
+function storeGet(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+function storeSet(k, v) { try { localStorage.setItem(k, v); } catch (_) { /* 覚えられなくても困らない */ } }
+
 async function api(path, body) {
   const r = await fetch(path, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -477,6 +482,7 @@ function matchValid() {
   if (dayDiff(F.start, F.end) + 1 > M.maxDays) return "期間が長すぎます。短くしてください";
   if (F.end < iso(S.today)) return "終了日が過ぎています";
   if (!$("match-title").value.trim()) return "タイトルを入れてください";
+  if ($("match-self").checked && !$("match-self-name").value.trim()) return "参加者としての名前を入れてください（自分の予定を入れないときは、チェックを外してください）";
   const sl = matchSlots();
   if (sl.d[0] >= sl.d[1]) return "昼の終わりは、始まりより後にしてください";
   if (sl.n[0] >= sl.n[1]) return "夜の終わりは、始まりより後にしてください";
@@ -506,7 +512,9 @@ async function makeMatch() {
   render();
   actStatus("作っています…（配色を作るので、30秒ほどかかることがあります）");
   const req = api("api/match", { session: S.session, first: F.start, last: F.end,
-    title: $("match-title").value, description: $("match-desc").value, slots: matchSlots(), tone: $("match-tone").value });
+    title: $("match-title").value, description: $("match-desc").value, slots: matchSlots(), tone: $("match-tone").value,
+    self_fill: $("match-self").checked, self_name: $("match-self-name").value });
+  if ($("match-self").checked) storeSet(SELF_NAME_KEY, $("match-self-name").value.trim());   // 次からの名前の初期値
   const clip = clipboardWithPromise(() => req.then((j) => j.url));   // 押したその場でコピーを始める（iPhone 向け）
   let j;
   try {
@@ -519,14 +527,17 @@ async function makeMatch() {
   }
   M.busy = false; M.done = true;
   $("match-title").readOnly = true; $("match-desc").readOnly = true;
+  $("match-self").disabled = true; $("match-self-name").readOnly = true;
   $("match-result").hidden = false;
   $("share-url").value = j.url;
   $("admin-url").value = j.admin_url;
   let ok = await clip;
   if (!ok) ok = await copyText(j.url);
   setShareStatus(ok);
-  const head = ok ? "作りました。共有用の URL をコピーしました" : "作りました（URL のコピーは手で行ってください）";
+  let head = ok ? "作りました。共有用の URL をコピーしました" : "作りました（URL のコピーは手で行ってください）";
   const trouble = j.posted ? [] : ["チャンネルへの投稿に失敗しました。ボットの「メッセージを送信」の権限を確認してください"];
+  if (j.self_note) trouble.push(j.self_note);
+  else if (j.self_added) head += "\nあなたの予定から ○✕ を入れました";
   actStatus([head, ...trouble].join("\n"), !ok || trouble.length > 0);
   render();
   $("make-box").scrollIntoView({ block: "start", behavior: "smooth" });   // 作るボタンの下の知らせと、URL の欄が見えるように
@@ -886,7 +897,7 @@ function setApply(mode) {
 // キーボードは画面の下から4〜5割ほどを覆うので、入力中は欄を画面の上から2割の所まで動かし、下の「追加する」バーを隠す
 const TOUCH = new URLSearchParams(location.search).get("platform") === "mobile"
   || (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
-const TYPING_IDS = ["name", "match-title", "match-desc"];
+const TYPING_IDS = ["name", "match-title", "match-desc", "match-self-name"];
 function keepFieldVisible() {
   const input = document.activeElement;
   if (!input || !TYPING_IDS.includes(input.id)) return;
@@ -955,6 +966,8 @@ function wire() {
   $("run").addEventListener("click", runFree);
   // 日程あわせの画面
   $("match-title").addEventListener("input", render);
+  $("match-self-name").addEventListener("input", render);
+  $("match-self").addEventListener("change", () => { $("match-self-name-box").hidden = !$("match-self").checked; render(); });
   $("make").addEventListener("click", makeMatch);
   for (const [btn, box, setter] of [["copy-share", "share-url", setShareStatus], ["copy-admin", "admin-url", null]]) {
     $(btn).addEventListener("click", async () => {
@@ -1009,6 +1022,8 @@ async function main() {
   S.kind = st.mode === "date" || st.mode === "match" ? st.mode : "add";
   setupKind();
   S.today = fromIso(st.today);
+  // 作った人の名前の初期値：前に使った名前、無ければ Discord の表示名
+  if (S.kind === "match") $("match-self-name").value = storeGet(SELF_NAME_KEY) || st.user_name || "";
   S.holidays = st.holidays || {};
   S.maxDays = st.max_days;
   M.maxDays = st.match_max_days || M.maxDays;
