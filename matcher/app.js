@@ -657,8 +657,8 @@ function renderEditor() {
       el("div", { class: "tgs" }, ...[["o", "○"], ["t", "△"], ["x", "✕"], ["clear", clearName]].map(([k, label]) =>
         el("button", { type: "button", class: `apply pen-${k}`, disabled: !targets.length, onclick: () => paintBulk(k) }, label)))));
   box.append(el("p", { class: "note", text: p.mode === "detail"
-    ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。メニューで選んだ枠（太字・枠付き）は、自動の判定より優先され、まとめて選択でも変わりません。"
-    : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。メニューで選んだ枠（太字・枠付き）は、まとめて選択でも変わりません。" }));
+    ? "予定から ○✕ が自動で付きます（メニューの「自動」）。行けるか分からない枠は、その枠のメニューで △ を選んでください。メニューで選んだ枠（太字・枠付き）は、自動の判定より優先され、曜日などのまとめて選択では変わりません（「日付をタップして選ぶ」で選んだ日は上書きできます）。"
+    : "日の「昼」「夜」のメニューから ○・△・✕ を選んでください。メニューで選んだ枠（太字・枠付き）は、曜日などのまとめて選択では変わりません（「日付をタップして選ぶ」で選んだ日は上書きできます）。" }));
   box.append(bulk);
 
   // 自分のカレンダー
@@ -683,7 +683,7 @@ function renderEditor() {
       // 見た目は印だけを出し、メニューは透明にして枠いっぱいに重ねる（狭い枠でも選んだ印が読めるように）
       // fixed（太字・枠）＝プルダウンで手で選んだ枠、auto（細字）＝予定から自動
       return el("label", { class: `paint m-${m || "none"}` + (fixed ? " fixed" : manual ? "" : m ? " auto" : "") + (picked ? " picked" : ""),
-        title: fixed ? "手で選んだ枠（まとめて選択では変わりません）" : "" },
+        title: fixed ? "固定の枠（曜日などのまとめて選択では変わりません。日付をタップして選ぶと上書きできます）" : "" },
         el("small", { text: SLOT_TEXT[slot] }), el("b", { "aria-hidden": "true", text: m ? MARK_TEXT[m] : "−" }), sel);
     });
     // 日付をタップして選ぶモードの間は、日の上に透明なボタンをかぶせて、タップでその日を選ぶ・外す（メニューは開かない）
@@ -719,9 +719,10 @@ function setMark(iso, slot, mark) {          // 枠のメニューで選んだ�
 }
 function toggleSet(set, v) { if (set.has(v)) set.delete(v); else set.add(v); }
 /* まとめて選択の対象：選んだ日付 × 選んだ時間帯の枠（日付を何も選んでいなければ無し）。
-   ただし、プルダウンで個別に選んだ枠と、詳細入力で予定があって ✕ になっている枠は変えない（利用者の指定） */
+   ただし、固定の枠（プルダウンで個別に選んだ枠など）と、詳細入力で予定があって ✕ になっている枠は変えない（利用者の指定）。
+   「日付をタップして選ぶ」（ドラッグ）で選んだ日だけは、固定の枠も上書きできる（利用者の指定） */
 function protectedSlot(p, iso, slot) {
-  return isFixed(p, iso, slot) || autoMark(p, iso, slot) === "x";
+  return (isFixed(p, iso, slot) && !S.tapDates.has(iso)) || autoMark(p, iso, slot) === "x";
 }
 /* 祝日（作ったときに内閣府の一覧から読み込んだもの） */
 const holName = (iso) => ((S.data && S.data.event.holidays) || {})[iso] || "";
@@ -782,8 +783,13 @@ function paintBulk(mark) {
     const row = { ...(p.marks[iso] || {}) };
     if (mark === "clear") delete row[slot]; else row[slot] = mark;
     if (Object.keys(row).length) p.marks[iso] = row; else delete p.marks[iso];
-    // タップ（ドラッグ）で選んだ日に付けた ○△✕ は固定にする：あとの曜日などのまとめて選択や、予定からの自動の ○✕ で変わらない
-    if (mark !== "clear" && S.tapDates.has(iso)) p.fixed[iso] = { ...(p.fixed[iso] || {}), [slot]: true };
+    // タップ（ドラッグ）で選んだ日に付けた ○△✕ は固定にする：あとの曜日などのまとめて選択や、予定からの自動の ○✕ で変わらない。
+    // タップで選んだ日を「消す」（自動に戻す）ときは、固定も外す
+    if (S.tapDates.has(iso)) {
+      const fx = { ...(p.fixed[iso] || {}) };
+      if (mark === "clear") delete fx[slot]; else fx[slot] = true;
+      if (Object.keys(fx).length) p.fixed[iso] = fx; else delete p.fixed[iso];
+    }
   }
   S.unsaved = true; renderEditor();
 }
