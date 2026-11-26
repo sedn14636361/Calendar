@@ -69,6 +69,12 @@
           <label><span class="lbl">夜</span><select id="slot-n-start"></select> 〜 <select id="slot-n-end"></select></label>
         </div>
       </div>
+      <!-- 作った人の予定：ボットにつないだ Google カレンダーの予定（時刻だけ）から、作った人を参加者に加える -->
+      <label class="check"><input id="match-self" type="checkbox" checked> 自分の予定から入力する</label>
+      <p class="hint">ボットにつないだ Google カレンダーの予定の日時から、あなたの ○✕ を入れます（予定の名前は入れません）。</p>
+      <label class="field" id="match-self-name-box">参加者としての名前
+        <input id="match-self-name" type="text" maxlength="30" autocomplete="nickname" enterkeyhint="done" placeholder="例：たなか">
+      </label>
     </div>
     <div id="make-box" class="run-box" hidden>
       <p id="make-summary" class="summary"></p>
