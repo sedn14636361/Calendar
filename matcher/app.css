@@ -214,7 +214,7 @@ button.wd { font: inherit; font-size: 12px; padding: 2px 0; border-radius: 4px; 
 .picker .mh { display: none; }
 .pnav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pnav .pm { font-family: var(--f-body); font-size: 18px; }
-.pday { justify-content: center; min-height: 40px; padding: 0; font-family: var(--f-mono); font-size: 14px; }
+.pday { justify-content: center; min-height: 44px; padding: 0; font-family: var(--f-mono); font-size: 14px; }
 .pday.sun { color: var(--sun); } .pday.sat { color: var(--sat); }
 .pday.on { background: var(--heat3); color: var(--heat-ink3); border-color: var(--ai); }
 .pday.edge { background: var(--ai); color: var(--ai-ink); }
@@ -242,7 +242,7 @@ details.box > summary { cursor: pointer; }
 .paint { position: relative; justify-content: space-between; }
 .paint select.mark { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
 .paint b { flex: 1; text-align: center; font-size: 16px; line-height: 1; padding-right: 6px; }
-.paint.m-o b { color: var(--ok); } .paint.m-t b { color: var(--maybe); } .paint.m-x b { color: var(--ng); } .paint.m-none b { color: var(--rule); }
+.paint.m-o b { color: var(--ok); } .paint.m-t b { color: var(--maybe); } .paint.m-x b { color: var(--ng); } .paint.m-none b { color: var(--ink-soft); }   /* 未入力の「−」も文字なので 4.5:1 以上（罫の色では 1.6:1 しかなかった） */
 .paint.auto b { font-weight: 400; }   /* 自動の印は細字で見分ける（透明度を下げると、地とのコントラストが足りなくなる） */
 .paint.manual.m-o { background: var(--heat2); } .paint.manual.m-o b { color: var(--heat-ink2); }
 .paint:focus-within { outline: 2px solid var(--ai); outline-offset: 1px; }
@@ -280,7 +280,8 @@ details.box > summary { cursor: pointer; }
 
 /* ボタンを押したあとの知らせ（作りました・エラー）は、ボタンのすぐ下に出す */
 .act-status { margin-top: 8px; white-space: pre-line; }
-.act-status:empty { display: none; }
+/* 空の知らせの欄は場所を取らない（見出しの下の空白をなくす）。display: none にすると読み上げの知らせ（role=status）が働かないことがあるので、見えない大きさにして流れから外す */
+#status:empty, .act-status:empty { position: absolute; width: 1px; height: 1px; min-height: 0; margin: 0; overflow: hidden; clip-path: inset(50%); }
 /* なぞって選ぶ間に、文字が選択されないように */
 .months.mine.picking { user-select: none; -webkit-user-select: none; }
 /* 狭い画面では「昼」「夜」をメニューの上に出し、メニューを広げる（「27時（翌3時）」が切れないように） */
@@ -296,8 +297,81 @@ details.box > summary { cursor: pointer; }
 .pickfloat { position: fixed; z-index: 20; bottom: calc(env(safe-area-inset-bottom, 0px) + var(--savebar-h, 0px) + 12px); right: calc(env(safe-area-inset-right, 0px) + 12px);
   display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 6px 14px; border-radius: 999px;
   background: var(--ai); color: var(--ai-ink); border: 1px solid var(--ai); font-weight: 700; box-shadow: 0 2px 10px rgba(0, 0, 0, .25); }
-/* 知らせの行は、知らせがないときは場所を取らない（タイトルと「候補」の間が空きすぎないように。利用者の指定） */
-#status:empty { display: none; }
+
+/* ---------- 押しやすさ・見やすさの見直し ----------
+   押せる部品は高さ 44px 以上（WCAG 2.2 の 2.5.5 の目安 44px。Material Design は 48dp。
+   スマホでカレンダーの7列を画面に収めるため、幅はマスの幅のまま） */
+button, .btn, select, input:not([type="checkbox"]):not([type="radio"]):not([type="file"]) { min-height: 44px; }
+.paint select.mark { min-height: 0; }                 /* 枠いっぱいに重ねた透明なメニュー（大きさは枠で決まる） */
+.pnav button { min-width: 44px; justify-content: center; }
+.tg { min-width: 44px; }
+.tgs { gap: 4px 2px; }                                 /* 曜日の7つを 390px の画面で1行に収める */
+.paint { min-height: 44px; }                           /* 自分のカレンダーの昼・夜の枠 */
+.months.mine .cell { min-height: 0; }
+.ivs .del { min-width: 44px; justify-content: center; }
+.chk { min-height: 44px; }
+.hist a { min-height: 44px; align-items: center; }
+details > summary { padding: 12px 0; }
+.brand a { display: inline-block; padding: 14px 0; margin: -14px 0; }
+
+/* みんなのカレンダーの色の凡例（人数はマスに出さないまま、色の意味だけを示す） */
+.heat-legend { align-items: center; }
+.heat-legend .hl { display: inline-flex; align-items: center; gap: 0; }
+.heat-legend .hl > span { margin-left: 6px; }
+/* 色見本は横長の帯（正方形だとチェックボックスに見えるため）。薄い→濃いの5段階はつなげて1本の帯にする */
+.sw { display: inline-block; width: 18px; height: 10px; border: 1px solid var(--ink-soft); }
+.sw + .sw { border-left: 0; }
+.sw.l0 { background: var(--heat0); } .sw.l1 { background: var(--heat1); } .sw.l2 { background: var(--heat2); }
+.sw.l3 { background: var(--heat3); } .sw.l4 { background: var(--heat4); } .sw.l5 { background: var(--heat5); }
+
+/* まだ参加していない人に、入力の欄へ移るボタン（見出しの下） */
+/* 文字は本文の色（--ai は地に対して 4.5:1 に届かない配色があるため、枠だけに使う） */
+.jump { border: 2px solid var(--ai); color: var(--ink); font-weight: 700; }
+.jump:hover, .jump:focus-visible { background: var(--ai); color: var(--ai-ink); }
+@media (max-width: 559px) { .jump { width: 100%; justify-content: center; } }
+
+/* 削除は、ふだんのボタン（編集する・新しく参加する）から離して右端に置く */
+.person > .danger { margin-left: auto; }
+.foot-row { justify-content: space-between; }
+.undo { border: 1px solid var(--rule); border-radius: var(--r); padding: 4px 4px 4px 12px; justify-content: space-between; background: var(--paper); }
+
+/* 選ぶボタン（曜日・全部/平日など・時間帯）は M3 のフィルタチップの形：選ばれた＝淡い地＋✓＋濃い文字、選ばれていない＝枠だけ（利用者の指定：案2）。
+   ✓ があるので、色が見分けにくくても選ばれているかが分かる（淡い地と白い地の差は 1.5〜1.8:1 しかないため）。
+   ✓ は文字と同じ色（--heat-ink2。淡い地に対して 7:1 前後。--ai だと配色によって 1.3:1 しかない）。
+   「複数選択モード」は色だけで見せる（利用者の指定）ので、今までどおり濃い地で ✓ を付けない */
+.tg.on:not(.pickmode), .bulk button.small.on, button.wd.on { background: var(--heat2); color: var(--heat-ink2); border-color: var(--ai); }
+.tg.on:not(.pickmode)::before, .bulk button.small.on::before, button.wd.on::before { content: "✓"; margin-right: 2px; font-weight: 700; }
+.tg.on:not(.pickmode) { padding-left: 4px; padding-right: 6px; }
+/* 曜日のボタン（まとめて選択の日〜土と、自分のカレンダーの見出し）は幅を変えない：✓ は左上に小さく重ねる */
+.tg.wdt.on, button.wd.on { position: relative; padding-left: 10px; padding-right: 10px; }
+button.wd.on { padding-left: 0; padding-right: 0; }
+.tg.wdt.on::before, button.wd.on::before { position: absolute; top: 0; left: 3px; font-size: 11px; margin: 0; }
+
+/* PC など広い画面（960px 以上）：みんなのカレンダーと候補だけを左右に並べる。入力・直す・参加者は下に全幅で置く（利用者の指定） */
+@media (min-width: 960px) {
+  body:not([data-event=""]) .wrap { max-width: 1200px; }
+  #event { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  #allBox { grid-column: 1; grid-row: 1; }
+  #bestBox { grid-column: 2; grid-row: 1; }
+  #mine, #editBox, #peopleBox { grid-column: 1 / -1; }
+}
+
+/* 大雑把入力の書き出し（入力内容を出力） */
+.export { display: grid; gap: 8px; border-top: 1px dashed var(--rule); padding-top: 10px; }
+/* 箇条書きの案内（書き出しの仕様・インポートの確認） */
+.spec { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+
+/* 大雑把入力のタブ（入力する・出力する）。M3 のタブ：選ばれたタブは下線と太字（色だけで見せない） */
+.ptabs { display: flex; border-bottom: 1px solid var(--rule); }
+.ptab { flex: 1; justify-content: center; position: relative; min-height: 48px; border: 0; border-radius: var(--r) var(--r) 0 0;
+  background: transparent; color: var(--ink-soft); font-weight: 500; }
+.ptab:hover { background: var(--paper); }
+.ptab[aria-selected="true"] { color: var(--ink); font-weight: 700; }
+.ptab[aria-selected="true"]::after { content: ""; position: absolute; left: 16px; right: 16px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--ai); }
+.ptab:focus-visible { outline-offset: -2px; }
+.tabpanel { display: grid; gap: 14px; min-width: 0; }
+.tabpanel > .export { border-top: 0; padding-top: 0; }
+
 /* 日を選ぶカレンダーの今日：数字の下に小さな点 */
 .pday { position: relative; }
 .pday.today { font-weight: 700; }

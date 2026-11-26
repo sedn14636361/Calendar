@@ -4,7 +4,7 @@
 # 全員の都合をカレンダーの形で俯瞰する。
 #
 #   ・大雑把入力：日ごとの昼・夜に、自分で ○△✕ を付ける
-#   ・詳細入力　：予定の時間（ICS・CSV・テキスト・手入力）から ○✕ を自動で決める。
+#   ・インポート　：予定の時間（ICS・CSV・テキスト・手入力）から ○✕ を自動で決める。
 #                 予定が少しでも重なれば ✕（ボットの /2026-9 と同じ判定）。△ は自動では付けず、
 #                 本人がマスを選んで付ける（可否が分からないときに使う）
 #   ・配色　　　：シナリオ名から「ことばパレット」（Cloudflare Workers AI）で5色を作る。
@@ -81,7 +81,7 @@ def clean_slots(raw):
         out[k] = [v[0], v[1]]
     return out
 MARKS = ("o", "t", "x")                # ○・△・✕
-MODES = ("rough", "detail")            # 大雑把入力・詳細入力
+MODES = ("rough", "detail")            # 大雑把入力・インポート
 
 # 文字数・日数の上限は、スプレッドシートの1マス（50,000 文字）に収めるためだけのもの。画面には書かない（利用者の指定）
 MAX_DAYS = 120                         # 1つの調整の候補日の数（作るときの期間も、あとから足した日も含めて）
@@ -606,7 +606,7 @@ def busy_mark(intervals, slot, ranges=None, next_intervals=()):
 
 
 def resolve_mark(person, day, slot, ranges=None):
-    """本人が付けた印があればそれ、詳細入力で予定を共有済みなら自動の ○✕、どちらでもなければ None（未入力）"""
+    """本人が付けた印があればそれ、インポートで予定を共有済みなら自動の ○✕、どちらでもなければ None（未入力）"""
     m = person.get("marks", {}).get(day, {}).get(slot)
     if m:
         return m
@@ -868,7 +868,7 @@ class Store:
                 data["description"] = clean_memo(changes["description"], MAX_DESC, "概要")
             if "tone" in changes:                      # 雰囲気（おまかせ・明るめ・暗め）
                 data["tone"] = clean_tone(changes["tone"])
-            if "slots" in changes:                     # 昼・夜の時間帯（詳細入力の自動の ○✕ は、新しい時間帯で計算し直される）
+            if "slots" in changes:                     # 昼・夜の時間帯（インポートの自動の ○✕ は、新しい時間帯で計算し直される）
                 data["slots"] = clean_slots(changes["slots"])
             days = set(period_days(data))
             add, remove = changes.get("add_days") or [], changes.get("remove_days") or []
@@ -1308,7 +1308,7 @@ class Matcher:
         return event, admin
 
     def add_creator(self, eid, name, busy):
-        """作った人を「詳細入力」の参加者として加える（/match の画面で「自分の予定から入力する」を選んだとき）。
+        """作った人を「インポート」の参加者として加える（/match の画面で「自分の予定から入力する」を選んだとき）。
         busy は日ごとの予定の時刻（分）だけ。予定の名前は受け取らない"""
         event, _ = self.store.get(eid)
         name = clean_text(name, MAX_NAME, "名前")

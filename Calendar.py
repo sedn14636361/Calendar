@@ -2791,7 +2791,7 @@ async def activity_match(session_token, body, now=None):
 
 
 def _add_creator_schedule(eid, name, first, last):
-    """作った人を、ボットにつないだカレンダー（全部）の予定から「詳細入力」の参加者として加える（利用者の指定）。
+    """作った人を、ボットにつないだカレンダー（全部）の予定から「インポート」の参加者として加える（利用者の指定）。
     予定の名前は使わず、時刻だけを渡す。カレンダーが1つでも読めないときは、間違った ○ を付けないよう加えない。
     うまくいけば None、加えなかったときは理由を返す"""
     start = datetime(first.year, first.month, first.day, tzinfo=JST)
